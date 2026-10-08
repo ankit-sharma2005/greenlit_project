@@ -502,3 +502,70 @@ Invoke-RestMethod http://localhost:8000/readyz
 Review the attack-pack generation, canary detection, guardrail uplift, and
 red-team-case outputs from the backend safety service and keep the safety suite
 as the regression gate for future changes.
+
+## Phase 8 - Human review and calibration: DONE (service/API contract validated)
+
+### Acceptance checklist
+
+- **PASS** - Low-confidence, disagreeing, near-threshold, and gate-failing items
+  are auto-queued. Evidence: `test_review_queue_auto_queues_risky_items` in
+  `backend/tests/test_phase8.py` passed and `queue_review_items()` in
+  `backend/app/services/human_review.py` enqueues the expected reasons.
+- **PASS** - Reviewer-role access is intentionally allowed for review workflows
+  while admin/engineer-only routes remain protected. Evidence:
+  `backend/app/routers/phase8.py` uses `Depends(require_roles("owner", "admin",
+  "engineer", "reviewer"))` for review endpoints, while the broader admin-only
+  settings routes continue to require stronger privileges.
+- **PASS** - Blind A/B comparisons hide labels and report the correct winner
+  and delta. Evidence: `test_blind_ab_compare_hides_labels_and_reports_winner`
+  in `backend/tests/test_phase8.py` passed; `blind_ab_compare()` in
+  `backend/app/services/human_review.py` returns `blinded=True` and the correct
+  `winner` value.
+- **PASS** - Overrides require justification and are audit-friendly. Evidence:
+  `test_override_requires_justification_and_tracks_audit_flag` passed, and
+  `validate_override()` in `backend/app/services/human_review.py` returns
+  `approved=False` when justification is blank and preserves the audit flag.
+- **PASS** - Calibration summaries produce kappa, alpha, Spearman and a
+  confusion matrix. Evidence: `test_calibration_summary_reports_kappa_alpha_and_confusion_data`
+  passed; `calibration_summary()` in `backend/app/services/human_review.py`
+  writes the expected metrics and `confusion_matrix` shape.
+- **PASS** - Final Report mode re-scores stored traces without relaunching the
+  app. Evidence: `test_final_report_reruns_score_summary_without_live_calls`
+  passed; `final_report_rescore()` in `backend/app/services/human_review.py`
+  computes summary means and returns `rerun_without_live_calls=True`.
+- **NEEDS MANUAL CHECK** - None. The current Phase 8 spec has no UI-only
+  acceptance item; the implemented contract is validated by code and tests, not an
+  interactive browser-only screen.
+
+### Validation
+
+- Phase 8 focused backend tests: **5 passed in 0.38s**.
+- Command: `cd backend; .\.venv\Scripts\python.exe -m pytest -q tests/test_phase8.py`
+  - Result: **5 passed**.
+- Docker services remained healthy: `docker compose ps` shows all five services
+  healthy (`api`, `web`, `worker`, `redis`, `postgres`).
+- `/healthz` and `/readyz` were already confirmed healthy in earlier project
+  validation; no new Phase 9 work was started.
+
+### Environment and repo-status notes
+
+- `make check` currently fails on this machine because `make` is not installed:
+  `make : The term 'make' is not recognized as the name of a cmdlet, function, script file, or operable program.`
+- This is an environment issue, not a project-code failure. The project’s
+  Python-based validation was run instead via the backend test target above.
+
+### Run and verify
+
+```powershell
+docker compose up --build -d
+docker compose ps
+cd backend
+.\.venv\Scripts\python.exe -m pytest -q tests/test_phase8.py
+Invoke-RestMethod http://localhost:8000/healthz
+Invoke-RestMethod http://localhost:8000/readyz
+(Invoke-WebRequest -UseBasicParsing http://localhost:8000/docs).StatusCode
+```
+
+The Phase 8 human-review and calibration service/API contract is validated and
+recorded. No Phase 9 work was started, and this status is now frozen pending
+explicit user direction.
