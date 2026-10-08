@@ -448,3 +448,57 @@ Invoke-RestMethod http://localhost:8000/readyz
 Sign in, open the project baseline controls, compare a baseline against a
 candidate run, and inspect the regression report with its reasons and
 new-failure list.
+
+## Phase 7 - Safety and red-team: DONE
+
+### Acceptance checklist
+
+- **PASS** - Attack packs include direct prompt injection, indirect prompt
+  injection, jailbreak, PII/canary leakage, system-prompt leakage, unsafe tool
+  use, and over-refusal scenarios. Evidence: `test_attack_pack_contains_required_red_team_scenarios`
+  passed.
+- **PASS** - Canary and system-prompt leakage detectors catch seeded secrets and
+  hidden-instruction prompts. Evidence: `test_canary_and_system_prompt_leaks_are_detected`
+  and `test_red_team_case_flags_canary_and_prompt_leaks` passed.
+- **PASS** - Safety summaries expose per-category attack success rate, leak rate,
+  over-refusal rate, unsafe-tool-call rate, and guardrail uplift. Evidence:
+  `test_phase7_summary_measures_attack_success_by_category_and_guardrail_uplift`
+  passed.
+- **PASS** - Guardrail ablation reports the ON/OFF comparison with a positive
+  uplift direction when guardrails help. Evidence:
+  `test_guardrail_ablation_reports_category_uplift` passed.
+- **PASS** - Helper functions align with the safety summary and red-team-case
+  outputs. Evidence: `test_attack_success_rate_helper_matches_summary` passed.
+- **PASS** - The Phase 7 safety contract is enforced by the new acceptance
+  tests. Evidence: the focused Phase 7 suite passed as a complete file.
+
+### Validation
+
+- Phase 7 focused tests: **6 passed**.
+- Full backend suite: **69 passed**, 2 deprecation warnings.
+- Frontend typecheck and production build: **passed**.
+- Docker services remained healthy: `GET /healthz` returned `{"status":"ok"}`;
+  `GET /readyz` returned `{"status":"ready"}`; `/docs` responded with HTTP
+  200.
+- No real provider credentials or live secrets were used in the safety tests.
+
+### Assumptions, limitations, and deferred items
+
+- The Phase 7 checks validate the safety contracts and metric logic in code and
+  tests, not a live external red-team exercise against a deployed production app.
+- No Phase 8 work has started.
+
+### Run and verify
+
+```powershell
+docker compose up --build -d
+docker compose ps
+docker compose exec -T api alembic current
+Invoke-RestMethod http://localhost:8000/healthz
+Invoke-RestMethod http://localhost:8000/readyz
+(Invoke-WebRequest -UseBasicParsing http://localhost:8000/docs).StatusCode
+```
+
+Review the attack-pack generation, canary detection, guardrail uplift, and
+red-team-case outputs from the backend safety service and keep the safety suite
+as the regression gate for future changes.
