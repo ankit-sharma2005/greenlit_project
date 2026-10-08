@@ -303,7 +303,10 @@ async def review_dataset_items(
             detail="One or more item IDs are not in this dataset version",
         )
     for item in items:
-        item.review_status = payload.review_status
+        if payload.review_status is not None:
+            item.review_status = payload.review_status
+        if payload.regression_critical is not None:
+            item.regression_critical = payload.regression_critical
     db.add(
         AuditLog(
             user_id=user.id,
@@ -313,6 +316,7 @@ async def review_dataset_items(
                 "dataset_id": str(dataset.id),
                 "version": version.version,
                 "review_status": payload.review_status,
+                "regression_critical": payload.regression_critical,
                 "item_count": len(items),
             },
         )
@@ -719,6 +723,7 @@ def _dataset_item_out(item: DatasetItem) -> DatasetItemOut:
         category=item.category,
         provenance=item.provenance,
         review_status=item.review_status,
+        regression_critical=item.regression_critical,
         split=item.split,
         data=item.data,
     )

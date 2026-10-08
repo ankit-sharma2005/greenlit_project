@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.phase4_schemas import MetricScoreOut
 
@@ -26,7 +26,14 @@ class DatasetUploadMapping(DatasetColumnMapping):
 
 class DatasetReviewRequest(StrictModel):
     item_ids: list[UUID] = Field(min_length=1, max_length=1000)
-    review_status: Literal["approved", "rejected"]
+    review_status: Literal["approved", "rejected"] | None = None
+    regression_critical: bool | None = None
+
+    @model_validator(mode="after")
+    def require_update(self) -> DatasetReviewRequest:
+        if self.review_status is None and self.regression_critical is None:
+            raise ValueError("At least one dataset review field must be provided")
+        return self
 
 
 class DatasetGenerationRequest(StrictModel):
@@ -54,6 +61,7 @@ class DatasetItemOut(BaseModel):
     category: str
     provenance: str
     review_status: str
+    regression_critical: bool
     split: str
     data: dict[str, object]
 

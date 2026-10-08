@@ -286,6 +286,9 @@ class DatasetItem(Base):
     review_status: Mapped[str] = mapped_column(
         String(20), default="pending", nullable=False
     )
+    regression_critical: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
     split: Mapped[str] = mapped_column(String(10), default="dev", nullable=False)
     data: Mapped[dict[str, object]] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -333,6 +336,25 @@ class EvalRun(Base):
     )
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class ProjectBaseline(Base):
+    __tablename__ = "project_baselines"
+
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id"), primary_key=True
+    )
+    workspace_id: Mapped[UUID] = mapped_column(
+        ForeignKey("workspaces.id"), nullable=False
+    )
+    run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("eval_runs.id"), unique=True, nullable=False
+    )
+    approved_by: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    reason: Mapped[str] = mapped_column(String(1000), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
 
 
 class EvalRunItem(Base):

@@ -10,6 +10,7 @@ interface DatasetItem {
   category: string;
   provenance: string;
   review_status: string;
+  regression_critical: boolean;
   split: string;
   data: Record<string, unknown>;
 }
@@ -81,6 +82,61 @@ interface RunReportCategory {
   score: number;
   weight: number;
   metric_count: number;
+}
+
+interface ProjectBaseline {
+  project_id: string;
+  workspace_id: string;
+  run_id: string;
+  approved_by: string;
+  reason: string;
+  updated_at: string;
+}
+
+interface MetricComparison {
+  metric: string;
+  category: string;
+  baseline_mean: number;
+  candidate_mean: number;
+  delta: number;
+  confidence_interval: [number, number];
+  paired_permutation_p_value: number;
+  holm_adjusted_p_value: number;
+  mcnemar_p_value: number;
+  sample_size: number;
+  wins: number;
+  ties: number;
+  losses: number;
+  significant: boolean;
+  classification: 'improved' | 'no_significant_change' | 'regressed';
+}
+
+interface RunComparison {
+  baseline_run_id: string;
+  candidate_run_id: string;
+  outcome:
+    | 'significant_difference'
+    | 'no_significant_difference'
+    | 'insufficient_data';
+  confidence_level: number;
+  metrics: MetricComparison[];
+  warnings: string[];
+}
+
+interface RegressionReport {
+  baseline_run_id: string;
+  candidate_run_id: string;
+  status: 'PASS' | 'WARN' | 'BLOCK';
+  reasons: string[];
+  new_failures: Array<{
+    dataset_item_id: string;
+    position: number;
+    metric: string;
+    baseline_score: number;
+    candidate_score: number;
+    regression_critical: boolean;
+  }>;
+  comparison: RunComparison;
 }
 
 interface RunReport {
@@ -177,6 +233,14 @@ export default function DatasetStudio({
   const [runItems, setRunItems] = useState<EvalRunItem[]>([]);
   const [runReport, setRunReport] = useState<RunReport | null>(null);
   const [criteria, setCriteria] = useState<VerdictCriteria | null>(null);
+  const [projectBaseline, setProjectBaseline] =
+    useState<ProjectBaseline | null>(null);
+  const [baselineReason, setBaselineReason] = useState('');
+  const [runComparison, setRunComparison] = useState<RunComparison | null>(
+    null,
+  );
+  const [regressionReport, setRegressionReport] =
+    useState<RegressionReport | null>(null);
   const [metricCatalog, setMetricCatalog] = useState<MetricDefinition[]>([]);
   const [judgeProfiles, setJudgeProfiles] = useState<JudgeProfile[]>([]);
   const [judgeRole, setJudgeRole] = useState<JudgeProfile['role']>('dev');
@@ -231,6 +295,7 @@ export default function DatasetStudio({
       metricRows,
       judgeRows,
       verdictCriteria,
+      baselineRow,
     ] = await Promise.all([
       apiRequest<DatasetVersion[]>(`${base}/datasets`, {}, accessToken),
       apiRequest<AppVersion[]>(`${base}/app-versions`, {}, accessToken),
@@ -243,6 +308,7 @@ export default function DatasetStudio({
       apiRequest<MetricDefinition[]>(`${base}/metrics`, {}, accessToken),
       apiRequest<JudgeProfile[]>(`${base}/judge-profiles`, {}, accessToken),
       apiRequest<VerdictCriteria>(`${base}/verdict-criteria`, {}, accessToken),
+      apiRequest<ProjectBaseline | null>(`${base}/baseline`, {}, accessToken),
     ]);
     setVersions(datasetRows);
     setAppVersions(versionRows);
@@ -251,6 +317,7 @@ export default function DatasetStudio({
     setMetricCatalog(metricRows);
     setJudgeProfiles(judgeRows);
     setCriteria(verdictCriteria);
+    setProjectBaseline(baselineRow);
     setSelectedVersionId((current) =>
       current && datasetRows.some((row) => row.version_id === current)
         ? current
@@ -657,6 +724,112 @@ export default function DatasetStudio({
       setError(
         reason instanceof Error ? reason.message : `Could not ${action} run.`,
       );
+    }
+  }
+
+  async function promoteSelectedRun() {
+    if (!selectedRun || !baselineReason.trim()) return;
+    setWorking(true);
+    setError('');
+    setNotice('');
+    try {
+      const baseline = await apiRequest<ProjectBaseline>(
+        pathFor(workspace.id, projectId, '/baseline'),
+        {
+          method: 'PUT',
+          body: JSON.stringify({
+            run_id: selectedRun.id,
+            reason: baselineReason.trim(),
+          }),
+        },
+        accessToken,
+      );
+      setProjectBaseline(baseline);
+      setBaselineReason('');
+      setRunComparison(null);
+      setRegressionReport(null);
+      setNotice('The selected run was approved as the project baseline.');
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : 'The selected run could not be promoted to baseline.',
+      );
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function compareSelectedRun() {
+    if (!selectedRun || !projectBaseline) return;
+    setWorking(true);
+    setError('');
+    setNotice('');
+    try {
+      const base = pathFor(workspace.id, projectId, '');
+      const [comparison, regression] = await Promise.all([
+        apiRequest<RunComparison>(
+          `${base}/compare/${encodeURIComponent(projectBaseline.run_id)}/${encodeURIComponent(selectedRun.id)}`,
+          {},
+          accessToken,
+        ),
+        apiRequest<RegressionReport>(
+          `${base}/regression/${encodeURIComponent(selectedRun.id)}`,
+          {},
+          accessToken,
+        ),
+      ]);
+      setRunComparison(comparison);
+      setRegressionReport(regression);
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : 'The selected run could not be compared to baseline.',
+      );
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function markSelectedCritical(regressionCritical: boolean) {
+    if (!selectedVersion || selectedItems.length === 0) return;
+    setWorking(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await apiRequest<DatasetVersion>(
+        pathFor(
+          workspace.id,
+          projectId,
+          `/datasets/${encodeURIComponent(selectedVersion.dataset_id)}/versions/${selectedVersion.version}/review`,
+        ),
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            item_ids: selectedItems,
+            regression_critical: regressionCritical,
+          }),
+        },
+        accessToken,
+      );
+      setSelectedVersion(result);
+      setSelectedItems([]);
+      await reload();
+      setSelectedVersion(result);
+      setNotice(
+        regressionCritical
+          ? 'Selected items are now regression-critical.'
+          : 'Selected items are no longer regression-critical.',
+      );
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : 'Regression-critical flags could not be updated.',
+      );
+    } finally {
+      setWorking(false);
     }
   }
 
@@ -1109,24 +1282,46 @@ export default function DatasetStudio({
                       >
                         Reject selected
                       </button>
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => void markSelectedCritical(true)}
+                        disabled={
+                          working ||
+                          selectedItems.length === 0 ||
+                          selectedVersion.locked_at !== null
+                        }
+                      >
+                        Mark regression-critical
+                      </button>
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => void markSelectedCritical(false)}
+                        disabled={
+                          working ||
+                          selectedItems.length === 0 ||
+                          selectedVersion.locked_at !== null
+                        }
+                      >
+                        Clear critical flag
+                      </button>
                     </div>
                     <div className="phase3-item-list">
                       {selectedVersion.items.map((item) => (
                         <article className="phase3-item" key={item.id}>
-                          {item.review_status === 'pending' && (
-                            <input
-                              aria-label={`Select item ${item.position}`}
-                              type="checkbox"
-                              checked={selectedItems.includes(item.id)}
-                              onChange={(event) =>
-                                setSelectedItems((current) =>
-                                  event.target.checked
-                                    ? [...current, item.id]
-                                    : current.filter((id) => id !== item.id),
-                                )
-                              }
-                            />
-                          )}
+                          <input
+                            aria-label={`Select item ${item.position}`}
+                            type="checkbox"
+                            checked={selectedItems.includes(item.id)}
+                            onChange={(event) =>
+                              setSelectedItems((current) =>
+                                event.target.checked
+                                  ? [...current, item.id]
+                                  : current.filter((id) => id !== item.id),
+                              )
+                            }
+                          />
                           <div>
                             <div className="phase3-item-meta">
                               <strong>#{item.position}</strong>
@@ -1138,6 +1333,11 @@ export default function DatasetStudio({
                               >
                                 {item.review_status}
                               </span>
+                              {item.regression_critical && (
+                                <span className="phase3-status rejected">
+                                  regression-critical
+                                </span>
+                              )}
                             </div>
                             <p>{item.input_text}</p>
                             {item.reference_answer && (
@@ -1592,6 +1792,145 @@ export default function DatasetStudio({
                       </section>
                     </section>
                   )}
+                  <section
+                    className="phase6-comparison"
+                    aria-labelledby="phase6-comparison-title"
+                  >
+                    <div className="phase2-section-heading">
+                      <div>
+                        <p className="eyebrow">COMPARE & REGRESSION</p>
+                        <h5 id="phase6-comparison-title">Approved baseline</h5>
+                      </div>
+                      {projectBaseline && (
+                        <span className="phase2-step-tag">
+                          {runs.find((run) => run.id === projectBaseline.run_id)
+                            ? 'Baseline set'
+                            : `Run ${projectBaseline.run_id.slice(0, 8)}`}
+                        </span>
+                      )}
+                    </div>
+                    {projectBaseline ? (
+                      <p className="muted-text">
+                        Current baseline: run{' '}
+                        {projectBaseline.run_id.slice(0, 8)} ·{' '}
+                        {projectBaseline.reason}
+                      </p>
+                    ) : (
+                      <p className="muted-text">
+                        No project baseline has been approved.
+                      </p>
+                    )}
+                    {selectedRun.status === 'completed' && (
+                      <div className="phase6-actions">
+                        <label className="phase2-field">
+                          <span>Approval reason</span>
+                          <input
+                            maxLength={1000}
+                            minLength={3}
+                            required
+                            value={baselineReason}
+                            onChange={(event) =>
+                              setBaselineReason(event.target.value)
+                            }
+                            placeholder="Why is this run the approved baseline?"
+                          />
+                        </label>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() => void promoteSelectedRun()}
+                          disabled={working || baselineReason.trim().length < 3}
+                        >
+                          Promote selected run
+                        </button>
+                        {projectBaseline && (
+                          <button
+                            className="primary-button"
+                            type="button"
+                            onClick={() => void compareSelectedRun()}
+                            disabled={working}
+                          >
+                            Compare and check regression
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {runComparison && regressionReport && (
+                      <div className="phase6-report">
+                        <div
+                          className={`phase6-regression ${regressionReport.status.toLowerCase()}`}
+                          role="status"
+                        >
+                          <strong>Regression {regressionReport.status}</strong>
+                          <ul>
+                            {regressionReport.reasons.map((reason) => (
+                              <li key={reason}>{reason}</li>
+                            ))}
+                          </ul>
+                        </div>
+                        <h6>
+                          {runComparison.outcome === 'no_significant_difference'
+                            ? 'No significant difference'
+                            : runComparison.outcome === 'significant_difference'
+                              ? 'Statistically significant difference'
+                              : 'Insufficient paired data'}
+                        </h6>
+                        {runComparison.warnings.map((warning) => (
+                          <p className="muted-text" key={warning}>
+                            {warning}
+                          </p>
+                        ))}
+                        {regressionReport.new_failures.length > 0 && (
+                          <div>
+                            <h6>New failures</h6>
+                            <ul>
+                              {regressionReport.new_failures.map(
+                                (failure, index) => (
+                                  <li
+                                    key={`${failure.dataset_item_id}-${failure.metric}-${index}`}
+                                  >
+                                    Item #{failure.position} · {failure.metric}:{' '}
+                                    {failure.baseline_score.toFixed(2)} →{' '}
+                                    {failure.candidate_score.toFixed(2)}
+                                    {failure.regression_critical
+                                      ? ' · regression-critical'
+                                      : ''}
+                                  </li>
+                                ),
+                              )}
+                            </ul>
+                          </div>
+                        )}
+                        <div className="phase6-metric-list">
+                          {runComparison.metrics.map((metric) => (
+                            <article key={metric.metric}>
+                              <strong>{metric.metric}</strong>
+                              <span>
+                                {metric.classification.replace(/_/g, ' ')} ·{' '}
+                                {metric.delta >= 0 ? '+' : ''}
+                                {(metric.delta * 100).toFixed(1)} pp
+                              </span>
+                              <small>
+                                95% paired bootstrap CI [
+                                {(metric.confidence_interval[0] * 100).toFixed(
+                                  1,
+                                )}
+                                ,{' '}
+                                {(metric.confidence_interval[1] * 100).toFixed(
+                                  1,
+                                )}
+                                ] · Holm p=
+                                {metric.holm_adjusted_p_value.toFixed(3)} ·
+                                McNemar p={metric.mcnemar_p_value.toFixed(3)} ·
+                                n={metric.sample_size} · W/T/L {metric.wins}/
+                                {metric.ties}/{metric.losses}
+                              </small>
+                            </article>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </section>
                   <div className="phase3-item-list">
                     {runItems.map((item) => (
                       <article className="phase3-item" key={item.id}>

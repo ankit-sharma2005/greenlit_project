@@ -954,6 +954,75 @@ textarea {
   padding-left: 18px;
 }
 
+.phase6-comparison {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-soft);
+}
+
+.phase6-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+}
+
+.phase6-actions .phase2-field {
+  flex: 1 1 260px;
+}
+
+.phase6-report,
+.phase6-metric-list {
+  display: grid;
+  gap: 10px;
+}
+
+.phase6-regression {
+  padding: 12px;
+  border-left: 3px solid var(--success);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.phase6-regression.warn {
+  border-left-color: var(--warning);
+}
+
+.phase6-regression.block {
+  border-left-color: var(--danger);
+}
+
+.phase6-regression ul,
+.phase6-report ul {
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+
+.phase6-metric-list article {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.phase6-metric-list small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .phase6-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 .phase5-chunks > li {
   padding: 8px;
   border: 1px solid var(--border);
