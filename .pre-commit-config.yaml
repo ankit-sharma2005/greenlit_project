@@ -1,0 +1,38 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: ruff check backend
+        language: system
+        pass_filenames: false
+      - id: ruff-format
+        name: ruff format
+        entry: ruff format --check backend
+        language: system
+        pass_filenames: false
+      - id: mypy
+        name: mypy strict
+        entry: mypy --strict backend/app backend/alembic backend/tests
+        language: system
+        pass_filenames: false
+      - id: backend-tests
+        name: backend tests
+        entry: python -c "import os,pytest; os.chdir('backend'); raise SystemExit(pytest.main(['-q', 'tests']))"
+        language: system
+        pass_filenames: false
+      - id: frontend-lint
+        name: frontend eslint
+        entry: npm --prefix frontend run lint
+        language: system
+        pass_filenames: false
+      - id: frontend-format
+        name: frontend prettier
+        entry: npm --prefix frontend run format:check
+        language: system
+        pass_filenames: false
+      - id: frontend-typecheck
+        name: frontend typecheck
+        entry: npm --prefix frontend run typecheck
+        language: system
+        pass_filenames: false
