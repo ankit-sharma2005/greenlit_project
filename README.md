@@ -38,21 +38,22 @@ stored hashed, and invalidates existing refresh sessions. Workspace role checks 
 the user's role in that workspace membership. Alembic has an initial schema migration
 and Compose applies it before starting the API.
 
-Phase 2 is in progress. Provider configurations (GitHub Models, Ollama, and custom
-OpenAI-compatible endpoints), workspace projects, app versions, judge profiles,
-connector validation/test calls, secret encryption, trace responses, Prompt App,
-built-in RAG, and the 13-type entry-point registry are implemented. Connector
-configurations require a successful matching test call before they can be saved.
-Python Function and Python SDK Traced are visibly disabled because a safe isolated
-execution runner is not available; arbitrary user Python is not executed.
+Phase 2 is complete with documented limitations. Provider configurations (GitHub
+Models, Ollama, and custom OpenAI-compatible endpoints), workspace projects, app
+versions, judge profiles, connector validation/test calls, secret encryption,
+trace responses, Prompt App, built-in RAG and Agent, and the 13-type entry-point
+registry are implemented. Connector configurations require a successful matching
+test call before they can be saved. Python Function and Python SDK Traced are
+disabled until a safe isolated execution runner is available; arbitrary user
+Python is not executed.
 
-The backend suite currently has 14 passing tests. Ruff, strict mypy, ESLint,
-Prettier, frontend typecheck, and production build pass. The provider rate limiter
-is currently process-local, so limits are not persisted across restarts or
-coordinated across multiple API processes. Provider connection and RAG tests use
-mocked provider responses; configure real credentials/endpoints to test external
-providers. Phase 2 work exists in progress and is paused until explicitly
-authorized to continue.
+The backend suite has 19 passing tests. Ruff, strict mypy, all configured
+pre-commit hooks, ESLint, Prettier, frontend typecheck, and production build pass.
+The provider rate limiter is process-local, so limits are not persisted across
+restarts or coordinated across multiple API processes. Provider connection and
+RAG tests use mocked provider responses; configure real credentials/endpoints to
+test external providers. See [Phase 2 evidence and limitations](docs/PROGRESS.md).
+Phase 3 has not started and requires explicit approval.
 
 ### Local checks
 
@@ -69,9 +70,10 @@ npm --prefix frontend run lint
 npm --prefix frontend run format:check
 npm --prefix frontend run typecheck
 npm --prefix frontend run build
+$env:PATH = (Resolve-Path 'backend\.venv\Scripts').Path + ';' + $env:PATH
 .\backend\.venv\Scripts\python.exe -m pre_commit validate-config
+.\backend\.venv\Scripts\python.exe -m pre_commit run --all-files
 ```
 
-Install and run the repository hooks with
-`.\backend\.venv\Scripts\python.exe -m pre_commit install` and
-`.\backend\.venv\Scripts\python.exe -m pre_commit run --all-files`.
+Install the repository hooks with
+`.\backend\.venv\Scripts\python.exe -m pre_commit install`.

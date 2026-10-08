@@ -585,70 +585,78 @@ At the end of every phase you MUST:
 
 ## Implementation progress
 
-Phase 1 is DONE as of 2026-10-08. Phase 2 implementation was previously started
-and remains in progress; continuation is paused until the user explicitly
-approves starting Phase 2 under the current phase gate.
+Phase 1 is DONE as of 2026-10-08. Phase 2 is complete with documented
+limitations as of 2026-10-08. Phase 3 has not been started and requires explicit
+user approval.
 
 Phase 1 checklist evidence is recorded in `docs/PROGRESS.md`. Dark/light theme
 rendering and keyboard navigation were manually checked in the browser on the
 landing, login, and signup surfaces. These checks are a smoke test, not a full
 WCAG accessibility audit.
 
-Phase 2 acceptance evidence:
-- PASS: provider connection tests for GitHub Models and Ollama are mocked in
-  `test_provider_connection_works_for_github_and_ollama_without_exposing_secrets`.
-- PASS: RPM queueing and RPD pause are covered by
-  `test_provider_rate_limiter_queues_rpm_and_pauses_at_rpd`. The limiter is
-  process-local and has not been validated across process restarts.
-- PASS: `/api/v1/entry-point-types` returns all 13 types; later-phase types and
-  unsupported Python types are disabled in the workspace wizard. Registry and
-  unavailability behavior are covered by
+Phase 2 acceptance checklist:
+- PASS: GitHub Models and Ollama connection tests use mocked provider responses
+  in `test_provider_connection_works_for_github_and_ollama_without_exposing_secrets`.
+- PASS: RPM queueing and RPD pausing are covered by
+  `test_provider_rate_limiter_queues_rpm_and_pauses_at_rpd`.
+- PASS: `/api/v1/entry-point-types` lists all 13 types, with unavailable Python
+  execution and later-phase types marked unavailable; checked by
   `test_registry_lists_all_thirteen_types_and_validates_type_settings`.
-- PARTIAL: the wizard renders dynamic fields and server validation rejects
-  invalid settings (RAG validation is tested); a full browser pass over every
-  type-specific form has not been completed.
-- PASS: Prompt App and RAG test calls return trace, detected/missing fields, and
-  usage in `test_prompt_and_rag_test_calls_gate_saves_and_create_app_versions`.
-- PASS: connector save requires a successful test for the exact settings; the
-  same test verifies tampered settings are rejected and checks version increments.
-  The browser shows Save disabled before a successful test.
-- PARTIAL: encrypted storage and response redaction are tested for provider
-  tokens and connector headers. A dedicated captured-log assertion is not present.
-- PASS (mocked provider): built-in RAG runs retrieval and sends supplied context
-  in `test_prompt_and_rag_test_calls_gate_saves_and_create_app_versions`; no live
-  provider credentials were used.
-- PASS: switching from Prompt App to RAG creates successive app versions in the
-  same integration test.
-- FAIL / deferred: Python Function and Python SDK Traced require an isolated
-  runner. They are now correctly marked unavailable in the API and disabled in
-  the UI rather than executing user code unsafely.
-- FAIL / unverified: the built-in Agent entry point and tracing SDK do not yet
-  have full acceptance-level integration coverage.
+- PASS: RAG's type-specific fields render in the browser, JSON document input is
+  formatted, and invalid RAG settings return HTTP 422 in the registry test.
+  Manual browser verification did not cover every type.
+- PASS: Prompt App/RAG calls return output, trace, usage, and detected/missing
+  trace fields in `test_prompt_and_rag_test_calls_gate_saves_and_create_app_versions`.
+- PASS: the same integration test proves save is denied before a successful test
+  and rejects changed settings; browser check confirmed Save starts disabled and
+  Test call is enabled only after required fields are selected.
+- PASS: secret persistence and API redaction are covered by
+  `test_provider_connection_works_for_github_and_ollama_without_exposing_secrets`
+  and `test_http_test_call_redacts_and_encrypts_secret_headers`; the latter also
+  asserts captured logs do not contain the secret.
+- PASS (mocked provider): built-in RAG retrieves supplied document context and
+  returns an answer in `test_prompt_and_rag_test_calls_gate_saves_and_create_app_versions`.
+- PASS: changing the entry point creates successive AppVersions in that same
+  integration test.
+- PASS: built-in Agent mock tool calls and schema rejection are covered by
+  `test_builtin_agent_executes_schema_validated_mock_tool_calls` and
+  `test_builtin_agent_rejects_tool_arguments_outside_schema`.
+- PASS: trace-context nesting and async task isolation are covered by
+  `test_trace_context_captures_steps_and_restores_parent_context` and
+  `test_trace_context_isolated_between_async_tasks`.
+- KNOWN GAP: Python Function and Python SDK Traced remain unavailable because
+  user code requires a resource-limited isolated runner. Neither user code nor
+  uploaded modules are executed in-process or in an unrestricted subprocess.
+- KNOWN GAP: full browser validation of each entry-point form and a fully
+  instrumented Python SDK Traced integration test remain deferred with that
+  isolated-runner work.
 
-Current validation:
-- Backend: `cd backend; .venv\Scripts\python.exe -m pytest -q tests` — 14 passed,
-  2 dependency deprecation warnings.
-- Strict typing: `.\backend\.venv\Scripts\python.exe -m mypy --strict backend\app backend\alembic backend\tests` — no issues in 26 source files.
-- Ruff lint and formatting, ESLint, Prettier, frontend typecheck, and production
-  build pass after the current changes.
-- Compose has five healthy services; Alembic reports `0002_phase2 (head)`.
-  Signup and project creation were exercised in the browser; project creation
-  returned HTTP 201. Real provider credentials were not used.
+Phase 2 validation evidence:
+- `docker compose ps`: API, web, worker, Redis, and PostgreSQL all healthy.
+- `GET /healthz`: `{"status":"ok"}`; `GET /readyz`: `{"status":"ready"}`;
+  `/docs` and the web app returned HTTP 200; Alembic current is `0002_phase2 (head)`.
+- Backend `pytest -q tests`: 19 passed, 2 dependency deprecation warnings.
+- Ruff check, Ruff format check, strict mypy, and all configured pre-commit hooks
+  passed. Frontend ESLint, Prettier, TypeScript typecheck, and production build
+  passed.
+- Browser check: RAG form rendered without a redundant provider-ID field;
+  document JSON was formatted; required provider selection enabled Test call;
+  Save remained disabled before a successful test.
+- External provider credentials were not used. RAG and provider results are
+  verified with mocked responses; retrieval is basic lexical retrieval rather
+  than a production retrieval-quality evaluation.
 
-Known limitations and deferred work:
-- The limiter is in-memory and does not coordinate multiple API processes or
-  preserve counts across restarts.
-- Python Function and Python SDK Traced are blocked on sandboxed execution.
-- The built-in RAG smoke test uses a mocked OpenAI-compatible response and basic
-  lexical retrieval; it is not a production retrieval-quality evaluation.
-- Dark/light visual polish and keyboard navigation passed manual browser smoke
-  checks; a full WCAG accessibility audit remains out of scope.
-- This repository has Git metadata. Its initial commit records the working
-  project and Phase 1 closeout; generated local database/test-output artifacts
-  are intentionally excluded.
+Other known limitations:
+- The rate limiter is process-local and neither persists across restarts nor
+  coordinates multiple API processes.
+- Dark/light visual polish and keyboard navigation received manual smoke checks;
+  a full WCAG accessibility audit remains out of scope.
+- Generated local databases, test output, secrets, caches, dependencies, and
+  build output are intentionally excluded from commits.
 
 To run and verify locally, use `docker compose up --build -d`, `docker compose ps`,
 `curl http://localhost:8000/healthz`, `curl http://localhost:8000/readyz`, and open
 `http://localhost:8000/docs` plus `http://localhost:5173`. Configure a provider
 credential in the workspace UI before exercising Prompt App or RAG against a
-real external endpoint.
+real external endpoint. Python Function and Python SDK Traced are intentionally
+unavailable until isolated execution is implemented.

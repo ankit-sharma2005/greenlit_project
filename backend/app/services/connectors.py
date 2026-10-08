@@ -597,7 +597,15 @@ async def _run_agent(
             raise ValueError("Model tool arguments must be a JSON object")
         tool = tool_map[name]
         if tool.parameters:
-            validate_json_schema(arguments, tool.parameters)
+            try:
+                validate_json_schema(arguments, tool.parameters)
+            except (
+                JsonSchemaValidationError,
+                JsonSchemaSchemaError,
+            ) as exc:
+                raise ValueError(
+                    f"Model returned invalid arguments for tool '{name}'"
+                ) from exc
         calls.append(
             {
                 "name": name,
@@ -637,13 +645,21 @@ def _test_uploaded_output(
         if settings.retrieved_contexts_field
         else None
     )
+    tool_calls = (
+        _mapped_value(row, settings.tool_calls_field)
+        if settings.tool_calls_field
+        else None
+    )
+    steps: dict[str, object] = {}
+    if contexts is not None:
+        steps["retrieved_chunks"] = contexts
+    if tool_calls is not None:
+        steps["tool_calls"] = tool_calls
     return _trace_response(
         output,
         started,
         row,
-        extras={
-            "steps": ({"retrieved_chunks": contexts} if contexts is not None else {})
-        },
+        extras={"steps": steps},
     )
 
 

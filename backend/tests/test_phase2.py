@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 from uuid import UUID, uuid4
@@ -374,7 +375,9 @@ async def test_prompt_and_rag_test_calls_gate_saves_and_create_app_versions(
 @pytest.mark.asyncio
 async def test_http_test_call_redacts_and_encrypts_secret_headers(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.DEBUG)
     seen_secret: list[str] = []
 
     def handle_request(request: httpx.Request) -> httpx.Response:
@@ -424,6 +427,7 @@ async def test_http_test_call_redacts_and_encrypts_secret_headers(
     assert test_call.status_code == 200, test_call.text
     assert seen_secret == [f"Bearer {secret}"]
     assert secret not in test_call.text
+    assert secret not in caplog.text
     assert "[REDACTED]" in test_call.json()["trace"]["output"]
 
     saved = await client.post(
@@ -450,6 +454,241 @@ async def test_http_test_call_redacts_and_encrypts_secret_headers(
         "Authorization": f"Bearer {secret}"
     }
     assert secret not in saved.text
+    assert secret not in caplog.text
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_builtin_agent_executes_schema_validated_mock_tool_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chat_requests: list[dict[str, object]] = []
+
+    def handle_completion(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(
+                200,
+                json={
+                    "object": "list",
+                    "data": [{"id": "agent-model", "object": "model"}],
+                },
+            )
+        body = json.loads(request.content)
+        chat_requests.append(body)
+        if len(chat_requests) == 1:
+            output = json.dumps(
+                {"tool": "lookup_weather", "arguments": {"city": "Wellington"}}
+            )
+        else:
+            output = "The weather in Wellington is mild."
+        return httpx.Response(
+            200,
+            json={
+                "id": f"chatcmpl-agent-{len(chat_requests)}",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "agent-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": output},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 15,
+                    "completion_tokens": 7,
+                    "total_tokens": 22,
+                },
+            },
+        )
+
+    monkeypatch.setattr(
+        gateway,
+        "client_factory",
+        mock_provider_client(handle_completion),
+    )
+    client, workspace_id, access_token = await signed_in_client()
+    headers = {"Authorization": f"Bearer {access_token}"}
+    provider = await client.post(
+        f"/api/v1/workspaces/{workspace_id}/providers",
+        headers=headers,
+        json={
+            "name": "Mock agent provider",
+            "provider_type": "custom",
+            "base_url": "https://mock-agent.example/v1",
+        },
+    )
+    assert provider.status_code == 201, provider.text
+    settings = {
+        "provider_id": provider.json()["id"],
+        "model": "agent-model",
+        "max_steps": 3,
+        "tools": [
+            {
+                "name": "lookup_weather",
+                "description": "Look up a city's weather",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                    "additionalProperties": False,
+                },
+                "mock_result": {"forecast": "mild"},
+            }
+        ],
+    }
+    result = await client.post(
+        f"/api/v1/workspaces/{workspace_id}/connectors/test-call",
+        headers=headers,
+        json={
+            "entry_point_type": "BUILTIN_AGENT_APP",
+            "settings": settings,
+            "input": "What is the weather in Wellington?",
+        },
+    )
+
+    assert result.status_code == 200, result.text
+    trace = result.json()["trace"]
+    assert trace["output"] == "The weather in Wellington is mild."
+    assert trace["steps"]["tool_calls"] == [
+        {
+            "name": "lookup_weather",
+            "args": {"city": "Wellington"},
+            "result": {"forecast": "mild"},
+            "error": None,
+        }
+    ]
+    assert "steps.tool_calls" in result.json()["detected_fields"]
+    assert len(chat_requests) == 2
+    second_messages = chat_requests[1]["messages"]
+    assert isinstance(second_messages, list)
+    assert "Mock tool result" in str(second_messages[-1])
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_builtin_agent_rejects_tool_arguments_outside_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handle_completion(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(
+                200,
+                json={
+                    "object": "list",
+                    "data": [{"id": "agent-model", "object": "model"}],
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-invalid-tool",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "agent-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "tool": "lookup_weather",
+                                    "arguments": {"city": "Wellington", "extra": True},
+                                }
+                            ),
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 5,
+                    "total_tokens": 15,
+                },
+            },
+        )
+
+    monkeypatch.setattr(
+        gateway,
+        "client_factory",
+        mock_provider_client(handle_completion),
+    )
+    client, workspace_id, access_token = await signed_in_client()
+    headers = {"Authorization": f"Bearer {access_token}"}
+    provider = await client.post(
+        f"/api/v1/workspaces/{workspace_id}/providers",
+        headers=headers,
+        json={
+            "name": "Mock agent provider",
+            "provider_type": "custom",
+            "base_url": "https://mock-agent.example/v1",
+        },
+    )
+    settings = {
+        "provider_id": provider.json()["id"],
+        "model": "agent-model",
+        "tools": [
+            {
+                "name": "lookup_weather",
+                "description": "Look up a city's weather",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                    "additionalProperties": False,
+                },
+                "mock_result": {"forecast": "mild"},
+            }
+        ],
+    }
+
+    result = await client.post(
+        f"/api/v1/workspaces/{workspace_id}/connectors/test-call",
+        headers=headers,
+        json={
+            "entry_point_type": "BUILTIN_AGENT_APP",
+            "settings": settings,
+            "input": "What is the weather?",
+        },
+    )
+    assert result.status_code == 422
+    assert "invalid arguments for tool" in result.json()["detail"]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_uploaded_output_trace_maps_retrieval_and_tool_fields() -> None:
+    client, workspace_id, access_token = await signed_in_client()
+    response = await client.post(
+        f"/api/v1/workspaces/{workspace_id}/connectors/test-call",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "entry_point_type": "UPLOAD_OUTPUTS",
+            "settings": {
+                "input_field": "query",
+                "output_field": "response.answer",
+                "retrieved_contexts_field": "contexts",
+                "tool_calls_field": "events.calls",
+            },
+            "input": json.dumps(
+                {
+                    "query": "Question",
+                    "response": {"answer": "Answer"},
+                    "contexts": ["source chunk"],
+                    "events": {"calls": [{"name": "lookup"}]},
+                }
+            ),
+        },
+    )
+    assert response.status_code == 200, response.text
+    trace = response.json()["trace"]
+    assert trace["output"] == "Answer"
+    assert trace["steps"]["retrieved_chunks"] == ["source chunk"]
+    assert trace["steps"]["tool_calls"] == [{"name": "lookup"}]
+    assert "steps.retrieved_chunks" in response.json()["detected_fields"]
+    assert "steps.tool_calls" in response.json()["detected_fields"]
     await client.aclose()
 
 

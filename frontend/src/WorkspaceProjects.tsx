@@ -340,10 +340,18 @@ function getSettingsSchema(type: EntryPointType | undefined) {
       : type.type === 'BUILTIN_RAG_APP'
         ? ragAppSchema
         : genericSchemas[type.type];
-  if (!schema?.properties?.entry_point_type) return schema;
+  const reservedFields = new Set(['entry_point_type', 'provider_id']);
+  if (
+    !schema ||
+    !Object.keys(schema.properties ?? {}).some((field) =>
+      reservedFields.has(field),
+    )
+  ) {
+    return schema;
+  }
 
   const properties: Record<string, SettingsField> = { ...schema.properties };
-  delete properties.entry_point_type;
+  for (const field of reservedFields) delete properties[field];
   return {
     ...schema,
     properties,
@@ -456,6 +464,9 @@ function SettingsEditor({
             key.toLowerCase().includes('schema') ||
             key.toLowerCase().includes('definitions'));
         const label = field.title ?? key.replace(/_/g, ' ');
+        const isJsonField = field.type === 'object' || field.type === 'array';
+        const jsonText =
+          typeof value === 'string' ? value : JSON.stringify(value, null, 2);
 
         return (
           <label className="phase2-field" key={key}>
@@ -478,6 +489,20 @@ function SettingsEditor({
                   </option>
                 ))}
               </select>
+            ) : isJsonField ? (
+              <textarea
+                required={required}
+                rows={key === 'documents' || key === 'tools' ? 6 : 4}
+                value={jsonText}
+                onChange={(event) => {
+                  const text = event.target.value;
+                  try {
+                    onChange({ ...settings, [key]: JSON.parse(text) });
+                  } catch {
+                    onChange({ ...settings, [key]: text });
+                  }
+                }}
+              />
             ) : isLongText ? (
               <textarea
                 required={required}
@@ -581,10 +606,14 @@ export default function WorkspaceProjects({
     (provider) => provider.id === selectedProviderId,
   );
   const currentSchema = getSettingsSchema(activeType);
-  const requiredSettings = currentSchema?.required ?? [];
+  const requiredSettings = (currentSchema?.required ?? []).filter(
+    (key) => key !== 'provider_id',
+  );
+  const requiresProvider = currentSchema?.required?.includes('provider_id');
   const canTest =
     Boolean(activeType) &&
     Boolean(testInput.trim()) &&
+    (!requiresProvider || Boolean(selectedProviderId)) &&
     requiredSettings.every((key) => {
       const value = connectorSettings[key];
       return (
@@ -1195,8 +1224,13 @@ export default function WorkspaceProjects({
                     </label>
                     {providers.length > 0 && (
                       <label className="phase2-field">
-                        <span>Provider (optional)</span>
+                        <span>
+                          {requiresProvider
+                            ? 'Provider *'
+                            : 'Provider (optional)'}
+                        </span>
                         <select
+                          required={requiresProvider}
                           value={selectedProviderId}
                           onChange={(event) => {
                             setSelectedProviderId(event.target.value);
