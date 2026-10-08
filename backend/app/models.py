@@ -332,9 +332,22 @@ class EvalRunItem(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
     output: Mapped[str | None] = mapped_column(String(20_000))
     trace: Mapped[dict[str, object]] = mapped_column(JSON, default=dict, nullable=False)
+    scores: Mapped[list[dict[str, object]]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
     error: Mapped[str | None] = mapped_column(String(2000))
     attempts: Mapped[int] = mapped_column(default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class JudgeMetricCache(Base):
+    __tablename__ = "judge_metric_cache"
+
+    cache_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    result: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )

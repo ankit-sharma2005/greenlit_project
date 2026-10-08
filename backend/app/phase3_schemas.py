@@ -5,6 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.phase4_schemas import MetricScoreOut
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -103,6 +105,7 @@ class EvalRunItemOut(BaseModel):
     status: str
     output: str | None
     trace: dict[str, object]
+    scores: list[MetricScoreOut]
     error: str | None
     attempts: int
     completed_at: str | None

@@ -232,3 +232,87 @@ Invoke-RestMethod http://localhost:8000/readyz
 
 Open `http://localhost:5173`, select a project, import and approve a dataset,
 then run it against a tested connector version to observe live progress.
+
+## Phase 4 - Metrics: DONE WITH DOCUMENTED LIMITATIONS
+
+### Acceptance checklist
+
+- **PASS** - Every registered deterministic metric has fixed-example tests.
+  Evidence: `test_every_rule_metric_returns_fixed_expected_score` covers
+  answer presence, normalized exact match, RAG context-term recall, expected
+  tool-call matching, latency, token instrumentation, and JSON Schema output.
+  Invalid JSON and schema violations are covered separately.
+- **PASS** - Metrics with absent requirements are `not_instrumented`, not
+  failures. Evidence: `test_missing_required_metric_fields_are_not_instrumented`
+  covers missing output/reference, retrieved chunks, tool calls, latency, token
+  usage, and expected schema. Run integration verifies persisted statuses.
+- **PASS** - Judge output is validated as bounded JSON and malformed output is
+  repaired once. Evidence: `test_malformed_judge_json_is_retried_and_validated`
+  verifies the retry and structured score.
+- **PASS** - A cache hit prevents a second provider call. Evidence:
+  `test_judge_cache_avoids_second_provider_call` sees exactly one mocked gateway
+  call for two profiles with the same rubric/provider/model/input identity.
+- **PASS (mocked provider)** - Hostile answer text is treated as untrusted and
+  does not change the score. Evidence:
+  `test_judge_prompt_treats_hostile_answer_as_untrusted` asserts the hardening
+  instructions in both prompts and the same returned score for benign/hostile
+  answers. This does not certify behavior of any live external model.
+- **PASS** - Rule and judge score statuses, provider/model provenance,
+  confidence, rubric version, cache-hit indicator, and multi-judge aggregate
+  persist in run-item output; a project-scoped metric catalog is available.
+  Evidence: the Phase 3 run test verifies a saved mocked dev-judge score,
+  provider/model details, rule scores, and typed API output;
+  `test_metric_catalog_api_is_project_scoped`,
+  `test_metric_catalog_and_multi_judge_aggregation`, and
+  `test_judge_cache_avoids_second_provider_call`.
+- **PASS (manual browser smoke)** - The Dataset Studio page displays all metric
+  categories and the versioned Dev/Final/Secondary judge profile editor.
+  Evidence: `http://localhost:5173/workspace`, region “Metric library” and
+  heading “Configure a versioned judge profile”.
+
+### Validation
+
+- Fresh isolated backend database: `pytest -q tests` - **43 passed**, 2
+  dependency deprecation warnings.
+- Ruff check and format check passed; strict mypy passed with no issues in 38
+  source files.
+- All seven configured `pre-commit run --all-files` hooks passed, including the
+  backend test suite.
+- Frontend ESLint, TypeScript typecheck, Prettier format check, and Vite build
+  passed.
+- `docker compose up --build -d` - API, web, worker, Redis, and PostgreSQL
+  healthy; Alembic reports `0004_metrics (head)`. PostgreSQL confirms
+  `eval_run_items.scores` is a JSON column.
+- `/healthz` returned `{"status":"ok"}`, `/readyz` returned
+  `{"status":"ready"}`, and `/docs` and the web app returned HTTP 200.
+- No live provider credentials were used. Judge behavior and prompt-injection
+  validation are tested with a mocked gateway.
+
+### Assumptions, known limitations, and deferred items
+
+- Registered deterministic checks are useful baselines, not a replacement for
+  a task-specific calibrated rubric. Context recall is lexical term overlap,
+  exact match uses normalized whitespace/case, the default latency threshold
+  is 5000 ms, and token usage is instrumentation presence only.
+- Judge prompt injection was validated at prompt construction with a mocked
+  provider response; robustness on real provider models remains an empirical
+  limitation.
+- The judge cache has no eviction/retention policy yet; local deployments are
+  expected to have small data volumes.
+- Judge profiles are versioned when their rubric changes. Re-scoring completed
+  traces in Final Report mode remains a Phase 8 item.
+
+### Run and verify
+
+```powershell
+docker compose up --build -d
+docker compose ps
+docker compose exec -T api alembic current
+Invoke-RestMethod http://localhost:8000/healthz
+Invoke-RestMethod http://localhost:8000/readyz
+(Invoke-WebRequest -UseBasicParsing http://localhost:8000/docs).StatusCode
+(Invoke-WebRequest -UseBasicParsing http://localhost:5173).StatusCode
+```
+
+In Dataset Studio, inspect the metric library, configure a judge profile, run an
+approved dataset, and expand run items to inspect persisted metric scores.

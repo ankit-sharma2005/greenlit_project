@@ -500,6 +500,63 @@ textarea {
   gap: 18px;
 }
 
+.phase4-metric-catalog {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.phase4-metric-catalog > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.phase4-metric-catalog span {
+  border-radius: 999px;
+  padding: 5px 9px;
+  color: var(--muted);
+  background: var(--surface-raised, var(--surface));
+  font-size: 0.8rem;
+}
+
+.phase4-judge-card {
+  margin-bottom: 18px;
+}
+
+.phase4-judge-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
+  gap: 14px;
+}
+
+.phase4-rubric-field {
+  grid-column: span 2;
+}
+
+.phase4-rubric-field textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.phase4-judge-form small {
+  color: var(--muted);
+}
+
+.phase4-score-list {
+  display: grid;
+  gap: 5px;
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 .phase3-mapping-grid,
 .phase3-run-form {
   display: grid;
@@ -646,8 +703,13 @@ textarea {
 
 @media (max-width: 900px) {
   .phase3-creation-grid,
-  .phase3-run-grid {
+  .phase3-run-grid,
+  .phase4-judge-form {
     grid-template-columns: 1fr;
+  }
+
+  .phase4-rubric-field {
+    grid-column: auto;
   }
 
   .phase3-run-form {

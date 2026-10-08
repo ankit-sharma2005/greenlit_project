@@ -19,11 +19,12 @@ from app.models import (
     ConnectorProfile,
     EvalRun,
     EvalRunItem,
+    JudgeProfile,
     ProviderConfig,
 )
 from app.phase2_schemas import UploadOutputsSettings
 from app.routers import phase3 as phase3_router
-from app.services import connectors, run_engine
+from app.services import connectors, metrics, run_engine
 from app.services.llm_gateway import ChatResult
 from app.services.rate_limit import DailyQuotaPaused
 
@@ -301,6 +302,59 @@ async def test_twenty_item_run_resumes_without_duplicate_records_and_controls_wo
     client, workspace_id, access_token = await signed_in_client()
     project_id = await create_project(client, workspace_id, access_token)
     app_version_id = await add_upload_outputs_connector(project_id)
+    async with async_session_maker() as db:
+        provider = ProviderConfig(
+            workspace_id=workspace_id,
+            name="Mock run judge",
+            provider_type="ollama",
+            base_url="http://localhost:11434/v1",
+            rpm=60,
+            rpd=1000,
+            max_input_tokens=8192,
+            max_output_tokens=1024,
+            fallback_provider_ids=[],
+        )
+        db.add(provider)
+        await db.flush()
+        db.add(
+            JudgeProfile(
+                project_id=project_id,
+                role="dev",
+                provider_id=provider.id,
+                model="mock-run-judge",
+                temperature=0,
+                rubric_prompt="Score answer quality.",
+                rubric_version=1,
+            )
+        )
+        await db.commit()
+
+    async def mock_judge(
+        providers: list[ProviderConfig],
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        temperature: float = 0.0,
+        max_output_tokens: int | None = None,
+    ) -> ChatResult:
+        del messages, temperature, max_output_tokens
+        return ChatResult(
+            output=json.dumps(
+                {
+                    "score": 0.8,
+                    "reasoning": "The answer is useful.",
+                    "confidence": 0.9,
+                }
+            ),
+            model=model,
+            tokens_in=20,
+            tokens_out=10,
+            raw_response={},
+            provider_id=providers[0].id,
+            queue_position=0,
+        )
+
+    monkeypatch.setattr(metrics.gateway, "complete", mock_judge)
     headers = {"Authorization": f"Bearer {access_token}"}
     rows = [
         {"input": f"item-{index}", "reference_answer": f"answer-{index}"}
@@ -422,6 +476,19 @@ async def test_twenty_item_run_resumes_without_duplicate_records_and_controls_wo
         assert run.failed_items == 1
         assert len(run_items) == 20
         assert sum(item.status == "completed" for item in run_items) == 19
+        completed_item = next(item for item in run_items if item.status == "completed")
+        score_by_name = {score["name"]: score for score in completed_item.scores}
+        assert score_by_name["output_nonempty"]["score"] == 1.0
+        assert score_by_name["retrieval_context_recall"]["status"] == "not_instrumented"
+        assert score_by_name["answer_quality:dev"]["status"] == "scored"
+        assert score_by_name["answer_quality:dev"]["score"] == 0.8
+        judge_score = score_by_name["answer_quality:dev"]
+        assert judge_score["details"] == {
+            "confidence": 0.9,
+            "model": "mock-run-judge",
+            "provider_id": str(provider.id),
+            "reasoning": "The answer is useful.",
+        }
         failed = next(item for item in run_items if item.status == "failed")
         assert failed.error == "RuntimeError: connector execution failed"
         recovered = next(
@@ -431,6 +498,21 @@ async def test_twenty_item_run_resumes_without_duplicate_records_and_controls_wo
         )
         assert recovered.attempts == 2
         assert recovered.status == "completed"
+
+    item_response = await client.get(
+        f"/api/v1/workspaces/{workspace_id}/projects/{project_id}/runs/{run_id}/items",
+        headers=headers,
+    )
+    assert item_response.status_code == 200
+    api_item = next(
+        row
+        for row in item_response.json()
+        if row["dataset_item_id"] == str(recovered_dataset_item_id)
+    )
+    assert {score["name"] for score in api_item["scores"]} >= {
+        "output_nonempty",
+        "answer_quality:dev",
+    }
 
     retried = await run_engine.execute_eval_run_async(run_id, task_id="recovered-task")
     assert retried["status"] == "completed"

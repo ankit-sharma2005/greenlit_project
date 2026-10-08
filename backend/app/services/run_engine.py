@@ -20,6 +20,7 @@ from app.models import (
 )
 from app.services.connectors import execute_test_call, validate_connector_settings
 from app.services.llm_gateway import LLMGateway
+from app.services.metrics import score_run_item
 from app.services.rate_limit import DailyQuotaPaused
 from app.services.secrets import decrypt_secret
 
@@ -125,6 +126,14 @@ async def execute_eval_run_async(run_id: str, *, task_id: str) -> dict[str, obje
 
         try:
             result = await _execute_one_item(run_uuid, run_item_id, dataset_item_id)
+            trace = result.get("trace")
+            if isinstance(trace, dict):
+                await score_run_item(
+                    run_uuid,
+                    run_item_id,
+                    dataset_item_id,
+                    trace,
+                )
         except DailyQuotaPaused:
             async with async_session_maker() as db:
                 item = await db.get(EvalRunItem, run_item_id)

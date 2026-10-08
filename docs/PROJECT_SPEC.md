@@ -506,13 +506,13 @@ Phase 4 - Metrics
   Build: metric plugin system, rule + LLM-judge metrics (quality, RAG, tool,
   operational), judge cache, multi-judge.
   Acceptance:
-  [ ] Every metric has unit tests with fixed examples
-  [ ] Metrics that need missing trace fields are skipped and marked "not
+  [x] Every registered rule metric has fixed-example unit tests
+  [x] Metrics that need missing trace fields are skipped and marked "not
       instrumented", not failed
-  [ ] Judge output is validated JSON; malformed output is repaired or retried
-  [ ] Cache hit avoids a second provider call (tested)
-  [ ] Judge prompt-injection test (hostile text in an answer) does not change
-      the score
+  [x] Judge output is validated JSON; malformed output is repaired or retried
+  [x] Cache hit avoids a second provider call (tested)
+  [x] Judge prompt-injection test (hostile text in an answer) does not change
+      the score in the mocked-provider test
 Phase 5 - Verdict and trace viewer
   Build: criteria builder, decision engine, Results page, Trace Viewer.
   Acceptance:
@@ -590,7 +590,8 @@ At the end of every phase you MUST:
 Phase 1 is DONE as of 2026-10-08. Phase 2 is complete with documented
 limitations as of 2026-10-08. Phase 3 is complete with documented limitations
 as of 2026-10-08; its live worker-kill/restart acceptance still needs a manual
-check. Phase 4 has not started and requires explicit user approval.
+check. Phase 4 is complete with documented limitations as of 2026-10-08.
+Phase 5 has not started and requires explicit user approval.
 
 Phase 1 checklist evidence is recorded in `docs/PROGRESS.md`. Dark/light theme
 rendering and keyboard navigation were manually checked in the browser on the

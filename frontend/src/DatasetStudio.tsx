@@ -61,9 +61,41 @@ interface EvalRunItem {
   status: string;
   output: string | null;
   trace: Record<string, unknown>;
+  scores: MetricScore[];
   error: string | null;
   attempts: number;
   completed_at: string | null;
+}
+
+interface MetricScore {
+  name: string;
+  category: string;
+  method: 'rule' | 'llm_judge';
+  status: 'scored' | 'not_instrumented' | 'not_configured' | 'error';
+  score: number | null;
+  reason: string;
+  judge_role: string | null;
+  cache_hit: boolean;
+}
+
+interface MetricDefinition {
+  name: string;
+  category: string;
+  description: string;
+  requires: string[];
+  mode: 'reference_based' | 'reference_free';
+  method: 'rule' | 'llm_judge';
+  rubric_version: number;
+}
+
+interface JudgeProfile {
+  id: string;
+  role: 'dev' | 'final' | 'secondary';
+  provider_id: string;
+  model: string;
+  temperature: number;
+  rubric_prompt: string;
+  rubric_version: number;
 }
 
 interface Provider {
@@ -101,6 +133,12 @@ export default function DatasetStudio({
   const [runs, setRuns] = useState<EvalRun[]>([]);
   const [selectedRun, setSelectedRun] = useState<EvalRun | null>(null);
   const [runItems, setRunItems] = useState<EvalRunItem[]>([]);
+  const [metricCatalog, setMetricCatalog] = useState<MetricDefinition[]>([]);
+  const [judgeProfiles, setJudgeProfiles] = useState<JudgeProfile[]>([]);
+  const [judgeRole, setJudgeRole] = useState<JudgeProfile['role']>('dev');
+  const [judgeProvider, setJudgeProvider] = useState('');
+  const [judgeModel, setJudgeModel] = useState('');
+  const [judgeRubric, setJudgeRubric] = useState('');
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [uploadName, setUploadName] = useState('');
   const [uploadTaskType, setUploadTaskType] =
@@ -141,22 +179,31 @@ export default function DatasetStudio({
 
   const reload = useCallback(async () => {
     const base = pathFor(workspace.id, projectId, '');
-    const [datasetRows, versionRows, providerRows, runRows] = await Promise.all(
-      [
-        apiRequest<DatasetVersion[]>(`${base}/datasets`, {}, accessToken),
-        apiRequest<AppVersion[]>(`${base}/app-versions`, {}, accessToken),
-        apiRequest<Provider[]>(
-          `/workspaces/${encodeURIComponent(workspace.id)}/providers`,
-          {},
-          accessToken,
-        ),
-        apiRequest<EvalRun[]>(`${base}/runs`, {}, accessToken),
-      ],
-    );
+    const [
+      datasetRows,
+      versionRows,
+      providerRows,
+      runRows,
+      metricRows,
+      judgeRows,
+    ] = await Promise.all([
+      apiRequest<DatasetVersion[]>(`${base}/datasets`, {}, accessToken),
+      apiRequest<AppVersion[]>(`${base}/app-versions`, {}, accessToken),
+      apiRequest<Provider[]>(
+        `/workspaces/${encodeURIComponent(workspace.id)}/providers`,
+        {},
+        accessToken,
+      ),
+      apiRequest<EvalRun[]>(`${base}/runs`, {}, accessToken),
+      apiRequest<MetricDefinition[]>(`${base}/metrics`, {}, accessToken),
+      apiRequest<JudgeProfile[]>(`${base}/judge-profiles`, {}, accessToken),
+    ]);
     setVersions(datasetRows);
     setAppVersions(versionRows);
     setProviders(providerRows);
     setRuns(runRows);
+    setMetricCatalog(metricRows);
+    setJudgeProfiles(judgeRows);
     setSelectedVersionId((current) =>
       current && datasetRows.some((row) => row.version_id === current)
         ? current
@@ -177,8 +224,20 @@ export default function DatasetStudio({
         ? current
         : (providerRows[0]?.id ?? ''),
     );
+    const savedJudge = judgeRows.find((profile) => profile.role === judgeRole);
+    if (savedJudge) {
+      setJudgeProvider(savedJudge.provider_id);
+      setJudgeModel(savedJudge.model);
+      setJudgeRubric(savedJudge.rubric_prompt);
+    } else {
+      setJudgeProvider((current) =>
+        current && providerRows.some((provider) => provider.id === current)
+          ? current
+          : (providerRows[0]?.id ?? ''),
+      );
+    }
     if (runRows.length) setSelectedRun(runRows[0]);
-  }, [accessToken, projectId, workspace.id]);
+  }, [accessToken, judgeRole, projectId, workspace.id]);
 
   useEffect(() => {
     let active = true;
@@ -452,6 +511,48 @@ export default function DatasetStudio({
     }
   }
 
+  async function saveJudgeProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!judgeProvider) {
+      setError('Choose a provider for the judge profile.');
+      return;
+    }
+    setWorking(true);
+    setError('');
+    setNotice('');
+    try {
+      const profile = await apiRequest<JudgeProfile>(
+        pathFor(workspace.id, projectId, `/judge-profiles/${judgeRole}`),
+        {
+          method: 'PUT',
+          body: JSON.stringify({
+            role: judgeRole,
+            provider_id: judgeProvider,
+            model: judgeModel.trim(),
+            temperature: 0,
+            rubric_prompt: judgeRubric,
+          }),
+        },
+        accessToken,
+      );
+      setJudgeProfiles((current) => [
+        ...current.filter((candidate) => candidate.role !== profile.role),
+        profile,
+      ]);
+      setNotice(
+        `${profile.role} judge saved at rubric v${profile.rubric_version}.`,
+      );
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : 'Judge profile could not be saved.',
+      );
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function runAction(action: 'pause' | 'resume' | 'cancel') {
     if (!selectedRun) return;
     setError('');
@@ -500,6 +601,106 @@ export default function DatasetStudio({
         <p className="muted-text">Loading datasets and runs…</p>
       ) : (
         <>
+          <section
+            className="phase4-metric-catalog"
+            aria-label="Metric library"
+          >
+            <strong>Metric library</strong>
+            <div>
+              {metricCatalog.map((metric) => (
+                <span key={metric.name} title={metric.description}>
+                  {metric.name} · {metric.category}
+                </span>
+              ))}
+            </div>
+          </section>
+          <section className="dashboard-card phase2-card phase4-judge-card">
+            <div className="phase2-section-heading">
+              <div>
+                <p className="eyebrow">LLM JUDGE</p>
+                <h4>Configure a versioned judge profile</h4>
+              </div>
+              <span className="phase2-step-tag">
+                {judgeProfiles.length} saved
+              </span>
+            </div>
+            <form
+              className="phase4-judge-form"
+              onSubmit={(event) => void saveJudgeProfile(event)}
+            >
+              <label className="phase2-field">
+                <span>Profile role</span>
+                <select
+                  value={judgeRole}
+                  onChange={(event) => {
+                    const role = event.target.value as JudgeProfile['role'];
+                    setJudgeRole(role);
+                    const profile = judgeProfiles.find(
+                      (candidate) => candidate.role === role,
+                    );
+                    setJudgeProvider(
+                      profile?.provider_id ?? providers[0]?.id ?? '',
+                    );
+                    setJudgeModel(profile?.model ?? '');
+                    setJudgeRubric(profile?.rubric_prompt ?? '');
+                  }}
+                >
+                  <option value="dev">Development judge</option>
+                  <option value="final">Final report judge</option>
+                  <option value="secondary">Secondary judge</option>
+                </select>
+              </label>
+              <label className="phase2-field">
+                <span>Provider</span>
+                <select
+                  required
+                  value={judgeProvider}
+                  onChange={(event) => setJudgeProvider(event.target.value)}
+                >
+                  <option value="">Choose provider</option>
+                  {providers.map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.name} · {provider.provider_type}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="phase2-field">
+                <span>Judge model</span>
+                <input
+                  required
+                  maxLength={200}
+                  value={judgeModel}
+                  onChange={(event) => setJudgeModel(event.target.value)}
+                  placeholder="Model identifier"
+                />
+              </label>
+              <label className="phase2-field phase4-rubric-field">
+                <span>Rubric instructions</span>
+                <textarea
+                  maxLength={10_000}
+                  value={judgeRubric}
+                  onChange={(event) => setJudgeRubric(event.target.value)}
+                  placeholder="Define correctness, relevance, completeness, and task-specific criteria."
+                />
+              </label>
+              <button
+                className="primary-button"
+                type="submit"
+                disabled={working || !judgeProvider || !judgeModel.trim()}
+              >
+                Save judge profile
+              </button>
+              {judgeProfiles
+                .filter((profile) => profile.role === judgeRole)
+                .map((profile) => (
+                  <small key={profile.id}>
+                    Saved model {profile.model} · rubric v
+                    {profile.rubric_version}
+                  </small>
+                ))}
+            </form>
+          </section>
           <div className="phase3-creation-grid">
             <section className="dashboard-card phase2-card">
               <div className="phase2-section-heading">
@@ -1032,6 +1233,27 @@ export default function DatasetStudio({
                             <small>attempt {item.attempts}</small>
                           </div>
                           {item.output && <p>{item.output}</p>}
+                          {item.scores.length > 0 && (
+                            <ul className="phase4-score-list">
+                              {item.scores.map((score) => (
+                                <li key={score.name}>
+                                  <strong>{score.name}</strong>
+                                  {score.judge_role && (
+                                    <span> · {score.judge_role}</span>
+                                  )}
+                                  <span>
+                                    {' '}
+                                    ·{' '}
+                                    {score.score === null
+                                      ? score.status.replace(/_/g, ' ')
+                                      : score.score.toFixed(2)}
+                                  </span>
+                                  {score.cache_hit && <small> · cached</small>}
+                                  <small> — {score.reason}</small>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
                           {item.error && (
                             <p className="phase3-run-error">{item.error}</p>
                           )}

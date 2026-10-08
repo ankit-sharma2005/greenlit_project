@@ -55,7 +55,16 @@ running items. See [Phase 3 evidence and limitations](docs/PROGRESS.md),
 including the live 20-item browser run and the worker-kill/restart manual check
 that remains.
 
-The backend suite has 22 passing tests. Ruff, strict mypy, all configured
+Phase 4 is complete with documented limitations. A typed metric catalog offers
+deterministic answer-quality, RAG, tool-use, JSON-schema, latency, and token
+instrumentation checks, plus configured versioned LLM judge profiles. Judge
+results are schema-validated, retried once if malformed, cached by rubric and
+input identity, and stored alongside per-item scores. Missing trace fields are
+reported as not instrumented. Judge prompt-injection tests use a mocked provider;
+they are not a certification against real judge models. See
+[Phase 4 evidence and limitations](docs/PROGRESS.md).
+
+The backend suite has 43 passing tests. Ruff, strict mypy, all configured
 pre-commit hooks, ESLint, Prettier, frontend typecheck, and production build pass.
 The provider rate limiter is process-local, so limits are not persisted across
 restarts or coordinated across multiple API processes. Provider connection and

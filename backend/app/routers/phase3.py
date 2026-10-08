@@ -45,6 +45,7 @@ from app.phase3_schemas import (
     EvalRunItemOut,
     EvalRunOut,
 )
+from app.phase4_schemas import MetricScoreOut
 from app.services.datasets import (
     MAX_DATASET_ITEMS,
     MAX_UPLOAD_BYTES,
@@ -867,6 +868,7 @@ def _run_item_out(item: EvalRunItem) -> EvalRunItemOut:
         status=item.status,
         output=item.output,
         trace=item.trace,
+        scores=[MetricScoreOut.model_validate(score) for score in item.scores],
         error=item.error,
         attempts=item.attempts,
         completed_at=item.completed_at.isoformat() if item.completed_at else None,
