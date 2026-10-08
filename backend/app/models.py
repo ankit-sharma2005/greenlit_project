@@ -207,6 +207,20 @@ class JudgeProfile(Base):
     rubric_version: Mapped[int] = mapped_column(default=1, nullable=False)
 
 
+class ProjectVerdictCriteria(Base):
+    __tablename__ = "project_verdict_criteria"
+
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id"), primary_key=True
+    )
+    criteria: Mapped[dict[str, object]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+
 class ConnectorTest(Base):
     __tablename__ = "connector_tests"
 
@@ -297,6 +311,9 @@ class EvalRun(Base):
         ForeignKey("dataset_versions.id"), nullable=False
     )
     split: Mapped[str] = mapped_column(String(10), default="all", nullable=False)
+    criteria_snapshot: Mapped[dict[str, object]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
     created_by: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     idempotency_key: Mapped[str | None] = mapped_column(String(100))
     status: Mapped[str] = mapped_column(String(20), default="queued", nullable=False)

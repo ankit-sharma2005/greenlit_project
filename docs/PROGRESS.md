@@ -316,3 +316,78 @@ Invoke-RestMethod http://localhost:8000/readyz
 
 In Dataset Studio, inspect the metric library, configure a judge profile, run an
 approved dataset, and expand run items to inspect persisted metric scores.
+
+## Phase 5 - Verdict and trace viewer: DONE WITH MANUAL UI CHECK OUTSTANDING
+
+### Acceptance checklist
+
+- **PASS** - Any failed hard gate forces `NO_GO` and reports the exact metric,
+  item position, observed score, and required threshold. Evidence:
+  `test_hard_gate_failure_forces_no_go_with_exact_reason` and
+  `test_hard_gate_matches_role_suffixed_judge_metric`.
+- **PASS** - Weighted scores and threshold boundaries produce GO, REVIEW, and
+  NO_GO. Evidence: `test_weighted_score_threshold_edges` and
+  `test_category_weights_control_the_weighted_run_score`.
+- **NEEDS MANUAL CHECK** - Results UI implements the verdict banner, category
+  cards, radar chart, and per-item drill-down. Evidence: frontend ESLint,
+  TypeScript, Prettier, and production build pass; the live web app returns
+  HTTP 200. An authenticated visual check of a populated Phase 5 report was
+  not completed.
+- **NEEDS MANUAL CHECK** - Trace waterfall maps zero scores and configured
+  hard-gate failures to the affected steps, and displays retrieved chunks next
+  to the answer. Evidence: implementation in `frontend/src/DatasetStudio.tsx`
+  passes lint, typecheck, formatting, and production build; populated trace
+  rendering still needs browser inspection.
+- **PASS** - Readiness reports identify failed execution, unavailable metric
+  instrumentation, and missing trace fields. Evidence:
+  `test_readiness_report_names_unavailable_metric_and_failed_component`,
+  `test_readiness_detects_missing_application_instrumentation_fields`, and
+  `test_criteria_api_is_project_scoped_and_reports_saved_run_snapshot`.
+- **PASS** - Failed/cancelled runs and runs containing failed items cannot
+  receive a misleading GO verdict. Evidence:
+  `test_failed_or_cancelled_run_cannot_receive_go` and
+  `test_readiness_report_names_unavailable_metric_and_failed_component`.
+
+### Validation
+
+- Focused Phase 5 tests: **12 passed**.
+- Full backend suite: **55 passed**, 2 dependency deprecation warnings.
+- Ruff check and format check passed; strict mypy passed with no issues in 43
+  source files.
+- All seven configured pre-commit hooks passed, including the full backend
+  suite, ESLint, Prettier, and frontend TypeScript check.
+- Frontend production build passed with Vite.
+- `docker compose up --build -d` - API, web, worker, Redis, and PostgreSQL
+  healthy. Alembic reports `0005_verdicts (head)`.
+- `/healthz` returned `{"status":"ok"}`, `/readyz` returned
+  `{"status":"ready"}`, and `/docs` and the web app returned HTTP 200.
+- No live provider credentials were used. An authenticated populated-results
+  browser check remains outstanding.
+
+### Assumptions, limitations, and deferred items
+
+- Category scores average each metric across run items, average metric means
+  within each category, then apply the configured category weights.
+- Runs snapshot their project's verdict criteria at creation; editing project
+  criteria does not change reports for existing runs.
+- Missing required trace instrumentation is reported as a readiness issue; it
+  does not independently force NO_GO unless the configured scoring criteria
+  require it.
+- Phase 6 comparison and regression analysis have not started and require
+  explicit user approval.
+
+### Run and verify
+
+```powershell
+docker compose up --build -d
+docker compose ps
+docker compose exec -T api alembic current
+Invoke-RestMethod http://localhost:8000/healthz
+Invoke-RestMethod http://localhost:8000/readyz
+(Invoke-WebRequest -UseBasicParsing http://localhost:8000/docs).StatusCode
+(Invoke-WebRequest -UseBasicParsing http://localhost:5173).StatusCode
+```
+
+Sign in, open Dataset Studio, configure verdict thresholds and hard gates, run
+an approved dataset, inspect the verdict/category results, and expand a run item
+to check the answer, waterfall, and retrieved chunks.

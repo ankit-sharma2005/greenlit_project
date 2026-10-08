@@ -32,6 +32,7 @@ from app.models import (
     EvalRun,
     EvalRunItem,
     Project,
+    ProjectVerdictCriteria,
     ProviderConfig,
     User,
 )
@@ -46,6 +47,7 @@ from app.phase3_schemas import (
     EvalRunOut,
 )
 from app.phase4_schemas import MetricScoreOut
+from app.phase5_schemas import DEFAULT_VERDICT_CRITERIA
 from app.services.datasets import (
     MAX_DATASET_ITEMS,
     MAX_UPLOAD_BYTES,
@@ -388,12 +390,18 @@ async def create_eval_run(
             status_code=422,
             detail="This dataset version has no approved items in the selected split",
         )
+    saved_criteria = await db.get(ProjectVerdictCriteria, project.id)
     run = EvalRun(
         workspace_id=workspace_id,
         project_id=project.id,
         app_version_id=app_version.id,
         dataset_version_id=version.id,
         split=payload.split,
+        criteria_snapshot=(
+            saved_criteria.criteria
+            if saved_criteria is not None
+            else DEFAULT_VERDICT_CRITERIA
+        ),
         created_by=user.id,
         idempotency_key=idempotency_key,
         total_items=len(approved_items),

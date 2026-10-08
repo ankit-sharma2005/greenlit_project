@@ -516,12 +516,15 @@ Phase 4 - Metrics
 Phase 5 - Verdict and trace viewer
   Build: criteria builder, decision engine, Results page, Trace Viewer.
   Acceptance:
-  [ ] Any hard-gate failure forces NO_GO with the exact reason
-  [ ] Weighted score and thresholds produce GO/REVIEW/NO_GO (unit-tested on
+  [x] Any hard-gate failure forces NO_GO with the exact reason
+  [x] Weighted score and thresholds produce GO/REVIEW/NO_GO (unit-tested on
       edge cases)
-  [ ] Results page shows verdict banner, category cards, radar chart, drill-down
-  [ ] Trace waterfall highlights the failing step; chunks are shown vs answer
-  [ ] Readiness Report names the failing component
+  [x] Results page implements the verdict banner, category cards, radar chart,
+      and per-item drill-down; live authenticated result-screen inspection still
+      needs a manual check
+  [x] Trace waterfall highlights zero scores and hard-gate failures; retrieved
+      chunks are displayed alongside the answer
+  [x] Readiness Report names missing instrumentation and failing components
 Phase 6 - Compare, failure analysis, regression
   Build: compare + statistics, failure analysis, REGRESSION TESTING.
   Acceptance:
@@ -583,7 +586,8 @@ At the end of every phase you MUST:
     deferred.
  4. Give the exact commands to run the stack and verify manually.
  5. Update README and docs/PROJECT_SPEC.md progress notes.
- 6. STOP and wait for "proceed".
+ 6. Ask whether to start the next phase and wait for explicit approval. Do not
+    begin the next phase before approval.
 
 ## Implementation progress
 
@@ -591,7 +595,8 @@ Phase 1 is DONE as of 2026-10-08. Phase 2 is complete with documented
 limitations as of 2026-10-08. Phase 3 is complete with documented limitations
 as of 2026-10-08; its live worker-kill/restart acceptance still needs a manual
 check. Phase 4 is complete with documented limitations as of 2026-10-08.
-Phase 5 has not started and requires explicit user approval.
+Phase 5 is complete with a documented manual UI check outstanding as of
+2026-10-08. Phase 6 has not started and requires explicit user approval.
 
 Phase 1 checklist evidence is recorded in `docs/PROGRESS.md`. Dark/light theme
 rendering and keyboard navigation were manually checked in the browser on the

@@ -1,8 +1,8 @@
 # GreenLit
 
 GreenLit is an offline pre-launch evaluation platform for LLM-powered applications.
-The current work covers the foundation plus the initial provider, project, and
-connector setup flow.
+The current work covers the foundation, app setup, golden datasets, evaluation
+runs, metrics, launch verdicts, and trace inspection.
 
 ## Quick start
 
@@ -64,7 +64,13 @@ reported as not instrumented. Judge prompt-injection tests use a mocked provider
 they are not a certification against real judge models. See
 [Phase 4 evidence and limitations](docs/PROGRESS.md).
 
-The backend suite has 43 passing tests. Ruff, strict mypy, all configured
+Phase 5 adds project-level GO/REVIEW/NO_GO criteria with hard gates, immutable
+criteria snapshots per run, weighted category results, readiness diagnostics,
+and answer/trace/chunk drill-down. Criteria and verdict behavior are covered by
+backend tests. A populated authenticated result screen still needs a manual
+browser check. See [Phase 5 evidence and limitations](docs/PROGRESS.md).
+
+The backend suite has 55 passing tests. Ruff, strict mypy, all configured
 pre-commit hooks, ESLint, Prettier, frontend typecheck, and production build pass.
 The provider rate limiter is process-local, so limits are not persisted across
 restarts or coordinated across multiple API processes. Provider connection and

@@ -58,6 +58,8 @@ interface EvalRun {
 interface EvalRunItem {
   id: string;
   dataset_item_id: string;
+  position: number;
+  category: string;
   status: string;
   output: string | null;
   trace: Record<string, unknown>;
@@ -65,6 +67,42 @@ interface EvalRunItem {
   error: string | null;
   attempts: number;
   completed_at: string | null;
+}
+
+interface VerdictCriteria {
+  go_threshold: number;
+  review_threshold: number;
+  category_weights: Record<string, number>;
+  hard_gates: Record<string, number>;
+}
+
+interface RunReportCategory {
+  category: string;
+  score: number;
+  weight: number;
+  metric_count: number;
+}
+
+interface RunReport {
+  run_id: string;
+  status: string;
+  criteria: VerdictCriteria;
+  verdict: {
+    verdict: 'GO' | 'REVIEW' | 'NO_GO';
+    score: number | null;
+    summary: string;
+    reasons: string[];
+    categories: RunReportCategory[];
+    readiness: {
+      status: 'ready' | 'needs_attention';
+      issues: Array<{
+        component: string;
+        message: string;
+        run_item_id: string | null;
+      }>;
+    };
+  };
+  items: EvalRunItem[];
 }
 
 interface MetricScore {
@@ -118,6 +156,10 @@ function pathFor(workspaceId: string, projectId: string, suffix: string) {
   return `/workspaces/${encodeURIComponent(workspaceId)}/projects/${encodeURIComponent(projectId)}${suffix}`;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export default function DatasetStudio({
   accessToken,
   workspace,
@@ -133,6 +175,8 @@ export default function DatasetStudio({
   const [runs, setRuns] = useState<EvalRun[]>([]);
   const [selectedRun, setSelectedRun] = useState<EvalRun | null>(null);
   const [runItems, setRunItems] = useState<EvalRunItem[]>([]);
+  const [runReport, setRunReport] = useState<RunReport | null>(null);
+  const [criteria, setCriteria] = useState<VerdictCriteria | null>(null);
   const [metricCatalog, setMetricCatalog] = useState<MetricDefinition[]>([]);
   const [judgeProfiles, setJudgeProfiles] = useState<JudgeProfile[]>([]);
   const [judgeRole, setJudgeRole] = useState<JudgeProfile['role']>('dev');
@@ -186,6 +230,7 @@ export default function DatasetStudio({
       runRows,
       metricRows,
       judgeRows,
+      verdictCriteria,
     ] = await Promise.all([
       apiRequest<DatasetVersion[]>(`${base}/datasets`, {}, accessToken),
       apiRequest<AppVersion[]>(`${base}/app-versions`, {}, accessToken),
@@ -197,6 +242,7 @@ export default function DatasetStudio({
       apiRequest<EvalRun[]>(`${base}/runs`, {}, accessToken),
       apiRequest<MetricDefinition[]>(`${base}/metrics`, {}, accessToken),
       apiRequest<JudgeProfile[]>(`${base}/judge-profiles`, {}, accessToken),
+      apiRequest<VerdictCriteria>(`${base}/verdict-criteria`, {}, accessToken),
     ]);
     setVersions(datasetRows);
     setAppVersions(versionRows);
@@ -204,6 +250,7 @@ export default function DatasetStudio({
     setRuns(runRows);
     setMetricCatalog(metricRows);
     setJudgeProfiles(judgeRows);
+    setCriteria(verdictCriteria);
     setSelectedVersionId((current) =>
       current && datasetRows.some((row) => row.version_id === current)
         ? current
@@ -291,18 +338,19 @@ export default function DatasetStudio({
     };
   }, [accessToken, projectId, selectedVersionId, versions, workspace.id]);
 
-  const loadRunItems = useCallback(
+  const loadRunReport = useCallback(
     async (runId: string) => {
-      const rows = await apiRequest<EvalRunItem[]>(
+      const report = await apiRequest<RunReport>(
         pathFor(
           workspace.id,
           projectId,
-          `/runs/${encodeURIComponent(runId)}/items`,
+          `/runs/${encodeURIComponent(runId)}/report`,
         ),
         {},
         accessToken,
       );
-      setRunItems(rows);
+      setRunReport(report);
+      setRunItems(report.items);
     },
     [accessToken, projectId, workspace.id],
   );
@@ -310,9 +358,17 @@ export default function DatasetStudio({
   useEffect(() => {
     if (!selectedRunId) return;
     void Promise.resolve()
-      .then(() => loadRunItems(selectedRunId))
-      .catch(() => setRunItems([]));
-  }, [loadRunItems, selectedRunId]);
+      .then(() => loadRunReport(selectedRunId))
+      .catch((reason: unknown) => {
+        setRunItems([]);
+        setRunReport(null);
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : 'Unable to load the run report.',
+        );
+      });
+  }, [loadRunReport, selectedRunId]);
 
   useEffect(() => {
     if (
@@ -335,7 +391,9 @@ export default function DatasetStudio({
         setRuns((current) =>
           current.map((run) => (run.id === event.id ? event : run)),
         );
-        void loadRunItems(event.id).catch(() => undefined);
+        void loadRunReport(event.id).catch((reason: unknown) => {
+          if (reason instanceof Error) setError(reason.message);
+        });
       },
       controller.signal,
     ).catch((reason: unknown) => {
@@ -345,7 +403,7 @@ export default function DatasetStudio({
     return () => controller.abort();
   }, [
     accessToken,
-    loadRunItems,
+    loadRunReport,
     projectId,
     selectedRunId,
     selectedRunStatus,
@@ -505,6 +563,31 @@ export default function DatasetStudio({
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : 'Run could not start.',
+      );
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function saveVerdictCriteria(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!criteria) return;
+    setWorking(true);
+    setError('');
+    setNotice('');
+    try {
+      const saved = await apiRequest<VerdictCriteria>(
+        pathFor(workspace.id, projectId, '/verdict-criteria'),
+        { method: 'PUT', body: JSON.stringify(criteria) },
+        accessToken,
+      );
+      setCriteria(saved);
+      setNotice('Verdict criteria saved for future evaluation runs.');
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : 'Verdict criteria could not be saved.',
       );
     } finally {
       setWorking(false);
@@ -1143,6 +1226,173 @@ export default function DatasetStudio({
               </button>
             </form>
 
+            <section
+              className="phase5-criteria"
+              aria-labelledby="criteria-title"
+            >
+              <div className="phase2-section-heading">
+                <div>
+                  <p className="eyebrow">VERDICT CRITERIA</p>
+                  <h5 id="criteria-title">Configure run decision rules</h5>
+                </div>
+                <p className="muted-text">
+                  Saved criteria are snapshotted when a new run starts.
+                </p>
+              </div>
+              {criteria ? (
+                <form
+                  className="phase5-criteria-form"
+                  onSubmit={saveVerdictCriteria}
+                >
+                  <label className="phase2-field">
+                    <span>GO threshold</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      required
+                      value={criteria.go_threshold}
+                      onChange={(event) =>
+                        setCriteria((current) =>
+                          current
+                            ? {
+                                ...current,
+                                go_threshold: Number(event.target.value),
+                              }
+                            : current,
+                        )
+                      }
+                    />
+                  </label>
+                  <label className="phase2-field">
+                    <span>REVIEW threshold</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      required
+                      value={criteria.review_threshold}
+                      onChange={(event) =>
+                        setCriteria((current) =>
+                          current
+                            ? {
+                                ...current,
+                                review_threshold: Number(event.target.value),
+                              }
+                            : current,
+                        )
+                      }
+                    />
+                  </label>
+                  {Object.entries(criteria.category_weights).map(
+                    ([category, weight]) => (
+                      <label className="phase2-field" key={category}>
+                        <span>{category} category weight</span>
+                        <input
+                          type="number"
+                          min="0.01"
+                          max="10"
+                          step="0.1"
+                          required
+                          value={weight}
+                          onChange={(event) =>
+                            setCriteria((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    category_weights: {
+                                      ...current.category_weights,
+                                      [category]: Number(event.target.value),
+                                    },
+                                  }
+                                : current,
+                            )
+                          }
+                        />
+                      </label>
+                    ),
+                  )}
+                  <fieldset className="phase5-gates">
+                    <legend>Hard gates</legend>
+                    <p className="muted-text">
+                      Any scored result below its gate forces NO_GO.
+                    </p>
+                    <div className="phase5-gate-list">
+                      {metricCatalog.map((metric) => {
+                        const threshold = criteria.hard_gates[metric.name];
+                        return (
+                          <div className="phase5-gate-row" key={metric.name}>
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={threshold !== undefined}
+                                onChange={(event) =>
+                                  setCriteria((current) => {
+                                    if (!current) return current;
+                                    const hardGates = {
+                                      ...current.hard_gates,
+                                    };
+                                    if (event.target.checked) {
+                                      hardGates[metric.name] = 0.7;
+                                    } else {
+                                      delete hardGates[metric.name];
+                                    }
+                                    return {
+                                      ...current,
+                                      hard_gates: hardGates,
+                                    };
+                                  })
+                                }
+                              />
+                              <span>
+                                {metric.name} · {metric.category}
+                              </span>
+                            </label>
+                            {threshold !== undefined && (
+                              <input
+                                aria-label={`${metric.name} hard-gate threshold`}
+                                type="number"
+                                min="0"
+                                max="1"
+                                step="0.01"
+                                value={threshold}
+                                onChange={(event) =>
+                                  setCriteria((current) =>
+                                    current
+                                      ? {
+                                          ...current,
+                                          hard_gates: {
+                                            ...current.hard_gates,
+                                            [metric.name]: Number(
+                                              event.target.value,
+                                            ),
+                                          },
+                                        }
+                                      : current,
+                                  )
+                                }
+                              />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </fieldset>
+                  <button
+                    className="secondary-button"
+                    type="submit"
+                    disabled={working}
+                  >
+                    Save verdict criteria
+                  </button>
+                </form>
+              ) : (
+                <p className="muted-text">Loading verdict criteria…</p>
+              )}
+            </section>
+
             <div className="phase3-run-grid">
               <div className="phase3-run-history">
                 <h5>Recent runs</h5>
@@ -1222,11 +1472,133 @@ export default function DatasetStudio({
                       Cancel run
                     </button>
                   </div>
+                  {runReport && (
+                    <section className="phase5-results">
+                      <div
+                        className={`phase5-verdict ${runReport.verdict.verdict.toLowerCase()}`}
+                        aria-live="polite"
+                      >
+                        <div>
+                          <p className="eyebrow">RUN VERDICT</p>
+                          <h4>{runReport.verdict.verdict}</h4>
+                          <p>{runReport.verdict.summary}</p>
+                        </div>
+                        <strong>
+                          {runReport.verdict.score === null
+                            ? 'No score'
+                            : `${(runReport.verdict.score * 100).toFixed(1)}%`}
+                        </strong>
+                      </div>
+                      <ul className="phase5-verdict-reasons">
+                        {runReport.verdict.reasons.map((reason) => (
+                          <li key={reason}>{reason}</li>
+                        ))}
+                      </ul>
+                      <div className="phase5-result-grid">
+                        <section aria-labelledby="category-results-title">
+                          <h5 id="category-results-title">Category scores</h5>
+                          <div className="phase5-category-cards">
+                            {runReport.verdict.categories.map((category) => (
+                              <article
+                                className="phase5-category-card"
+                                key={category.category}
+                              >
+                                <strong>{category.category}</strong>
+                                <span>
+                                  {(category.score * 100).toFixed(1)}%
+                                </span>
+                                <small>
+                                  Weight {category.weight} ·{' '}
+                                  {category.metric_count} metrics
+                                </small>
+                              </article>
+                            ))}
+                          </div>
+                        </section>
+                        {runReport.verdict.categories.length >= 3 && (
+                          <section aria-labelledby="radar-title">
+                            <h5 id="radar-title">Category radar</h5>
+                            <svg
+                              className="phase5-radar"
+                              viewBox="0 0 220 200"
+                              role="img"
+                              aria-label={`Radar chart for ${runReport.verdict.categories
+                                .map(
+                                  (category) =>
+                                    `${category.category} ${(category.score * 100).toFixed(0)} percent`,
+                                )
+                                .join(', ')}`}
+                            >
+                              {runReport.verdict.categories.map(
+                                (category, index, categories) => {
+                                  const angle =
+                                    -Math.PI / 2 +
+                                    (index * 2 * Math.PI) / categories.length;
+                                  const x2 = 110 + 70 * Math.cos(angle);
+                                  const y2 = 100 + 70 * Math.sin(angle);
+                                  const labelX = 110 + 88 * Math.cos(angle);
+                                  const labelY = 100 + 88 * Math.sin(angle);
+                                  return (
+                                    <g key={category.category}>
+                                      <line x1="110" y1="100" x2={x2} y2={y2} />
+                                      <text
+                                        x={labelX}
+                                        y={labelY}
+                                        textAnchor="middle"
+                                      >
+                                        {category.category}
+                                      </text>
+                                    </g>
+                                  );
+                                },
+                              )}
+                              <circle cx="110" cy="100" r="70" />
+                              <circle cx="110" cy="100" r="35" />
+                              <polygon
+                                points={runReport.verdict.categories
+                                  .map((category, index, categories) => {
+                                    const angle =
+                                      -Math.PI / 2 +
+                                      (index * 2 * Math.PI) / categories.length;
+                                    return `${110 + category.score * 70 * Math.cos(angle)},${100 + category.score * 70 * Math.sin(angle)}`;
+                                  })
+                                  .join(' ')}
+                              />
+                            </svg>
+                          </section>
+                        )}
+                      </div>
+                      <section
+                        className={`phase5-readiness ${runReport.verdict.readiness.status}`}
+                        aria-labelledby="readiness-title"
+                      >
+                        <h5 id="readiness-title">Readiness Report</h5>
+                        {runReport.verdict.readiness.issues.length === 0 ? (
+                          <p>No failing or uninstrumented components found.</p>
+                        ) : (
+                          <ul>
+                            {runReport.verdict.readiness.issues.map(
+                              (issue, index) => (
+                                <li
+                                  key={`${issue.run_item_id ?? 'run'}-${issue.component}-${index}`}
+                                >
+                                  <strong>{issue.component}</strong>:{' '}
+                                  {issue.message}
+                                </li>
+                              ),
+                            )}
+                          </ul>
+                        )}
+                      </section>
+                    </section>
+                  )}
                   <div className="phase3-item-list">
                     {runItems.map((item) => (
                       <article className="phase3-item" key={item.id}>
                         <div>
                           <div className="phase3-item-meta">
+                            <strong>#{item.position}</strong>
+                            <span>{item.category}</span>
                             <span className={`phase3-status ${item.status}`}>
                               {item.status}
                             </span>
@@ -1257,6 +1629,104 @@ export default function DatasetStudio({
                           {item.error && (
                             <p className="phase3-run-error">{item.error}</p>
                           )}
+                          <details className="phase5-trace-viewer">
+                            <summary>Trace waterfall and context</summary>
+                            <div className="phase5-trace-columns">
+                              <div>
+                                <h6>Answer</h6>
+                                <pre>{item.output ?? 'No answer recorded'}</pre>
+                              </div>
+                              <ol className="phase5-waterfall">
+                                {(() => {
+                                  const steps = isRecord(item.trace.steps)
+                                    ? item.trace.steps
+                                    : {};
+                                  const stepForMetric: Record<string, string> =
+                                    {
+                                      retrieval_context_recall:
+                                        'retrieved_chunks',
+                                      tool_call_match: 'tool_calls',
+                                    };
+                                  const failingSteps = new Set(
+                                    item.scores
+                                      .filter(
+                                        (entry) =>
+                                          entry.status === 'scored' &&
+                                          entry.score !== null &&
+                                          (entry.score === 0 ||
+                                            entry.score <
+                                              (runReport?.criteria.hard_gates[
+                                                entry.name.split(':', 1)[0]
+                                              ] ?? 0)),
+                                      )
+                                      .map(
+                                        (entry) =>
+                                          stepForMetric[entry.name] ?? 'output',
+                                      ),
+                                  );
+                                  return (
+                                    <>
+                                      <li
+                                        className={
+                                          failingSteps.has('output')
+                                            ? 'failed'
+                                            : ''
+                                        }
+                                      >
+                                        <strong>application output</strong>
+                                        <p>
+                                          {item.output ?? 'No answer recorded'}
+                                        </p>
+                                      </li>
+                                      {Object.entries(steps).map(
+                                        ([name, value]) => (
+                                          <li
+                                            className={
+                                              failingSteps.has(name)
+                                                ? 'failed'
+                                                : ''
+                                            }
+                                            key={name}
+                                          >
+                                            <strong>
+                                              {name.replace(/_/g, ' ')}
+                                            </strong>
+                                            {name === 'retrieved_chunks' &&
+                                            Array.isArray(value) ? (
+                                              <ul className="phase5-chunks">
+                                                {value.map((chunk, index) => (
+                                                  <li key={`${name}-${index}`}>
+                                                    {isRecord(chunk) &&
+                                                      typeof chunk.source ===
+                                                        'string' && (
+                                                        <strong>
+                                                          {chunk.source}
+                                                        </strong>
+                                                      )}
+                                                    <p>
+                                                      {isRecord(chunk) &&
+                                                      typeof chunk.text ===
+                                                        'string'
+                                                        ? chunk.text
+                                                        : JSON.stringify(chunk)}
+                                                    </p>
+                                                  </li>
+                                                ))}
+                                              </ul>
+                                            ) : (
+                                              <pre>
+                                                {JSON.stringify(value, null, 2)}
+                                              </pre>
+                                            )}
+                                          </li>
+                                        ),
+                                      )}
+                                    </>
+                                  );
+                                })()}
+                              </ol>
+                            </div>
+                          </details>
                         </div>
                       </article>
                     ))}
