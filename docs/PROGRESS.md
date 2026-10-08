@@ -151,4 +151,84 @@ Invoke-RestMethod http://localhost:8000/readyz
 (Invoke-WebRequest -UseBasicParsing http://localhost:5173).StatusCode
 ```
 
-Phase 3 has not been started and requires explicit approval.
+## Phase 3 - Datasets and run engine: DONE WITH DOCUMENTED GAPS
+
+### Acceptance checklist
+
+- **PASS** - CSV/JSON/JSONL upload maps columns, validates invalid rows, removes
+  duplicates, and reports validation results. Evidence:
+  `test_upload_maps_rows_reports_errors_and_versions_are_hash_stable`; browser
+  import displayed one valid row and the mapped reference answer.
+- **PASS** - RAG, chatbot, agent, and extraction generation templates produce
+  pending synthetic items. Evidence:
+  `test_generation_templates_use_provider_and_store_pending_synthetic_items`
+  using a mocked provider response for all four templates.
+- **PASS** - Only approved items may enter a run and provenance is recorded.
+  Evidence: `test_twenty_item_run_resumes_without_duplicate_records_and_controls_work`
+  rejects a run before approval and starts with only 20 approved out of 21
+  uploaded items; generated items are asserted as `synthetic`.
+- **PASS** - Dataset version hashes are stable and a run locks its version.
+  Evidence: `test_upload_maps_rows_reports_errors_and_versions_are_hash_stable`
+  checks matching hashes across equivalent CSV/JSON imports; the run test
+  confirms review is rejected after the version is locked.
+- **PASS** - A 20-item run completes with live UI progress. Evidence: browser
+  test on the Compose stack imported and approved 20 JSONL items, started a
+  Celery run, and displayed `completed 20/20`; all 20 item rows displayed
+  `completed` and `attempt 1`. Worker log reported 20 completed and 0 failed.
+- **NEEDS MANUAL CHECK** - Killing the worker during an in-flight item and
+  restarting it was not performed against a live process. The integration test
+  simulates a persisted `running` item and verifies recovery (`attempts == 2`)
+  with no duplicate run-item records; Celery is configured for late
+  acknowledgements and worker-loss rejection.
+- **PASS** - Cancel and pause/resume work; one item failure does not stop the
+  rest of the run. Evidence: the run integration test verifies user pause and
+  resume, quota pause and resume, cancellation, and 19 completed items plus one
+  safely summarized failure.
+
+### Validation
+
+- `Push-Location backend; $env:DATABASE_URL='sqlite+aiosqlite:///./phase3_full_test.db'; .\.venv\Scripts\python.exe -m pytest -q tests; Pop-Location`
+  - **22 passed**, 2 dependency deprecation warnings.
+- `backend\.venv\Scripts\python.exe -m ruff check backend` - passed.
+- `backend\.venv\Scripts\python.exe -m ruff format --check backend` - passed;
+  34 files already formatted.
+- `backend\.venv\Scripts\python.exe -m mypy --strict backend\app backend\alembic backend\tests`
+  - passed; no issues in 33 source files.
+- `$env:PATH=(Resolve-Path backend\.venv\Scripts).Path+';'+(Resolve-Path frontend\node_modules\.bin).Path+';'+$env:PATH; backend\.venv\Scripts\python.exe -m pre_commit run --all-files`
+  - all seven configured hooks passed, including the backend suite.
+- Frontend `npm run lint`, `typecheck`, `format:check`, and `build` - all passed.
+- `docker compose up --build -d` - API, web, worker, Redis, and PostgreSQL
+  healthy; `alembic current` reports `0003_phase3 (head)`.
+- `/healthz` returned `{"status":"ok"}`, `/readyz` returned
+  `{"status":"ready"}`, and `/docs` and the web app returned HTTP 200.
+- No external model credentials were used; generation tests use a mock provider.
+
+### Assumptions, known limitations, and deferred items
+
+- Dataset generation currently relies on schema validation, exact duplicate
+  removal, and human review. The broader spec's embedding-similarity dedupe,
+  generated-item self-verification, quality filtering, and coverage report are
+  deferred and must not be treated as implemented.
+- Dataset item review uses a regular rendered list; a virtualized table is not
+  implemented.
+- Worker-loss recovery has integration coverage for replaying a persisted
+  running item, but an actual process kill/restart remains a manual check.
+- Uploaded XLSX support is included in addition to the Phase 3 CSV/JSON/JSONL
+  acceptance scope.
+- Local test databases, generated output, environment secrets, caches,
+  dependency directories, and build output remain excluded from commits.
+
+### Run and verify
+
+```powershell
+docker compose up --build -d
+docker compose ps
+docker compose exec -T api alembic current
+Invoke-RestMethod http://localhost:8000/healthz
+Invoke-RestMethod http://localhost:8000/readyz
+(Invoke-WebRequest -UseBasicParsing http://localhost:8000/docs).StatusCode
+(Invoke-WebRequest -UseBasicParsing http://localhost:5173).StatusCode
+```
+
+Open `http://localhost:5173`, select a project, import and approve a dataset,
+then run it against a tested connector version to observe live progress.

@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { apiRequest, Workspace } from './api';
+import DatasetStudio from './DatasetStudio';
 
 interface WorkspaceProjectsProps {
   accessToken: string;
@@ -1378,6 +1379,14 @@ export default function WorkspaceProjects({
           </div>
         )}
       </section>
+      {selectedProjectId && (
+        <DatasetStudio
+          key={selectedProjectId}
+          accessToken={accessToken}
+          workspace={workspace}
+          projectId={selectedProjectId}
+        />
+      )}
       {userRole.toLowerCase() === 'admin' && (
         <p className="phase2-admin-note">
           Admin test override is not available in this phase. A successful test

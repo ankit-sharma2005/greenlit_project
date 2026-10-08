@@ -10,6 +10,7 @@
   --primary-soft: rgba(61, 220, 132, 0.12);
   --warning: #ffb547;
   --success: #3ddc84;
+  --danger: #ff7777;
   --shadow: 0 18px 50px rgba(3, 12, 8, 0.6);
 }
 
@@ -25,6 +26,7 @@
   --primary-soft: rgba(14, 167, 94, 0.12);
   --warning: #d97706;
   --success: #0ea75e;
+  --danger: #c23636;
   --shadow: 0 18px 50px rgba(58, 86, 70, 0.18);
 }
 
@@ -485,6 +487,179 @@ textarea {
 
 .muted-text {
   color: var(--muted);
+}
+
+.dataset-studio {
+  display: grid;
+  gap: 20px;
+}
+
+.phase3-creation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.phase3-mapping-grid,
+.phase3-run-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.phase3-version-select {
+  max-width: 480px;
+  margin-bottom: 18px;
+}
+
+.phase3-dataset-summary,
+.phase3-review-actions,
+.phase3-run-actions,
+.phase3-item-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.phase3-dataset-summary {
+  margin: 14px 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.phase3-hash {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.phase3-warning,
+.phase3-run-error {
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+}
+
+.phase3-errors {
+  margin: 14px 0;
+  color: var(--warning);
+}
+
+.phase3-errors ul {
+  display: grid;
+  gap: 6px;
+  padding-left: 20px;
+}
+
+.phase3-item-list {
+  display: grid;
+  gap: 10px;
+  max-height: 460px;
+  overflow: auto;
+  margin-top: 16px;
+}
+
+.phase3-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.phase3-item p {
+  margin: 8px 0 4px;
+  overflow-wrap: anywhere;
+}
+
+.phase3-item-meta {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.phase3-status {
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: var(--muted);
+  background: var(--surface-raised, var(--surface));
+}
+
+.phase3-status.approved,
+.phase3-status.completed {
+  color: var(--success);
+}
+
+.phase3-status.rejected,
+.phase3-status.failed,
+.phase3-run-error {
+  color: var(--danger);
+}
+
+.phase3-run-form {
+  grid-template-columns: minmax(200px, 1fr) minmax(220px, 1.4fr) auto auto;
+  align-items: end;
+  margin-bottom: 24px;
+}
+
+.phase3-run-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(0, 1.8fr);
+  gap: 20px;
+  border-top: 1px solid var(--border);
+  padding-top: 18px;
+}
+
+.phase3-run-history,
+.phase3-run-detail {
+  min-width: 0;
+}
+
+.phase3-run-option {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  margin: 5px 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+}
+
+.phase3-run-option.selected {
+  border-color: var(--primary);
+}
+
+.phase3-run-option small {
+  color: var(--muted);
+}
+
+.phase3-run-detail progress {
+  width: 100%;
+  accent-color: var(--primary);
+}
+
+@media (max-width: 900px) {
+  .phase3-creation-grid,
+  .phase3-run-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .phase3-run-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .phase3-mapping-grid,
+  .phase3-run-form {
+    grid-template-columns: 1fr;
+  }
 }
 
 .loading-screen {

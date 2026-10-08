@@ -493,13 +493,15 @@ Phase 3 - Datasets and run engine
   Build: Dataset Studio (upload + generate by app type + approval queue +
   versioning), Celery run engine with SSE, pause/resume on quota, cancel.
   Acceptance:
-  [ ] CSV/JSON/JSONL upload with column mapping and validation errors shown
-  [ ] Generation works for RAG, chatbot, agent, extraction templates
-  [ ] Only approved items are usable in runs; provenance is stored
-  [ ] Dataset versions are immutable and hash-stable
-  [ ] A 20-item run completes with live progress in the UI
+  [x] CSV/JSON/JSONL upload with column mapping and validation errors shown
+  [x] Generation works for RAG, chatbot, agent, extraction templates
+  [x] Only approved items are usable in runs; provenance is stored
+  [x] Dataset versions are immutable and hash-stable
+  [x] A 20-item run completes with live progress in the UI
   [ ] Killing the worker mid-run and restarting resumes without duplicates
-  [ ] Cancel and pause/resume work; one failing item does not kill the run
+      (recovery logic is integration-tested; live process interruption needs
+      manual verification; see docs/PROGRESS.md)
+  [x] Cancel and pause/resume work; one failing item does not kill the run
 Phase 4 - Metrics
   Build: metric plugin system, rule + LLM-judge metrics (quality, RAG, tool,
   operational), judge cache, multi-judge.
@@ -586,8 +588,9 @@ At the end of every phase you MUST:
 ## Implementation progress
 
 Phase 1 is DONE as of 2026-10-08. Phase 2 is complete with documented
-limitations as of 2026-10-08. Phase 3 has not been started and requires explicit
-user approval.
+limitations as of 2026-10-08. Phase 3 is complete with documented limitations
+as of 2026-10-08; its live worker-kill/restart acceptance still needs a manual
+check. Phase 4 has not started and requires explicit user approval.
 
 Phase 1 checklist evidence is recorded in `docs/PROGRESS.md`. Dark/light theme
 rendering and keyboard navigation were manually checked in the browser on the

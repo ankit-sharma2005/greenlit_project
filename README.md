@@ -47,13 +47,22 @@ test call before they can be saved. Python Function and Python SDK Traced are
 disabled until a safe isolated execution runner is available; arbitrary user
 Python is not executed.
 
-The backend suite has 19 passing tests. Ruff, strict mypy, all configured
+Phase 3 is complete with documented gaps. Dataset Studio supports CSV, JSON,
+JSONL, and XLSX uploads, four template-driven generation paths, human approval,
+version hashing, and dev/test splits. Celery runs approved examples per item,
+streams progress, and supports pause, resume, cancel, and recovery of persisted
+running items. See [Phase 3 evidence and limitations](docs/PROGRESS.md),
+including the live 20-item browser run and the worker-kill/restart manual check
+that remains.
+
+The backend suite has 22 passing tests. Ruff, strict mypy, all configured
 pre-commit hooks, ESLint, Prettier, frontend typecheck, and production build pass.
 The provider rate limiter is process-local, so limits are not persisted across
 restarts or coordinated across multiple API processes. Provider connection and
 RAG tests use mocked provider responses; configure real credentials/endpoints to
-test external providers. See [Phase 2 evidence and limitations](docs/PROGRESS.md).
-Phase 3 has not started and requires explicit approval.
+test external providers. Generated-data embedding-similarity deduplication,
+self-verification, quality filtering, and coverage reports are not yet
+implemented.
 
 ### Local checks
 

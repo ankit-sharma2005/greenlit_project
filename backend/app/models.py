@@ -221,3 +221,120 @@ class ConnectorTest(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )
+
+
+class Dataset(Base):
+    __tablename__ = "datasets"
+    __table_args__ = (UniqueConstraint("project_id", "name"),)
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id"), index=True, nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    task_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    created_by: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+
+class DatasetVersion(Base):
+    __tablename__ = "dataset_versions"
+    __table_args__ = (UniqueConstraint("dataset_id", "version"),)
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    dataset_id: Mapped[UUID] = mapped_column(
+        ForeignKey("datasets.id"), index=True, nullable=False
+    )
+    version: Mapped[int] = mapped_column(nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    split_strategy: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class DatasetItem(Base):
+    __tablename__ = "dataset_items"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    dataset_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("dataset_versions.id"), index=True, nullable=False
+    )
+    position: Mapped[int] = mapped_column(nullable=False)
+    input_text: Mapped[str] = mapped_column(String(20_000), nullable=False)
+    reference_answer: Mapped[str | None] = mapped_column(String(20_000))
+    reference_context: Mapped[str | None] = mapped_column(String(20_000))
+    category: Mapped[str] = mapped_column(String(40), default="normal", nullable=False)
+    provenance: Mapped[str] = mapped_column(String(30), nullable=False)
+    review_status: Mapped[str] = mapped_column(
+        String(20), default="pending", nullable=False
+    )
+    split: Mapped[str] = mapped_column(String(10), default="dev", nullable=False)
+    data: Mapped[dict[str, object]] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+
+class EvalRun(Base):
+    __tablename__ = "eval_runs"
+    __table_args__ = (UniqueConstraint("workspace_id", "idempotency_key"),)
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    workspace_id: Mapped[UUID] = mapped_column(
+        ForeignKey("workspaces.id"), index=True, nullable=False
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id"), index=True, nullable=False
+    )
+    app_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("app_versions.id"), nullable=False
+    )
+    dataset_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("dataset_versions.id"), nullable=False
+    )
+    split: Mapped[str] = mapped_column(String(10), default="all", nullable=False)
+    created_by: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    idempotency_key: Mapped[str | None] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20), default="queued", nullable=False)
+    total_items: Mapped[int] = mapped_column(default=0, nullable=False)
+    completed_items: Mapped[int] = mapped_column(default=0, nullable=False)
+    failed_items: Mapped[int] = mapped_column(default=0, nullable=False)
+    pause_requested: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    cancel_requested: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    pause_reason: Mapped[str | None] = mapped_column(String(40))
+    celery_task_id: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class EvalRunItem(Base):
+    __tablename__ = "eval_run_items"
+    __table_args__ = (UniqueConstraint("run_id", "dataset_item_id"),)
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("eval_runs.id"), index=True, nullable=False
+    )
+    dataset_item_id: Mapped[UUID] = mapped_column(
+        ForeignKey("dataset_items.id"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+    output: Mapped[str | None] = mapped_column(String(20_000))
+    trace: Mapped[dict[str, object]] = mapped_column(JSON, default=dict, nullable=False)
+    error: Mapped[str | None] = mapped_column(String(2000))
+    attempts: Mapped[int] = mapped_column(default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime)

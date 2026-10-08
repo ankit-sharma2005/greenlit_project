@@ -251,6 +251,7 @@ async def list_app_versions(
         {
             "id": version.id,
             "version": version.version,
+            "connector_profile_id": version.connector_profile_id,
             "content_hash": version.content_hash,
             "access_level": version.access_level,
             "config_snapshot": version.config_snapshot,
