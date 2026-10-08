@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Protocol, cast
+from collections.abc import Callable
+from typing import Any, Protocol, TypeVar, cast
 from uuid import uuid4
 
-from celery import Celery
+from celery import Celery  # type: ignore[import-untyped]
 
 from app.config import settings
 
@@ -27,6 +28,16 @@ class CeleryRuntime(Protocol):
     def send_task(self, name: str, args: list[str]) -> object: ...
 
 
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def task_wrapper(*args: Any, **kwargs: Any) -> Callable[[F], F]:
+    def decorator(func: F) -> F:
+        return cast(F, celery.task(*args, **kwargs)(func))
+
+    return decorator
+
+
 celery = Celery("greenlit", broker=settings.redis_url, backend=settings.redis_url)
 celery_runtime = cast(CeleryRuntime, celery)
 celery_runtime.conf.update(
@@ -38,12 +49,12 @@ celery_runtime.conf.update(
 )
 
 
-@celery.task
+@task_wrapper()
 def pulse() -> dict[str, str]:
     return {"status": "worker-ready"}
 
 
-@celery.task(
+@task_wrapper(
     bind=True,
     name="app.worker.execute_eval_run",
     acks_late=True,

@@ -391,3 +391,60 @@ Invoke-RestMethod http://localhost:8000/readyz
 Sign in, open Dataset Studio, configure verdict thresholds and hard gates, run
 an approved dataset, inspect the verdict/category results, and expand a run item
 to check the answer, waterfall, and retrieved chunks.
+
+## Phase 6 - Compare, failure analysis, regression: DONE
+
+### Acceptance checklist
+
+- **PASS** - Bootstrap confidence intervals and paired permutation/McNemar
+  statistics match expected known values. Evidence: `test_paired_bootstrap_interval_is_exact_for_constant_differences`,
+  `test_paired_permutation_uses_exact_two_sided_sign_flips`,
+  `test_mcnemar_exact_matches_known_discordant_pair_probability`, and
+  `test_holm_adjustment_controls_familywise_error` all passed.
+- **PASS** - Paired compare logic correctly returns no significant difference
+  for equal scores. Evidence: `test_compare_runs_reports_no_significant_difference_for_equal_scores` passed.
+- **PASS** - Baseline promotion is Admin-scoped and audit-logged. Evidence:
+  `test_baseline_approval_and_regression_api_are_scoped_and_audited` asserts
+  `PUT /baseline` is denied for an engineer when it should require admin access,
+  accepts the approved baseline, and records the audit log entries.
+- **PASS** - Regression report returns PASS/WARN/BLOCK with reasons and a
+  new-failure list. Evidence: `test_seeded_regressing_version_returns_block_with_new_failure`
+  and `test_new_noncritical_failure_returns_warn` passed.
+- **PASS** - A seeded regressing candidate run returns BLOCK and retains the
+  regression-critical failure details. Evidence: the regression API test asserts
+  the status is `BLOCK` and `new_failures[1].regression_critical` is true.
+
+### Validation
+
+- Backend focused Phase 6 tests: **8 passed**.
+- Full backend suite: **63 passed**, 2 dependency deprecation warnings.
+- Ruff check and format check passed; strict mypy passed with no issues in 49
+  source files.
+- All configured pre-commit hooks passed.
+- Docker services remained healthy throughout validation; `/healthz` returned
+  `{"status":"ok"}`, `/readyz` returned `{"status":"ready"}`, and `/docs`
+  responded with HTTP 200.
+
+### Assumptions, limitations, and deferred items
+
+- Statistical significance is computed on paired item scores for the shared
+  dataset items only; runs with no paired items return `insufficient_data`.
+- The toolbox uses exact bootstrap/permutation tests and exact McNemar tests
+  for deterministic, reproducible comparisons; it is not a substitute for a full
+  benchmark analysis across thousands of examples.
+- Phase 7 safety and red-team work is deferred until explicit approval.
+
+### Run and verify
+
+```powershell
+docker compose up --build -d
+docker compose ps
+docker compose exec -T api alembic current
+Invoke-RestMethod http://localhost:8000/healthz
+Invoke-RestMethod http://localhost:8000/readyz
+(Invoke-WebRequest -UseBasicParsing http://localhost:8000/docs).StatusCode
+```
+
+Sign in, open the project baseline controls, compare a baseline against a
+candidate run, and inspect the regression report with its reasons and
+new-failure list.

@@ -70,7 +70,12 @@ and answer/trace/chunk drill-down. Criteria and verdict behavior are covered by
 backend tests. A populated authenticated result screen still needs a manual
 browser check. See [Phase 5 evidence and limitations](docs/PROGRESS.md).
 
-The backend suite has 55 passing tests. Ruff, strict mypy, all configured
+Phase 6 adds baseline approval, paired-run comparison, bootstrap/permutation/
+McNemar statistics, regression detection, and regression-critical failure
+reporting. It is implemented and validated with focused and full backend
+integration tests. See [Phase 6 evidence](docs/PROGRESS.md).
+
+The backend suite has 63 passing tests. Ruff, strict mypy, all configured
 pre-commit hooks, ESLint, Prettier, frontend typecheck, and production build pass.
 The provider rate limiter is process-local, so limits are not persisted across
 restarts or coordinated across multiple API processes. Provider connection and

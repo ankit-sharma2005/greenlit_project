@@ -528,11 +528,11 @@ Phase 5 - Verdict and trace viewer
 Phase 6 - Compare, failure analysis, regression
   Build: compare + statistics, failure analysis, REGRESSION TESTING.
   Acceptance:
-  [ ] Bootstrap CI, permutation/Wilcoxon and McNemar tested against known values
-  [ ] Compare shows "no significant difference" when appropriate
-  [ ] Baseline can be set and promoted with Admin approval and audit entry
-  [ ] Regression check returns PASS/WARN/BLOCK with reasons and new-failure list
-  [ ] The seeded regressing version returns BLOCK
+  [x] Bootstrap CI, permutation/Wilcoxon and McNemar tested against known values
+  [x] Compare shows "no significant difference" when appropriate
+  [x] Baseline can be set and promoted with Admin approval and audit entry
+  [x] Regression check returns PASS/WARN/BLOCK with reasons and new-failure list
+  [x] The seeded regressing version returns BLOCK
 Phase 7 - Safety and red-team
   Build: attack packs, mutation engine, canary PII tests, indirect injection,
   guardrail ablation, red-team console.
@@ -596,7 +596,8 @@ limitations as of 2026-10-08. Phase 3 is complete with documented limitations
 as of 2026-10-08; its live worker-kill/restart acceptance still needs a manual
 check. Phase 4 is complete with documented limitations as of 2026-10-08.
 Phase 5 is complete with a documented manual UI check outstanding as of
-2026-10-08. Phase 6 has not started and requires explicit user approval.
+2026-10-08. Phase 6 is complete as of 2026-10-08 and adds comparison,
+statistical significance, baseline approval, and regression reporting.
 
 Phase 1 checklist evidence is recorded in `docs/PROGRESS.md`. Dark/light theme
 rendering and keyboard navigation were manually checked in the browser on the
