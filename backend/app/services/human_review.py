@@ -230,7 +230,7 @@ def final_report_rescore(
     metrics: dict[str, list[float]] = {}
     for trace in stored_traces:
         for metric, value in trace.items():
-            if isinstance(value, (int, float)) and not isnan(float(value)):
+            if isinstance(value, int | float) and not isnan(float(value)):
                 metrics.setdefault(metric, []).append(float(value))
 
     metric_means = {

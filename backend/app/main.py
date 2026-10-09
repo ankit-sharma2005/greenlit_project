@@ -15,6 +15,7 @@ from app.routers.phase4 import router as phase4_router
 from app.routers.phase5 import router as phase5_router
 from app.routers.phase6 import router as phase6_router
 from app.routers.phase8 import router as phase8_router
+from app.routers.phase9 import router as phase9_router
 from app.routers.workspaces import router as workspaces_router
 
 app = FastAPI(title="GreenLit", version="0.1.0")
@@ -32,6 +33,7 @@ app.include_router(phase4_router, prefix="/api/v1")
 app.include_router(phase5_router, prefix="/api/v1")
 app.include_router(phase6_router, prefix="/api/v1")
 app.include_router(phase8_router, prefix="/api/v1")
+app.include_router(phase9_router, prefix="/api/v1")
 app.include_router(workspaces_router, prefix="/api/v1")
 
 

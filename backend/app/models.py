@@ -27,6 +27,7 @@ class User(Base):
     memberships: Mapped[list[WorkspaceMembership]] = relationship(back_populates="user")
     refresh_tokens: Mapped[list[RefreshToken]] = relationship(back_populates="user")
     audit_logs: Mapped[list[AuditLog]] = relationship(back_populates="user")
+    api_tokens: Mapped[list[ApiToken]] = relationship(back_populates="user")
 
 
 class Workspace(Base):
@@ -96,6 +97,28 @@ class PasswordResetToken(Base):
     )
 
     user: Mapped[User] = relationship()
+
+
+class ApiToken(Base):
+    __tablename__ = "api_tokens"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    workspace_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("workspaces.id"), nullable=True
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    token_prefix: Mapped[str] = mapped_column(String(20), default="gl", nullable=False)
+    scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+    user: Mapped[User] = relationship(back_populates="api_tokens")
 
 
 class AuditLog(Base):
