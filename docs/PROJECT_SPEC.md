@@ -561,9 +561,9 @@ Phase 9 - Remaining connectors, CI, polish
   [ ] Docker and Git entry points run in a sandbox with resource limits and
       are torn down after the run
   [ ] Proxy mode records traces from an app pointed at GreenLit
-  [ ] CI endpoint authenticates with an API token and returns PASS/WARN/BLOCK
-  [ ] `make seed` produces GOOD=GO, BROKEN=NO_GO, REGRESSING=BLOCK
-  [ ] PDF/Markdown/CSV reports export; research scripts produce kappa and CIs
+  [x] CI endpoint authenticates with an API token and returns PASS/WARN/BLOCK
+  [x] `make seed` produces GOOD=GO, BROKEN=NO_GO, REGRESSING=BLOCK
+  [x] PDF/Markdown/CSV reports export; research scripts produce kappa and CIs
   [ ] Playwright E2E golden path passes; README covers all 13 entry points
 Phase 10 (stretch) - Website discovery and MCP
   Build: WEBSITE_URL discovery (type 12) and MCP_SERVER (type 13).

@@ -75,7 +75,14 @@ McNemar statistics, regression detection, and regression-critical failure
 reporting. It is implemented and validated with focused and full backend
 integration tests. See [Phase 6 evidence](docs/PROGRESS.md).
 
-The backend suite has 63 passing tests. Ruff, strict mypy, all configured
+Phase 9 adds the remaining CI and polish tooling: API-token-based CI
+regression checks, deterministic demo seeding for GOOD/BROKEN/REGRESSING,
+research summaries for kappa and confidence intervals, and export scripts for
+Markdown, CSV, and PDF output. The demo/export tooling is checked by backend
+tests and its artifacts are saved under `.tmp` during validation. The Docker,
+Git, CLI, and Proxy connector sandbox work remains the outstanding follow-up.
+
+The backend suite has 77 passing tests. Ruff, strict mypy, all configured
 pre-commit hooks, ESLint, Prettier, frontend typecheck, and production build pass.
 The provider rate limiter is process-local, so limits are not persisted across
 restarts or coordinated across multiple API processes. Provider connection and

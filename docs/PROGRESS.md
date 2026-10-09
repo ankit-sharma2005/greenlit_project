@@ -569,3 +569,71 @@ Invoke-RestMethod http://localhost:8000/readyz
 The Phase 8 human-review and calibration service/API contract is validated and
 recorded. No Phase 9 work was started, and this status is now frozen pending
 explicit user direction.
+
+## Phase 9 - CI regression and demo/export tooling: DONE WITH DOCUMENTED GAPS
+
+### Acceptance checklist
+
+- **PASS** - CI regression checks authenticate with a workspace-scoped API token
+  and return a PASS/WARN/BLOCK status. Evidence: `test_phase9_api_tokens_enable_ci_regression_checks`
+  passed, and `backend/app/routers/phase9.py` validates bearer or `x-api-token`
+  credentials before calling `build_ci_response()`.
+- **PASS** - `make seed` produces the demo states `GOOD=GO`, `BROKEN=NO_GO`, and
+  `REGRESSING=BLOCK`. Evidence: `python scripts/seed_demo.py --output .tmp/seed-demo.json`
+  generated a JSON payload with those three states and
+  `backend/tests/test_phase9_seed.py::test_seed_demo_generates_required_states`
+  passed.
+- **PASS** - Markdown, CSV, and PDF report exports are generated from the seeded
+  demo states. Evidence: `python scripts/export_reports.py --format all --output-dir .tmp/reports`
+  wrote `demo-report.md`, `demo-report.csv`, and `demo-report.pdf`, and the
+  backend export test passed.
+- **PASS** - Research summary scripts emit a kappa value and a bootstrap
+  confidence interval. Evidence: `python scripts/research_analysis.py --output .tmp/research.json`
+  emitted a JSON object containing `cohens_kappa` and `score_ci`, and
+  `backend/tests/test_phase9_seed.py::test_exports_and_research_scripts_create_artifacts`
+  passed.
+- **FAIL / KNOWN GAP** - Docker, Git, CLI, and Proxy entry-point sandbox
+  execution remains unimplemented. Evidence: the Phase 9 connector types remain
+  in the later-phase registry; no sandbox runner or trace-capture implementation
+  is present in the repo.
+- **FAIL / KNOWN GAP** - Proxy-mode trace capture and Playwright golden-path E2E
+  remain unimplemented. Evidence: there is no proxy capture service or browser
+  E2E script in the workspace.
+
+### Validation
+
+- Phase 9 focused backend tests: **3 passed**.
+- Command: `cd backend; .\.venv\Scripts\python.exe -m pytest -q tests/test_phase9.py tests/test_phase9_seed.py`
+  - Result: **3 passed**.
+- Full backend suite: **77 passed**, 2 deprecation warnings.
+- Docker services remained healthy throughout validation: `docker compose ps`
+  showed `api`, `web`, `worker`, `redis`, and `postgres` all healthy.
+- `/healthz` returned `{"status":"ok"}`, `/readyz` returned `{"status":"ready"}`,
+  and `/docs` returned HTTP 200.
+
+### Assumptions, limitations, and deferred items
+
+- The Phase 9 demo/export tooling is complete and validated, but the actual
+  Docker/Git/CLI/Proxy connector runners and the browser automation golden path
+  remain deferred.
+- The codebase still does not contain a real sandboxed execution service for
+  runner-style connector types; it avoids unsafe execution by keeping them as
+  later-phase work.
+- No Phase 10 work has started.
+
+### Run and verify
+
+```powershell
+docker compose up --build -d
+docker compose ps
+Invoke-RestMethod http://localhost:8000/healthz
+Invoke-RestMethod http://localhost:8000/readyz
+(Invoke-WebRequest -UseBasicParsing http://localhost:8000/docs).StatusCode
+python scripts/seed_demo.py --output .tmp/seed-demo.json
+python scripts/export_reports.py --format all --output-dir .tmp/reports
+python scripts/research_analysis.py --output .tmp/research.json
+```
+
+The Phase 9 CI token flow, demo-seeding output, and export/research scripts are
+validated. The remaining connector sandbox and browser E2E work remains a
+follow-up item, not a hidden blocker for the completed CI and demo tooling.
