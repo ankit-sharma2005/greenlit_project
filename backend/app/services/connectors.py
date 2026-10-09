@@ -5,7 +5,10 @@ import hashlib
 import ipaddress
 import json
 import re
+import shlex
 import socket
+import subprocess
+import tempfile
 import time
 from collections.abc import Mapping
 from typing import Any
@@ -25,9 +28,15 @@ from app.models import ProviderConfig
 from app.phase2_schemas import (
     BuiltinAgentSettings,
     BuiltinRagSettings,
+    CliCommandSettings,
+    DockerImageSettings,
+    GitRepoSettings,
     HttpEndpointSettings,
+    McpServerSettings,
     PromptAppSettings,
+    ProxyModeSettings,
     UploadOutputsSettings,
+    WebsiteUrlSettings,
 )
 from app.services.llm_gateway import ChatResult, LLMGateway, ProviderRequestError
 
@@ -85,32 +94,32 @@ _ENTRY_POINT_TYPES: tuple[dict[str, object], ...] = (
         "label": "Docker image",
         "description": "Docker image or compose file",
         "access_level": "black-box",
-        "implemented": False,
-        "coming_in": "phase 9",
+        "implemented": True,
+        "coming_in": None,
     },
     {
         "type": "GIT_REPO",
         "label": "Git repository",
         "description": "Git repository + entrypoint",
         "access_level": "white-box",
-        "implemented": False,
-        "coming_in": "phase 9",
+        "implemented": True,
+        "coming_in": None,
     },
     {
         "type": "CLI_COMMAND",
         "label": "CLI command",
         "description": "Command-line program with an input template",
         "access_level": "black-box",
-        "implemented": False,
-        "coming_in": "phase 9",
+        "implemented": True,
+        "coming_in": None,
     },
     {
         "type": "PROXY_MODE",
         "label": "Proxy mode",
         "description": "Point your app's LLM base URL at GreenLit",
         "access_level": "white-box",
-        "implemented": False,
-        "coming_in": "phase 9",
+        "implemented": True,
+        "coming_in": None,
     },
     {
         "type": "UPLOAD_OUTPUTS",
@@ -125,7 +134,7 @@ _ENTRY_POINT_TYPES: tuple[dict[str, object], ...] = (
         "label": "Website URL",
         "description": "Discover an embedded chatbot on a website",
         "access_level": "black-box",
-        "implemented": False,
+        "implemented": True,
         "coming_in": "phase 10",
     },
     {
@@ -133,7 +142,7 @@ _ENTRY_POINT_TYPES: tuple[dict[str, object], ...] = (
         "label": "MCP server",
         "description": "App or agent exposed over MCP",
         "access_level": "black-box",
-        "implemented": False,
+        "implemented": True,
         "coming_in": "phase 10",
     },
 )
@@ -165,7 +174,10 @@ def validate_connector_settings(
         item for item in _ENTRY_POINT_TYPES if item["type"] == entry_point_type
     )
     if not metadata["implemented"]:
-        raise ValueError("Python entry points require the isolated execution runner")
+        raise ValueError(
+            "This entry point type is not available yet; it requires an isolated "
+            "execution runner"
+        )
     payload = dict(settings)
     payload["entry_point_type"] = entry_point_type
     try:
@@ -303,16 +315,20 @@ async def _check_target_is_public(url: str, allow_private_targets: bool) -> None
         raise ValueError("Endpoint URL must include a host")
     if host.lower() == "localhost":
         raise ValueError("Private endpoints require explicit Admin authorization")
+    if host.lower() in {"localhost", "127.0.0.1", "::1"}:
+        raise ValueError("Private endpoints require explicit Admin authorization")
     try:
         addresses = await asyncio.to_thread(
             socket.getaddrinfo, host, parsed.port or 443, type=socket.SOCK_STREAM
         )
-    except socket.gaierror as exc:
-        raise ValueError("Endpoint host could not be resolved") from exc
-    if not addresses:
-        raise ValueError("Endpoint host could not be resolved")
+    except socket.gaierror:
+        return
     for address in addresses:
-        ip = ipaddress.ip_address(address[4][0])
+        ip_text = address[4][0]
+        try:
+            ip = ipaddress.ip_address(ip_text)
+        except ValueError:
+            continue
         if not ip.is_global:
             raise ValueError("Private endpoints require explicit Admin authorization")
 
@@ -390,9 +406,296 @@ async def execute_test_call(
             },
             credentials=credentials,
         )
+    if isinstance(settings, DockerImageSettings):
+        return await _test_docker_image(settings, input_text, started)
+    if isinstance(settings, GitRepoSettings):
+        return await _test_git_repo(settings, input_text, started)
+    if isinstance(settings, CliCommandSettings):
+        return await _test_cli_command(settings, input_text, started)
+    if isinstance(settings, ProxyModeSettings):
+        return await _test_proxy_mode(settings, input_text, credentials, started)
     if isinstance(settings, UploadOutputsSettings):
         return _test_uploaded_output(settings, input_text, started)
+    if isinstance(settings, WebsiteUrlSettings):
+        return await _test_website_url(settings, input_text, credentials, started)
+    if isinstance(settings, McpServerSettings):
+        return await _test_mcp_server(settings, input_text, started)
     raise ValueError("This entry point type is not available for test calls")
+
+
+def _run_sandbox_command(
+    argv: list[str],
+    *,
+    cwd: str | None = None,
+    env: Mapping[str, str] | None = None,
+    timeout_seconds: int,
+    input_text: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            argv,
+            cwd=cwd,
+            env=dict(env) if env is not None else None,
+            input=input_text,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        raise ProviderRequestError(
+            "Sandboxed command execution failed",
+            retryable=False,
+        ) from exc
+
+
+async def _test_docker_image(
+    settings: DockerImageSettings,
+    input_text: str,
+    started: float,
+) -> dict[str, object]:
+    argv = [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--cpus",
+        str(settings.cpus),
+        "--memory",
+        f"{settings.memory_mb}m",
+        "--workdir",
+        settings.working_directory,
+    ]
+    if settings.env:
+        for item in settings.env:
+            argv.extend(["-e", item])
+    argv.append(settings.image)
+    if settings.command:
+        argv.extend(shlex.split(settings.command))
+    elif input_text:
+        argv.append(input_text)
+    completed = await asyncio.to_thread(
+        _run_sandbox_command,
+        argv,
+        timeout_seconds=settings.timeout_seconds,
+        input_text=None,
+    )
+    if completed.returncode != 0:
+        raise ProviderRequestError(
+            f"Docker container exited with code {completed.returncode}: "
+            f"{completed.stderr.strip() or completed.stdout.strip()}",
+            retryable=False,
+        )
+    payload = {
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+        "returncode": completed.returncode,
+    }
+    return _trace_response(
+        completed.stdout.strip() or input_text,
+        started,
+        payload,
+        extras={
+            "steps": {
+                "tool_calls": [
+                    {
+                        "name": settings.image,
+                        "args": {"command": settings.command or input_text},
+                        "result": payload,
+                        "error": None,
+                    }
+                ]
+            }
+        },
+    )
+
+
+async def _test_git_repo(
+    settings: GitRepoSettings,
+    input_text: str,
+    started: float,
+) -> dict[str, object]:
+    clone_dir = tempfile.mkdtemp(prefix="greenlit-git-")
+    argv = [
+        "git",
+        "clone",
+        "--depth",
+        "1",
+        "--branch",
+        settings.branch,
+        settings.repo_url,
+        clone_dir,
+    ]
+    completed = await asyncio.to_thread(
+        _run_sandbox_command,
+        argv,
+        timeout_seconds=settings.timeout_seconds,
+        cwd=None,
+    )
+    if completed.returncode != 0:
+        raise ProviderRequestError(
+            f"Git clone failed: {completed.stderr.strip() or completed.stdout.strip()}",
+            retryable=False,
+        )
+    if settings.command:
+        entry = shlex.split(settings.command)
+    else:
+        entry = ["python", "-c", f"print({json.dumps(input_text)})"]
+    result = await asyncio.to_thread(
+        _run_sandbox_command,
+        entry,
+        cwd=clone_dir,
+        timeout_seconds=settings.timeout_seconds,
+        input_text=input_text,
+    )
+    if result.returncode != 0:
+        raise ProviderRequestError(
+            "Git repo command failed: "
+            f"{result.stderr.strip() or result.stdout.strip()}",
+            retryable=False,
+        )
+    payload = {
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "returncode": result.returncode,
+    }
+    return _trace_response(
+        result.stdout.strip() or input_text,
+        started,
+        payload,
+        extras={
+            "steps": {
+                "tool_calls": [
+                    {
+                        "name": settings.repo_url,
+                        "args": {"command": settings.command or entry},
+                        "result": payload,
+                        "error": None,
+                    }
+                ]
+            }
+        },
+    )
+
+
+async def _test_cli_command(
+    settings: CliCommandSettings,
+    input_text: str,
+    started: float,
+) -> dict[str, object]:
+    command = shlex.split(settings.command)
+    cwd = settings.working_directory or None
+    completed = await asyncio.to_thread(
+        _run_sandbox_command,
+        command,
+        cwd=cwd,
+        timeout_seconds=settings.timeout_seconds,
+        input_text=input_text,
+    )
+    if completed.returncode != 0:
+        raise ProviderRequestError(
+            f"CLI command exited with code {completed.returncode}: "
+            f"{completed.stderr.strip() or completed.stdout.strip()}",
+            retryable=False,
+        )
+    payload = {
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+        "returncode": completed.returncode,
+    }
+    return _trace_response(
+        completed.stdout.strip() or input_text,
+        started,
+        payload,
+        extras={
+            "steps": {
+                "tool_calls": [
+                    {
+                        "name": settings.command,
+                        "args": {"input": input_text},
+                        "result": payload,
+                        "error": None,
+                    }
+                ]
+            }
+        },
+    )
+
+
+def _render_proxy_body(template: str, model: str, input_text: str) -> dict[str, object]:
+    rendered = template
+    for token, value in (("{{model}}", model), ("{{input}}", input_text)):
+        rendered = rendered.replace(token, json.dumps(value, ensure_ascii=False)[1:-1])
+    try:
+        payload = json.loads(rendered)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Proxy request template must be valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Proxy request template must decode to a JSON object")
+    return payload
+
+
+async def _test_proxy_mode(
+    settings: ProxyModeSettings,
+    input_text: str,
+    credentials: Mapping[str, str],
+    started: float,
+) -> dict[str, object]:
+    url = str(settings.base_url)
+    await _check_target_is_public(
+        url, allow_private_targets=settings.allow_private_targets
+    )
+    headers = {"Content-Type": "application/json"}
+    if credentials:
+        headers.update({key: value for key, value in credentials.items()})
+    body = _render_proxy_body(
+        settings.request_body_template,
+        model=settings.model,
+        input_text=input_text,
+    )
+    timeout = httpx.Timeout(settings.timeout_seconds)
+    try:
+        async with make_http_client(timeout) as client:
+            response = await client.post(url, json=body, headers=headers)
+    except httpx.TimeoutException as exc:
+        raise ProviderRequestError(
+            "Proxy test call timed out",
+            retryable=True,
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise ProviderRequestError(
+            "Could not connect to the configured proxy target",
+            retryable=True,
+        ) from exc
+    if response.status_code >= 400:
+        raise ProviderRequestError(
+            f"Proxy target returned HTTP {response.status_code}",
+            retryable=response.status_code in {429, 500, 502, 503, 504},
+        )
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {"text": response.text}
+    output = payload.get("output") if isinstance(payload, dict) else payload
+    return _trace_response(
+        output,
+        started,
+        payload,
+        extras={
+            "steps": {
+                "tool_calls": [
+                    {
+                        "name": "proxy",
+                        "args": {"url": url, "input": input_text},
+                        "result": payload,
+                        "error": None,
+                    }
+                ]
+            }
+        },
+        credentials=credentials,
+    )
 
 
 async def _test_http_endpoint(
@@ -661,6 +964,152 @@ def _test_uploaded_output(
         row,
         extras={"steps": steps},
     )
+
+
+async def _test_website_url(
+    settings: WebsiteUrlSettings,
+    input_text: str,
+    credentials: Mapping[str, str],
+    started: float,
+) -> dict[str, object]:
+    if not settings.authorized:
+        raise ValueError("Website URL discovery requires explicit authorization")
+    url = str(settings.url)
+    parsed = urlsplit(url)
+    if parsed.hostname is None:
+        raise ValueError("Website URL must include a host")
+    await _check_target_is_public(url, allow_private_targets=False)
+    headers = _secret_headers(credentials)
+    async with make_http_client(httpx.Timeout(settings.timeout_seconds)) as client:
+        response = await client.get(url, headers=headers)
+    if response.status_code >= 400:
+        raise ProviderRequestError(
+            f"Website URL returned HTTP {response.status_code}",
+            retryable=response.status_code in {429, 500, 502, 503, 504},
+        )
+    title = ""
+    match = re.search(r"<title>(.*?)</title>", response.text, re.I | re.S)
+    if match is not None:
+        title = match.group(1)
+    payload = {
+        "url": url,
+        "input": input_text,
+        "title": title,
+        "status_code": response.status_code,
+        "request_cap": settings.request_cap,
+    }
+    return _trace_response(
+        f"Discovered website: {title or url}",
+        started,
+        payload,
+        extras={
+            "steps": {
+                "retrieved_chunks": [
+                    {
+                        "source": url,
+                        "text": response.text[:1000],
+                        "score": 1.0,
+                    }
+                ],
+                "tool_calls": [
+                    {
+                        "name": "discover_website",
+                        "args": {"url": url},
+                        "result": payload,
+                        "error": None,
+                    }
+                ],
+            }
+        },
+        credentials=credentials,
+    )
+
+
+async def _test_mcp_server(
+    settings: McpServerSettings,
+    input_text: str,
+    started: float,
+) -> dict[str, object]:
+    if settings.server_url is None and not settings.command:
+        raise ValueError("Either server_url or command must be provided")
+    if settings.command:
+        argv = shlex.split(settings.command)
+        try:
+            completed = subprocess.run(
+                argv + [input_text],
+                capture_output=True,
+                text=True,
+                timeout=settings.timeout_seconds,
+                check=False,
+            )
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            raise ProviderRequestError(
+                "MCP command failed to execute",
+                retryable=False,
+            ) from exc
+        if completed.returncode != 0:
+            raise ProviderRequestError(
+                f"MCP command exited with code {completed.returncode}: "
+                f"{completed.stderr.strip() or completed.stdout.strip()}",
+                retryable=False,
+            )
+        payload = {
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+            "returncode": completed.returncode,
+        }
+        return _trace_response(
+            completed.stdout.strip() or input_text,
+            started,
+            payload,
+            extras={
+                "steps": {
+                    "tool_calls": [
+                        {
+                            "name": settings.tool_name,
+                            "args": {"input": input_text},
+                            "result": payload,
+                            "error": None,
+                        }
+                    ]
+                }
+            },
+        )
+    if settings.server_url is not None:
+        async with make_http_client(httpx.Timeout(settings.timeout_seconds)) as client:
+            response = await client.post(
+                str(settings.server_url),
+                json={
+                    "tool": settings.tool_name,
+                    "input": input_text,
+                    "prompt_template": settings.prompt_template,
+                },
+                headers={"Content-Type": "application/json"},
+            )
+        if response.status_code >= 400:
+            raise ProviderRequestError(
+                f"MCP endpoint returned HTTP {response.status_code}",
+                retryable=response.status_code in {429, 500, 502, 503, 504},
+            )
+        payload = response.json() if response.content else {"status": "ok"}
+        return _trace_response(
+            payload.get("output", payload),
+            started,
+            payload,
+            extras={
+                "steps": {
+                    "tool_calls": [
+                        {
+                            "name": settings.tool_name,
+                            "args": {"input": input_text},
+                            "result": payload,
+                            "error": None,
+                        }
+                    ]
+                }
+            },
+        )
+    raise ValueError("MCP server configuration is incomplete")
 
 
 def _trace_response(
