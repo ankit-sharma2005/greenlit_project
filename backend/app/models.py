@@ -4,7 +4,7 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.db import Base
 
@@ -141,14 +141,23 @@ class AuditLog(Base):
 
 class ProviderConfig(Base):
     __tablename__ = "provider_configs"
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id", "name_key", name="uq_provider_configs_workspace_name_key"
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     workspace_id: Mapped[UUID] = mapped_column(
         ForeignKey("workspaces.id"), index=True, nullable=False
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    name_key: Mapped[str] = mapped_column(String(240), nullable=False)
+    original_name: Mapped[str | None] = mapped_column(String(120))
+    duplicate_of: Mapped[UUID | None] = mapped_column(nullable=True)
     provider_type: Mapped[str] = mapped_column(String(40), nullable=False)
     base_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    test_model: Mapped[str | None] = mapped_column(String(200))
     api_key_encrypted: Mapped[str | None] = mapped_column(String(2000))
     rpm: Mapped[int] = mapped_column(default=10, nullable=False)
     rpd: Mapped[int] = mapped_column(default=500, nullable=False)
@@ -159,28 +168,59 @@ class ProviderConfig(Base):
         DateTime, default=datetime.utcnow, nullable=False
     )
 
+    @validates("name")
+    def set_name_key(self, _: str, value: str) -> str:
+        self.name_key = value.strip().casefold()
+        return value
+
 
 class Project(Base):
     __tablename__ = "projects"
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id", "name_key", name="uq_projects_workspace_name_key"
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     workspace_id: Mapped[UUID] = mapped_column(
         ForeignKey("workspaces.id"), index=True, nullable=False
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    name_key: Mapped[str] = mapped_column(String(240), nullable=False)
+    original_name: Mapped[str | None] = mapped_column(String(120))
+    duplicate_of: Mapped[UUID | None] = mapped_column(nullable=True)
     description: Mapped[str] = mapped_column(String(1000), default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )
 
+    @validates("name")
+    def set_name_key(self, _: str, value: str) -> str:
+        self.name_key = value.strip().casefold()
+        return value
+
 
 class ConnectorProfile(Base):
     __tablename__ = "connector_profiles"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "name_key",
+            name="uq_connector_profiles_project_name_key",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     project_id: Mapped[UUID] = mapped_column(
         ForeignKey("projects.id"), index=True, nullable=False
     )
+    provider_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("provider_configs.id", ondelete="SET NULL"), nullable=True
+    )
+    model: Mapped[str | None] = mapped_column(String(200))
+    display_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    name_key: Mapped[str] = mapped_column(String(240), nullable=False)
     entry_point_type: Mapped[str] = mapped_column(String(40), nullable=False)
     settings: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     encrypted_credentials: Mapped[str | None] = mapped_column(String(8000))
@@ -340,6 +380,9 @@ class EvalRun(Base):
     criteria_snapshot: Mapped[dict[str, object]] = mapped_column(
         JSON, default=dict, nullable=False
     )
+    judge_profiles_snapshot: Mapped[list[dict[str, object]] | None] = mapped_column(
+        JSON, nullable=True
+    )
     created_by: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     idempotency_key: Mapped[str | None] = mapped_column(String(100))
     status: Mapped[str] = mapped_column(String(20), default="queued", nullable=False)
@@ -410,6 +453,79 @@ class JudgeMetricCache(Base):
 
     cache_key: Mapped[str] = mapped_column(String(64), primary_key=True)
     result: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+
+class WorkspaceUserPreference(Base):
+    __tablename__ = "workspace_user_preferences"
+
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    workspace_id: Mapped[UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), primary_key=True
+    )
+    default_provider_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("provider_configs.id", ondelete="SET NULL"), nullable=True
+    )
+    active_project_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
+    )
+    last_page: Mapped[str] = mapped_column(
+        String(80), default="overview", nullable=False
+    )
+    last_entry_point: Mapped[str | None] = mapped_column(String(40))
+    last_column_mapping: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    memory_message_count: Mapped[int] = mapped_column(default=20, nullable=False)
+    memory_token_budget: Mapped[int] = mapped_column(default=6000, nullable=False)
+    chat_retention_days: Mapped[int] = mapped_column(default=30, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+
+class ChatConversation(Base):
+    __tablename__ = "chat_conversations"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    owner_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    workspace_id: Mapped[UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    project_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), default="New chat", nullable=False)
+    summary: Mapped[str] = mapped_column(String(20_000), default="", nullable=False)
+    summary_message_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("chat_conversations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    content: Mapped[str] = mapped_column(String(40_000), nullable=False)
+    context_sent: Mapped[list[dict[str, object]]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
+    trace: Mapped[dict[str, object]] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )

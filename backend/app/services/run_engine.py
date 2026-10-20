@@ -215,9 +215,13 @@ async def _execute_one_item(
         )
         if membership is None:
             raise LookupError("The run creator no longer has workspace access")
+        connector_settings = dict(connector.settings)
+        legacy_provider_id = connector_settings.pop("provider_id", None)
+        legacy_model = connector_settings.pop("model", None)
+        connector_settings.pop("_display_name", None)
         try:
             validated_settings, _ = validate_connector_settings(
-                connector.entry_point_type, connector.settings
+                connector.entry_point_type, connector_settings
             )
         except ValueError as exc:
             raise ValueError(
@@ -232,20 +236,14 @@ async def _execute_one_item(
             ):
                 raise ValueError("Saved connector credentials are invalid")
             credentials = decrypted
-        input_text = item.input_text
-        if connector.entry_point_type == "UPLOAD_OUTPUTS":
-            input_text = json.dumps(
-                {
-                    "input": item.input_text,
-                    "output": item.reference_answer or "",
-                    **item.data,
-                },
-                ensure_ascii=False,
-            )
         return await execute_test_call(
             entry_point_type=connector.entry_point_type,
             settings=validated_settings,
-            input_text=input_text,
+            provider_id=connector.provider_id
+            or (UUID(str(legacy_provider_id)) if legacy_provider_id else None),
+            model=connector.model or (str(legacy_model) if legacy_model else None),
+            input_text=item.input_text,
+            conversation_history=None,
             credentials=credentials,
             workspace_id=run.workspace_id,
             user_role=membership.role,

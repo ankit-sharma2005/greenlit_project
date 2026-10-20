@@ -10,6 +10,7 @@ VERDICT_CATEGORIES = frozenset({"quality", "rag", "tool", "operational"})
 VERDICT_METRICS = frozenset(
     {
         "output_nonempty",
+        "answer_match",
         "answer_exact_match",
         "retrieval_context_recall",
         "tool_call_match",
@@ -103,13 +104,52 @@ class RunReportItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
+    dataset_item_id: str
     position: int
     status: str
     category: str
+    regression_critical: bool
+    input: str
+    reference_answer: str | None
     output: str | None
     trace: dict[str, object]
     scores: list[MetricScoreOut]
     error: str | None
+
+
+class RunReportMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: str
+    project_name: str
+    dataset_id: str
+    dataset_name: str
+    dataset_version: int
+    dataset_hash: str
+    connector_type: str | None
+    provider_id: str | None
+    provider_name: str | None
+    provider_type: str | None
+    model: str | None
+    run_created_at: str
+    run_started_at: str | None
+    run_finished_at: str | None
+    app_version_id: str
+    app_version: int
+    settings: dict[str, object]
+
+
+class RunReportMetric(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    category: str
+    method: str
+    mean_score: float | None
+    scored_cases: int
+    status_counts: dict[str, int]
+    hard_gate_threshold: float | None
+    hard_gate_failures: int
 
 
 class RunReportOut(BaseModel):
@@ -117,6 +157,13 @@ class RunReportOut(BaseModel):
 
     run_id: str
     status: str
+    metadata: RunReportMetadata
     criteria: VerdictCriteria
+    rules_applied: VerdictCriteria
     verdict: RunVerdict
+    metrics: list[RunReportMetric]
     items: list[RunReportItem]
+    failed_cases: list[RunReportItem]
+    safety_results: dict[str, object]
+    regression_vs_baseline: dict[str, object]
+    calibration_summary: dict[str, object]

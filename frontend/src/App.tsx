@@ -6,10 +6,12 @@ import {
   Route,
   Routes,
   useNavigate,
+  useParams,
   useSearchParams,
 } from 'react-router-dom';
 import { apiRequest, User, Workspace } from './api';
 import WorkspaceProjects from './WorkspaceProjects';
+import { AssistantPanel } from './WorkspaceChat';
 
 const features = [
   {
@@ -34,6 +36,27 @@ interface AuthenticatedUser {
   user: User;
   workspaces: Workspace[];
 }
+
+interface WorkspaceProjectOption {
+  id: string;
+  name: string;
+}
+
+const workspacePages = [
+  ['overview', 'Overview'],
+  ['providers', 'LLM Providers'],
+  ['projects', 'Projects'],
+  ['connector', 'Project Connector'],
+  ['dataset', 'Dataset Studio'],
+  ['evaluation', 'Evaluation Runs'],
+  ['results', 'Results/Reports'],
+  ['test-chat', 'Test Chat'],
+  ['settings', 'Settings'],
+] as const;
+
+type WorkspacePageId = (typeof workspacePages)[number][0];
+
+const pageSet = new Set<string>(workspacePages.map(([id]) => id));
 
 function ThemeToggle() {
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -415,12 +438,97 @@ function WorkspacePage({
 }) {
   const [error, setError] = useState('');
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isAssistantOpen, setIsAssistantOpen] = useState(false);
+  const [projectOptions, setProjectOptions] = useState<
+    WorkspaceProjectOption[]
+  >([]);
+  const [activeProjectId, setActiveProjectId] = useState('');
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState(
     session.workspaces[0]?.id ?? '',
   );
+  const { page: pageParam } = useParams<{ page?: string }>();
+  const navigate = useNavigate();
   const selectedWorkspace = session.workspaces.find(
     (workspace) => workspace.id === selectedWorkspaceId,
   );
+  const page = (
+    pageSet.has(pageParam ?? '') ? pageParam : 'overview'
+  ) as WorkspacePageId;
+  const pageTitle =
+    workspacePages.find(([id]) => id === page)?.[1] ?? 'Overview';
+
+  useEffect(() => {
+    if (!selectedWorkspaceId) return;
+    let isCurrent = true;
+    void Promise.all([
+      apiRequest<WorkspaceProjectOption[]>(
+        `/workspaces/${encodeURIComponent(selectedWorkspaceId)}/projects`,
+        {},
+        session.accessToken,
+      ),
+      apiRequest<{ active_project_id: string | null }>(
+        `/workspaces/${encodeURIComponent(selectedWorkspaceId)}/preferences`,
+        {},
+        session.accessToken,
+      ),
+    ])
+      .then(([projects, preferences]) => {
+        if (!isCurrent) return;
+        setProjectOptions(projects);
+        const activeId =
+          projects.find(
+            (project) => project.id === preferences.active_project_id,
+          )?.id ??
+          projects[0]?.id ??
+          '';
+        setActiveProjectId(activeId);
+      })
+      .catch((reason: unknown) => {
+        if (!isCurrent) return;
+        setProjectOptions([]);
+        setActiveProjectId('');
+        setError(
+          reason instanceof Error
+            ? `Project switcher could not load: ${reason.message}`
+            : 'Project switcher could not load.',
+        );
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [selectedWorkspaceId, session.accessToken]);
+
+  useEffect(() => {
+    if (!selectedWorkspaceId) return;
+    if (pageParam && !pageSet.has(pageParam)) {
+      navigate('/workspace/overview', { replace: true });
+      return;
+    }
+    if (pageParam) return;
+
+    let isCurrent = true;
+    void apiRequest<{ last_page?: string }>(
+      `/workspaces/${encodeURIComponent(selectedWorkspaceId)}/preferences`,
+      {},
+      session.accessToken,
+    )
+      .then((preferences) => {
+        const destination =
+          preferences.last_page && pageSet.has(preferences.last_page)
+            ? preferences.last_page
+            : 'overview';
+        if (isCurrent) {
+          navigate(`/workspace/${destination}`, { replace: true });
+        }
+      })
+      .catch(() => {
+        if (isCurrent) navigate('/workspace/overview', { replace: true });
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [navigate, pageParam, selectedWorkspaceId, session.accessToken]);
 
   async function handleLogout() {
     setError('');
@@ -439,15 +547,65 @@ function WorkspacePage({
   return (
     <div className="page-shell dashboard-shell">
       <header className="topbar">
+        <button
+          className="sidebar-toggle secondary-button"
+          type="button"
+          aria-expanded={isSidebarOpen}
+          aria-controls="workspace-sidebar"
+          onClick={() => setIsSidebarOpen((current) => !current)}
+        >
+          Menu
+        </button>
         <Brand />
-        <nav className="nav">
-          <NavLink to="/workspace" end>
-            Overview
-          </NavLink>
-          <span>{session.user.email}</span>
-        </nav>
+        <div className="workspace-crumb" aria-label="Breadcrumb">
+          {selectedWorkspace?.name ?? 'Workspace'} <span>/</span> {pageTitle}
+        </div>
         <div className="header-actions">
+          <label className="topbar-project-switcher" title="Active project">
+            <span className="sr-only">Active project</span>
+            <select
+              aria-label="Active project"
+              value={activeProjectId}
+              disabled={!projectOptions.length}
+              onChange={(event) => {
+                const projectId = event.target.value;
+                setActiveProjectId(projectId);
+                if (!selectedWorkspaceId) return;
+                void apiRequest(
+                  `/workspaces/${encodeURIComponent(selectedWorkspaceId)}/preferences`,
+                  {
+                    method: 'PUT',
+                    body: JSON.stringify({
+                      active_project_id: projectId || null,
+                    }),
+                  },
+                  session.accessToken,
+                ).catch((reason: unknown) => {
+                  setError(
+                    reason instanceof Error
+                      ? `Could not save the active project: ${reason.message}`
+                      : 'Could not save the active project.',
+                  );
+                });
+              }}
+            >
+              <option value="">Select a project</option>
+              {projectOptions.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => setIsAssistantOpen(true)}
+          >
+            GreenLit Assistant
+          </button>
           <ThemeToggle />
+          <span className="user-menu-label">{session.user.email}</span>
           <button
             className="secondary-button"
             type="button"
@@ -458,54 +616,86 @@ function WorkspacePage({
           </button>
         </div>
       </header>
-      <main className="workspace-content">
-        <div>
-          <p className="eyebrow">YOUR WORKSPACES</p>
-          <h1>Welcome back</h1>
-          <p className="lede">
-            {session.user.email} · {session.user.role}
-          </p>
-        </div>
-        {error && (
-          <p className="form-error" role="alert">
-            {error}
-          </p>
-        )}
-        {session.workspaces.length > 0 ? (
-          <section className="workspace-list" aria-label="Workspaces">
-            {session.workspaces.map((workspace) => (
-              <button
-                className={`dashboard-card phase2-workspace-card ${
-                  selectedWorkspaceId === workspace.id ? 'selected' : ''
-                }`}
-                key={workspace.id}
-                type="button"
-                onClick={() => setSelectedWorkspaceId(workspace.id)}
-                aria-pressed={selectedWorkspaceId === workspace.id}
+      <div className="workspace-layout">
+        <aside
+          id="workspace-sidebar"
+          className={`workspace-sidebar ${isSidebarOpen ? 'open' : ''}`}
+          aria-label="Workspace navigation"
+        >
+          <label className="workspace-switcher">
+            <span>Workspace</span>
+            <select
+              value={selectedWorkspaceId}
+              onChange={(event) => setSelectedWorkspaceId(event.target.value)}
+            >
+              {session.workspaces.map((workspace) => (
+                <option key={workspace.id} value={workspace.id}>
+                  {workspace.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <nav className="workspace-nav">
+            {workspacePages.map(([id, label]) => (
+              <NavLink
+                key={id}
+                to={`/workspace/${id}`}
+                className={({ isActive }) =>
+                  isActive ? 'workspace-nav-link active' : 'workspace-nav-link'
+                }
+                onClick={() => setIsSidebarOpen(false)}
               >
-                <p className="eyebrow">WORKSPACE</p>
-                <h2>{workspace.name}</h2>
-                <p className="muted-text">{workspace.slug}</p>
-              </button>
+                {label}
+              </NavLink>
             ))}
-          </section>
-        ) : (
-          <section className="dashboard-card">
-            <h2>No workspaces found</h2>
-            <p className="muted-text">
-              Your account has no workspace memberships.
+          </nav>
+        </aside>
+        <main className="workspace-content">
+          <div className="workspace-header-block">
+            <p className="eyebrow">WORKSPACE · {pageTitle.toUpperCase()}</p>
+            <h1>
+              {selectedWorkspace?.name ?? 'Workspace'} · {pageTitle}
+            </h1>
+          </div>
+          {error && (
+            <p className="form-error" role="alert">
+              {error}
             </p>
-          </section>
-        )}
-        {selectedWorkspace && (
-          <WorkspaceProjects
-            key={selectedWorkspace.id}
-            accessToken={session.accessToken}
-            userRole={session.user.role}
-            workspace={selectedWorkspace}
-          />
-        )}
-      </main>
+          )}
+          {session.workspaces.length === 0 ? (
+            <section className="dashboard-card">
+              <h2>No workspaces found</h2>
+              <p className="muted-text">
+                Your account has no workspace memberships.
+              </p>
+            </section>
+          ) : null}
+          {selectedWorkspace && pageParam && pageSet.has(pageParam) ? (
+            <WorkspaceProjects
+              key={`${session.user.id}-${selectedWorkspace.id}`}
+              accessToken={session.accessToken}
+              userRole={session.user.role}
+              userId={session.user.id}
+              workspace={selectedWorkspace}
+              page={page}
+              activeProjectId={activeProjectId}
+              onProjectOptionsChange={setProjectOptions}
+              onActiveProjectChange={setActiveProjectId}
+            />
+          ) : (
+            <p className="muted-text" role="status">
+              Restoring your last workspace page…
+            </p>
+          )}
+          {isAssistantOpen && selectedWorkspace && (
+            <AssistantPanel
+              accessToken={session.accessToken}
+              workspace={selectedWorkspace}
+              onClose={() => setIsAssistantOpen(false)}
+            />
+          )}
+        </main>
+      </div>
     </div>
   );
 }
@@ -513,7 +703,32 @@ function WorkspacePage({
 export default function App() {
   const [session, setSession] = useState<AuthenticatedUser | null>(null);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [sessionExpired, setSessionExpired] = useState(false);
+  const navigate = useNavigate();
   const didBootstrap = useRef(false);
+
+  useEffect(() => {
+    const onTokenRefreshed = (event: Event) => {
+      const detail = (event as CustomEvent<{ accessToken?: string }>).detail;
+      if (detail?.accessToken) {
+        const accessToken = detail.accessToken;
+        setSession((current) =>
+          current ? { ...current, accessToken } : current,
+        );
+      }
+    };
+    const onAuthExpired = () => {
+      setSession(null);
+      setSessionExpired(true);
+      navigate('/login', { replace: true });
+    };
+    window.addEventListener('greenlit:token-refreshed', onTokenRefreshed);
+    window.addEventListener('greenlit:auth-expired', onAuthExpired);
+    return () => {
+      window.removeEventListener('greenlit:token-refreshed', onTokenRefreshed);
+      window.removeEventListener('greenlit:auth-expired', onAuthExpired);
+    };
+  }, [navigate]);
 
   useEffect(() => {
     if (didBootstrap.current) return;
@@ -559,40 +774,47 @@ export default function App() {
   }
 
   return (
-    <Routes>
-      <Route path="/" element={<LandingPage />} />
-      <Route
-        path="/login"
-        element={
-          session ? (
-            <Navigate to="/workspace" replace />
-          ) : (
-            <AuthPage mode="login" onAuthenticated={setSession} />
-          )
-        }
-      />
-      <Route
-        path="/signup"
-        element={
-          session ? (
-            <Navigate to="/workspace" replace />
-          ) : (
-            <AuthPage mode="signup" onAuthenticated={setSession} />
-          )
-        }
-      />
-      <Route path="/reset-password" element={<PasswordResetPage />} />
-      <Route
-        path="/workspace"
-        element={
-          session ? (
-            <WorkspacePage session={session} onLogout={logout} />
-          ) : (
-            <Navigate to="/login" replace />
-          )
-        }
-      />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <>
+      {sessionExpired && (
+        <div className="phase2-alert phase2-alert-error" role="alert">
+          Session expired, please log in again
+        </div>
+      )}
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route
+          path="/login"
+          element={
+            session ? (
+              <Navigate to="/workspace" replace />
+            ) : (
+              <AuthPage mode="login" onAuthenticated={setSession} />
+            )
+          }
+        />
+        <Route
+          path="/signup"
+          element={
+            session ? (
+              <Navigate to="/workspace" replace />
+            ) : (
+              <AuthPage mode="signup" onAuthenticated={setSession} />
+            )
+          }
+        />
+        <Route path="/reset-password" element={<PasswordResetPage />} />
+        <Route
+          path="/workspace/:page?"
+          element={
+            session ? (
+              <WorkspacePage session={session} onLogout={logout} />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </>
   );
 }

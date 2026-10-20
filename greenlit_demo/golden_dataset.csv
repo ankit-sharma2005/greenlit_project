@@ -1,0 +1,2 @@
+id,input,reference_answer,reference_context,category
+sample-1,What is GreenLit?,GreenLit evaluates LLM applications before launch.,GreenLit is an offline pre-launch evaluation platform for LLM applications.,quality

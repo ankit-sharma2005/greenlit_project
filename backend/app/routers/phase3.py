@@ -31,6 +31,7 @@ from app.models import (
     DatasetVersion,
     EvalRun,
     EvalRunItem,
+    JudgeProfile,
     Project,
     ProjectVerdictCriteria,
     ProviderConfig,
@@ -45,6 +46,8 @@ from app.phase3_schemas import (
     EvalRunCreate,
     EvalRunItemOut,
     EvalRunOut,
+    JudgeProfileSnapshot,
+    JudgeProfileSnapshotOut,
 )
 from app.phase4_schemas import MetricScoreOut
 from app.phase5_schemas import DEFAULT_VERDICT_CRITERIA
@@ -395,6 +398,13 @@ async def create_eval_run(
             detail="This dataset version has no approved items in the selected split",
         )
     saved_criteria = await db.get(ProjectVerdictCriteria, project.id)
+    judge_profiles = list(
+        await db.scalars(
+            select(JudgeProfile)
+            .where(JudgeProfile.project_id == project.id)
+            .order_by(JudgeProfile.role)
+        )
+    )
     run = EvalRun(
         workspace_id=workspace_id,
         project_id=project.id,
@@ -406,6 +416,20 @@ async def create_eval_run(
             if saved_criteria is not None
             else DEFAULT_VERDICT_CRITERIA
         ),
+        judge_profiles_snapshot=[
+            JudgeProfileSnapshot.model_validate(
+                {
+                    "id": profile.id,
+                    "role": profile.role,
+                    "provider_id": profile.provider_id,
+                    "model": profile.model,
+                    "temperature": profile.temperature,
+                    "rubric_prompt": profile.rubric_prompt,
+                    "rubric_version": profile.rubric_version,
+                }
+            ).model_dump(mode="json")
+            for profile in judge_profiles
+        ],
         created_by=user.id,
         idempotency_key=idempotency_key,
         total_items=len(approved_items),
@@ -857,11 +881,25 @@ async def _get_run(
 
 
 def _run_out(run: EvalRun) -> EvalRunOut:
+    judge_profiles = [
+        JudgeProfileSnapshot.model_validate(profile)
+        for profile in (run.judge_profiles_snapshot or [])
+    ]
     return EvalRunOut(
         id=run.id,
         project_id=run.project_id,
         app_version_id=run.app_version_id,
         dataset_version_id=run.dataset_version_id,
+        judge_profiles_snapshot=[
+            JudgeProfileSnapshotOut(
+                id=profile.id,
+                role=profile.role,
+                provider_id=profile.provider_id,
+                model=profile.model,
+                rubric_version=profile.rubric_version,
+            )
+            for profile in judge_profiles
+        ],
         split=run.split,
         status=run.status,
         total_items=run.total_items,

@@ -9,6 +9,7 @@ from app import models  # noqa: F401
 from app.config import settings
 from app.db import engine
 from app.routers.auth import router as auth_router
+from app.routers.chat import router as chat_router
 from app.routers.phase2 import router as phase2_router
 from app.routers.phase3 import router as phase3_router
 from app.routers.phase4 import router as phase4_router
@@ -25,8 +26,10 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(chat_router, prefix="/api/v1")
 app.include_router(phase2_router, prefix="/api/v1")
 app.include_router(phase3_router, prefix="/api/v1")
 app.include_router(phase4_router, prefix="/api/v1")

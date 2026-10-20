@@ -5,7 +5,7 @@ from collections.abc import Callable
 from typing import Any, Protocol, TypeVar, cast
 from uuid import uuid4
 
-from celery import Celery  # type: ignore[import-untyped]
+from celery import Celery
 
 from app.config import settings
 

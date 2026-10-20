@@ -87,9 +87,7 @@ def _safe_pearson(xs: Sequence[float], ys: Sequence[float]) -> float:
     y_mean = sum(ys) / len(ys)
     x_dev = [value - x_mean for value in xs]
     y_dev = [value - y_mean for value in ys]
-    numerator = sum(
-        left * right for left, right in zip(x_dev, y_dev, strict=True)
-    )
+    numerator = sum(left * right for left, right in zip(x_dev, y_dev, strict=True))
     x_norm = sum(value * value for value in x_dev) ** 0.5
     y_norm = sum(value * value for value in y_dev) ** 0.5
     if x_norm == 0 or y_norm == 0:
@@ -133,8 +131,8 @@ def calibration_summary(
     if expected >= 1:
         cohens_kappa = 1.0 if observed == 1 else 0.0
 
-    disagreement = 0
-    expected_disagreement = 0
+    disagreement: float = 0.0
+    expected_disagreement: float = 0.0
     for truth_label in labels:
         for estimate_label in labels:
             if truth_label != estimate_label:
@@ -224,7 +222,9 @@ def final_report_rescore(
             status="READY",
             item_count=0,
             metric_means={},
-            warnings=["No stored traces were provided; final report is ready for review."],
+            warnings=[
+                "No stored traces were provided; final report is ready for review."
+            ],
         )
 
     metrics: dict[str, list[float]] = {}
@@ -234,17 +234,20 @@ def final_report_rescore(
                 metrics.setdefault(metric, []).append(float(value))
 
     metric_means = {
-        key: sum(values) / len(values) if values else 0.0 for key, values in metrics.items()
+        key: sum(values) / len(values) if values else 0.0
+        for key, values in metrics.items()
     }
     failing = {key: value for key, value in metric_means.items() if value < threshold}
     warnings: list[str] = []
     if failing:
         warnings.append(
-            "One or more metrics fell below the threshold and should be reviewed manually."
+            "One or more metrics fell below the threshold and should be reviewed "
+            "manually."
         )
     elif any(value < 0.85 for value in metric_means.values()):
         warnings.append(
-            "One or more metrics are below the preferred review threshold and should be inspected."
+            "One or more metrics are below the preferred review threshold and "
+            "should be inspected."
         )
 
     if failing:

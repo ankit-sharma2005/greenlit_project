@@ -599,6 +599,13 @@ Phase 5 is complete with a documented manual UI check outstanding as of
 2026-10-08. Phase 6 is complete as of 2026-10-08 and adds comparison,
 statistical significance, baseline approval, and regression reporting.
 
+**Updated 2026-10-10:** Phases 7 and 8 are partial helper implementations,
+not completed product workflows. The Phase 9 runner sandbox and E2E gaps remain,
+and Phase 10 website/MCP entry points are disabled pending safe, verified
+implementations. The current full backend suite reports 85 passing tests, but
+this test result does not satisfy the unchecked acceptance criteria. See
+`docs/PROGRESS.md` for evidence and limitations.
+
 Phase 1 checklist evidence is recorded in `docs/PROGRESS.md`. Dark/light theme
 rendering and keyboard navigation were manually checked in the browser on the
 landing, login, and signup surfaces. These checks are a smoke test, not a full

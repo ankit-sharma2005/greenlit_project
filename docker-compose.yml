@@ -34,6 +34,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:?Copy .env.example to .env and set DATABASE_URL}
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: ${SECRET_KEY:?Copy .env.example to .env and set SECRET_KEY}
+      ALLOWED_PRIVATE_HOSTS: ${ALLOWED_PRIVATE_HOSTS:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -60,6 +61,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:?Copy .env.example to .env and set DATABASE_URL}
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: ${SECRET_KEY:?Copy .env.example to .env and set SECRET_KEY}
+      ALLOWED_PRIVATE_HOSTS: ${ALLOWED_PRIVATE_HOSTS:-}
     depends_on:
       postgres:
         condition: service_healthy

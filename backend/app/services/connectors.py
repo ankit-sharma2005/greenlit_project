@@ -10,7 +10,7 @@ import socket
 import subprocess
 import tempfile
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -94,32 +94,32 @@ _ENTRY_POINT_TYPES: tuple[dict[str, object], ...] = (
         "label": "Docker image",
         "description": "Docker image or compose file",
         "access_level": "black-box",
-        "implemented": True,
-        "coming_in": None,
+        "implemented": False,
+        "coming_in": "Phase 3 (real sandbox required)",
     },
     {
         "type": "GIT_REPO",
         "label": "Git repository",
         "description": "Git repository + entrypoint",
         "access_level": "white-box",
-        "implemented": True,
-        "coming_in": None,
+        "implemented": False,
+        "coming_in": "Phase 3 (real sandbox required)",
     },
     {
         "type": "CLI_COMMAND",
         "label": "CLI command",
         "description": "Command-line program with an input template",
         "access_level": "black-box",
-        "implemented": True,
-        "coming_in": None,
+        "implemented": False,
+        "coming_in": "Phase 3 (real sandbox required)",
     },
     {
         "type": "PROXY_MODE",
         "label": "Proxy mode",
         "description": "Point your app's LLM base URL at GreenLit",
         "access_level": "white-box",
-        "implemented": True,
-        "coming_in": None,
+        "implemented": False,
+        "coming_in": "Phase 3 (real sandbox required)",
     },
     {
         "type": "UPLOAD_OUTPUTS",
@@ -134,16 +134,16 @@ _ENTRY_POINT_TYPES: tuple[dict[str, object], ...] = (
         "label": "Website URL",
         "description": "Discover an embedded chatbot on a website",
         "access_level": "black-box",
-        "implemented": True,
-        "coming_in": "phase 10",
+        "implemented": False,
+        "coming_in": "Phase 10 (manual browser verification required)",
     },
     {
         "type": "MCP_SERVER",
         "label": "MCP server",
         "description": "App or agent exposed over MCP",
         "access_level": "black-box",
-        "implemented": True,
-        "coming_in": "phase 10",
+        "implemented": False,
+        "coming_in": "Phase 10 (manual MCP verification required)",
     },
 )
 
@@ -174,16 +174,40 @@ def validate_connector_settings(
         item for item in _ENTRY_POINT_TYPES if item["type"] == entry_point_type
     )
     if not metadata["implemented"]:
+        reason = {
+            "PYTHON_FUNCTION": "a safe isolated execution runner",
+            "PYTHON_SDK_TRACED": "a safe isolated execution runner",
+            "DOCKER_IMAGE": "a verified real Docker sandbox runner",
+            "GIT_REPO": "a verified real Git sandbox runner",
+            "CLI_COMMAND": "a verified CLI sandbox runner",
+            "PROXY_MODE": "a verified outbound request sandbox",
+            "WEBSITE_URL": (
+                "manual browser verification against the seeded demo website"
+            ),
+            "MCP_SERVER": "manual MCP runtime verification against a live server",
+        }.get(entry_point_type, "a future release")
         raise ValueError(
-            "This entry point type is not available yet; it requires an isolated "
-            "execution runner"
+            f"This entry point type is not available yet; it requires {reason}."
         )
     payload = dict(settings)
     payload["entry_point_type"] = entry_point_type
     try:
         validated = settings_model.model_validate(payload)
     except ValidationError as exc:
-        raise ValueError(str(exc)) from exc
+        messages: list[str] = []
+        for error in exc.errors():
+            location = ".".join(str(part) for part in error["loc"])
+            if error["type"] == "extra_forbidden":
+                messages.append(
+                    f"Unsupported setting '{location}'. Remove it from settings."
+                )
+            elif error["type"] == "missing":
+                messages.append(f"Missing required setting '{location}'.")
+            else:
+                messages.append(f"{location}: {error['msg']}")
+        raise ValueError(
+            "Invalid connector settings. " + " ".join(messages[:5])
+        ) from exc
     normalized = validated.model_dump(mode="json", exclude={"entry_point_type"})
     return validated, normalized
 
@@ -192,6 +216,9 @@ def connector_content_hash(
     entry_point_type: str,
     settings: Mapping[str, object],
     credentials: Mapping[str, str],
+    *,
+    provider_id: UUID | None = None,
+    model: str | None = None,
 ) -> str:
     secret_fingerprint = {
         key: hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -201,6 +228,8 @@ def connector_content_hash(
         {
             "entry_point_type": entry_point_type,
             "settings": settings,
+            "provider_id": str(provider_id) if provider_id else None,
+            "model": model,
             "credentials_fingerprint": secret_fingerprint,
         },
         sort_keys=True,
@@ -215,6 +244,11 @@ def provider_out(provider: ProviderConfig) -> dict[str, object]:
         "name": provider.name,
         "provider_type": provider.provider_type,
         "base_url": provider.base_url,
+        "default_model": provider.test_model,
+        "test_model": provider.test_model,
+        "original_name": provider.original_name,
+        "duplicate_of": str(provider.duplicate_of) if provider.duplicate_of else None,
+        "is_duplicate": provider.duplicate_of is not None,
         "rpm": provider.rpm,
         "rpd": provider.rpd,
         "max_input_tokens": provider.max_input_tokens,
@@ -308,29 +342,48 @@ async def _check_target_is_public(url: str, allow_private_targets: bool) -> None
         raise ValueError(
             "Endpoint URL must not contain credentials, query, or fragment"
         )
-    if allow_private_targets:
-        return
     host = parsed.hostname
     if host is None:
         raise ValueError("Endpoint URL must include a host")
-    if host.lower() == "localhost":
-        raise ValueError("Private endpoints require explicit Admin authorization")
-    if host.lower() in {"localhost", "127.0.0.1", "::1"}:
-        raise ValueError("Private endpoints require explicit Admin authorization")
     try:
         addresses = await asyncio.to_thread(
-            socket.getaddrinfo, host, parsed.port or 443, type=socket.SOCK_STREAM
+            socket.getaddrinfo,
+            host,
+            parsed.port or (443 if parsed.scheme == "https" else 80),
+            type=socket.SOCK_STREAM,
         )
-    except socket.gaierror:
-        return
+    except OSError as exc:
+        raise ValueError(
+            "Endpoint host could not be resolved for safe validation"
+        ) from exc
+    if not addresses:
+        raise ValueError("Endpoint host did not resolve to an address")
+
     for address in addresses:
-        ip_text = address[4][0]
         try:
-            ip = ipaddress.ip_address(ip_text)
-        except ValueError:
+            ip = ipaddress.ip_address(address[4][0])
+        except (IndexError, TypeError, ValueError) as exc:
+            raise ValueError(
+                "Endpoint host resolved to an invalid address"
+            ) from exc
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
+        if ip.is_global:
             continue
-        if not ip.is_global:
-            raise ValueError("Private endpoints require explicit Admin authorization")
+        is_private_target = (
+            (ip.is_private or ip.is_loopback)
+            and not ip.is_link_local
+            and not ip.is_reserved
+            and not ip.is_multicast
+            and not ip.is_unspecified
+        )
+        if allow_private_targets and is_private_target:
+            continue
+        raise ValueError(
+            "Private endpoints require explicit Admin authorization. "
+            "A workspace owner or admin must enable 'Allow private targets' "
+            "for this connector."
+        )
 
 
 def _usage(
@@ -343,11 +396,28 @@ def make_http_client(timeout: httpx.Timeout) -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=timeout, follow_redirects=False)
 
 
+def _application_history(
+    history: Sequence[dict[str, str]], max_messages: int
+) -> list[ChatCompletionMessageParam]:
+    if max_messages <= 0:
+        return []
+    result: list[ChatCompletionMessageParam] = []
+    for item in history[-max_messages:]:
+        if item.get("role") == "user":
+            result.append({"role": "user", "content": item["content"]})
+        elif item.get("role") == "assistant":
+            result.append({"role": "assistant", "content": item["content"]})
+    return result
+
+
 async def execute_test_call(
     *,
     entry_point_type: str,
     settings: BaseModel,
+    provider_id: UUID | None,
+    model: str | None,
     input_text: str,
+    conversation_history: list[dict[str, str]] | None,
     credentials: Mapping[str, str],
     workspace_id: UUID,
     user_role: str,
@@ -355,13 +425,37 @@ async def execute_test_call(
     gateway: LLMGateway,
 ) -> dict[str, object]:
     started = time.perf_counter()
+    context_history = _application_history(
+        conversation_history or [], int(getattr(settings, "context_messages", 0))
+    )
     if isinstance(settings, HttpEndpointSettings):
-        return await _test_http_endpoint(
-            settings, input_text, credentials, user_role, started
+        response = await _test_http_endpoint(
+            settings,
+            input_text,
+            credentials,
+            user_role,
+            started,
+            context_history,
         )
+        response["context_sent"] = [
+            *context_history,
+            {"role": "user", "content": input_text},
+        ]
+        return response
     if isinstance(settings, PromptAppSettings):
-        result = await _run_prompt_app(settings, input_text, workspace_id, db, gateway)
-        return _trace_response(
+        if provider_id is None:
+            raise ValueError("Select a saved provider before testing this app")
+        result = await _run_prompt_app(
+            settings,
+            input_text,
+            provider_id,
+            model,
+            context_history,
+            workspace_id,
+            db,
+            gateway,
+        )
+        response = _trace_response(
             result.output,
             started,
             result.raw_response,
@@ -370,11 +464,26 @@ async def execute_test_call(
             extras={"steps": {"prompt_sent": settings.system_prompt}},
             credentials=credentials,
         )
+        response["context_sent"] = [
+            {"role": "system", "content": settings.system_prompt},
+            *context_history,
+            {"role": "user", "content": input_text},
+        ]
+        return response
     if isinstance(settings, BuiltinRagSettings):
+        if provider_id is None:
+            raise ValueError("Select a saved provider before testing this app")
         result, chunks, prompt = await _run_rag(
-            settings, input_text, workspace_id, db, gateway
+            settings,
+            input_text,
+            provider_id,
+            model,
+            context_history,
+            workspace_id,
+            db,
+            gateway,
         )
-        return _trace_response(
+        response = _trace_response(
             result.output,
             started,
             result.raw_response,
@@ -388,11 +497,26 @@ async def execute_test_call(
             },
             credentials=credentials,
         )
+        response["context_sent"] = [
+            {"role": "system", "content": prompt},
+            *context_history,
+            {"role": "user", "content": input_text},
+        ]
+        return response
     if isinstance(settings, BuiltinAgentSettings):
+        if provider_id is None:
+            raise ValueError("Select a saved provider before testing this app")
         result, calls, prompt = await _run_agent(
-            settings, input_text, workspace_id, db, gateway
+            settings,
+            input_text,
+            provider_id,
+            model,
+            context_history,
+            workspace_id,
+            db,
+            gateway,
         )
-        return _trace_response(
+        response = _trace_response(
             result.output,
             started,
             result.raw_response,
@@ -406,6 +530,12 @@ async def execute_test_call(
             },
             credentials=credentials,
         )
+        response["context_sent"] = [
+            {"role": "system", "content": prompt},
+            *context_history,
+            {"role": "user", "content": input_text},
+        ]
+        return response
     if isinstance(settings, DockerImageSettings):
         return await _test_docker_image(settings, input_text, started)
     if isinstance(settings, GitRepoSettings):
@@ -413,7 +543,14 @@ async def execute_test_call(
     if isinstance(settings, CliCommandSettings):
         return await _test_cli_command(settings, input_text, started)
     if isinstance(settings, ProxyModeSettings):
-        return await _test_proxy_mode(settings, input_text, credentials, started)
+        response = await _test_proxy_mode(
+            settings, input_text, credentials, started, model or "proxy-model"
+        )
+        response["context_sent"] = [
+            *context_history,
+            {"role": "user", "content": input_text},
+        ]
+        return response
     if isinstance(settings, UploadOutputsSettings):
         return _test_uploaded_output(settings, input_text, started)
     if isinstance(settings, WebsiteUrlSettings):
@@ -641,6 +778,7 @@ async def _test_proxy_mode(
     input_text: str,
     credentials: Mapping[str, str],
     started: float,
+    model: str,
 ) -> dict[str, object]:
     url = str(settings.base_url)
     await _check_target_is_public(
@@ -651,7 +789,7 @@ async def _test_proxy_mode(
         headers.update({key: value for key, value in credentials.items()})
     body = _render_proxy_body(
         settings.request_body_template,
-        model=settings.model,
+        model=model,
         input_text=input_text,
     )
     timeout = httpx.Timeout(settings.timeout_seconds)
@@ -704,9 +842,12 @@ async def _test_http_endpoint(
     credentials: Mapping[str, str],
     user_role: str,
     started: float,
+    conversation_history: list[ChatCompletionMessageParam],
 ) -> dict[str, object]:
     if settings.allow_private_targets and user_role not in {"owner", "admin"}:
-        raise ValueError("Only workspace Admins may test private endpoints")
+        raise ValueError(
+            "Only workspace owners or admins may authorize private endpoint access"
+        )
     url = str(settings.url)
     await _check_target_is_public(url, settings.allow_private_targets)
     headers = _secret_headers(credentials)
@@ -722,6 +863,9 @@ async def _test_http_endpoint(
             else:
                 template = settings.request_body_template
                 rendered = template.replace("{{input}}", json.dumps(input_text))
+                rendered = rendered.replace(
+                    "{{history}}", json.dumps(conversation_history)
+                )
                 body = json.loads(rendered)
                 response = await client.post(url, json=body, headers=headers)
     except httpx.TimeoutException as exc:
@@ -759,16 +903,20 @@ async def _test_http_endpoint(
 async def _run_prompt_app(
     settings: PromptAppSettings,
     input_text: str,
+    provider_id: UUID,
+    model: str | None,
+    conversation_history: list[ChatCompletionMessageParam],
     workspace_id: UUID,
     db: AsyncSession,
     gateway: LLMGateway,
 ) -> ChatResult:
-    providers = await get_provider_chain(db, workspace_id, settings.provider_id)
+    providers = await get_provider_chain(db, workspace_id, provider_id)
     result = await gateway.complete(
         providers,
-        model=settings.model,
+        model=model,
         messages=[
             {"role": "system", "content": settings.system_prompt},
+            *conversation_history,
             {"role": "user", "content": input_text},
         ],
         temperature=settings.temperature,
@@ -811,6 +959,9 @@ def _split_chunks(
 async def _run_rag(
     settings: BuiltinRagSettings,
     input_text: str,
+    provider_id: UUID,
+    model: str | None,
+    conversation_history: list[ChatCompletionMessageParam],
     workspace_id: UUID,
     db: AsyncSession,
     gateway: LLMGateway,
@@ -837,12 +988,13 @@ async def _run_rag(
         f"[{chunk['source']}]\n{chunk['text']}" for chunk in retrieved
     )
     prompt = f"{settings.prompt}\n\nContext:\n{context}"
-    providers = await get_provider_chain(db, workspace_id, settings.provider_id)
+    providers = await get_provider_chain(db, workspace_id, provider_id)
     result = await gateway.complete(
         providers,
-        model=settings.model,
+        model=model,
         messages=[
             {"role": "system", "content": prompt},
+            *conversation_history,
             {"role": "user", "content": input_text},
         ],
         temperature=settings.temperature,
@@ -853,11 +1005,14 @@ async def _run_rag(
 async def _run_agent(
     settings: BuiltinAgentSettings,
     input_text: str,
+    provider_id: UUID,
+    model: str | None,
+    conversation_history: list[ChatCompletionMessageParam],
     workspace_id: UUID,
     db: AsyncSession,
     gateway: LLMGateway,
 ) -> tuple[ChatResult, list[dict[str, object]], str]:
-    providers = await get_provider_chain(db, workspace_id, settings.provider_id)
+    providers = await get_provider_chain(db, workspace_id, provider_id)
     available_tools = [
         {
             "name": tool.name,
@@ -874,6 +1029,7 @@ async def _run_agent(
     )
     messages: list[ChatCompletionMessageParam] = [
         {"role": "system", "content": prompt},
+        *conversation_history,
         {"role": "user", "content": input_text},
     ]
     calls: list[dict[str, object]] = []
@@ -882,7 +1038,7 @@ async def _run_agent(
     for _ in range(settings.max_steps):
         result = await gateway.complete(
             providers,
-            model=settings.model,
+            model=model,
             messages=messages,
             temperature=settings.temperature,
         )
@@ -936,34 +1092,99 @@ def _test_uploaded_output(
     input_text: str,
     started: float,
 ) -> dict[str, object]:
-    try:
-        row = json.loads(input_text)
-    except json.JSONDecodeError as exc:
-        raise ValueError("Upload-output test input must be a JSON object") from exc
-    if not isinstance(row, dict):
-        raise ValueError("Upload-output test input must be a JSON object")
-    output = _mapped_value(row, settings.output_field)
+    if not input_text.strip():
+        raise ValueError("Enter a non-empty sample input before testing")
+    if not settings.rows:
+        raise ValueError("Upload a CSV, JSON, or JSONL file before testing")
+    fields = set(settings.rows[0])
+    for uploaded_row in settings.rows[1:]:
+        fields.intersection_update(uploaded_row)
+    required_fields = {settings.input_field, settings.output_field}
+    missing_fields = sorted(required_fields - fields)
+    optional_fields = (
+        settings.retrieved_contexts_field,
+        settings.tool_calls_field,
+        settings.latency_ms_field,
+        settings.tokens_in_field,
+        settings.tokens_out_field,
+    )
+    missing_fields.extend(
+        sorted(field for field in optional_fields if field and field not in fields)
+    )
+    if missing_fields:
+        raise ValueError(
+            "Mapped columns are missing from the uploaded file: "
+            + ", ".join(missing_fields)
+        )
+
+    def normalize_sample(value: object) -> str:
+        normalized = str(value).strip()
+        if (
+            len(normalized) >= 2
+            and normalized[0] == normalized[-1]
+            and normalized[0] in {"'", '"'}
+        ):
+            normalized = normalized[1:-1].strip()
+        return re.sub(r"\s+", " ", normalized).casefold()
+
+    normalized_input = normalize_sample(input_text)
+    if not normalized_input:
+        raise ValueError("Enter a non-empty sample input before testing")
+    row = next(
+        (
+            uploaded_row
+            for uploaded_row in settings.rows
+            if normalize_sample(uploaded_row.get(settings.input_field, ""))
+            == normalized_input
+        ),
+        None,
+    )
+    if row is None:
+        raise ValueError("No uploaded row matches the sample input")
+    output = row[settings.output_field]
     contexts = (
-        _mapped_value(row, settings.retrieved_contexts_field)
+        row[settings.retrieved_contexts_field]
         if settings.retrieved_contexts_field
         else None
     )
-    tool_calls = (
-        _mapped_value(row, settings.tool_calls_field)
-        if settings.tool_calls_field
-        else None
-    )
+    tool_calls = row[settings.tool_calls_field] if settings.tool_calls_field else None
     steps: dict[str, object] = {}
     if contexts is not None:
         steps["retrieved_chunks"] = contexts
     if tool_calls is not None:
         steps["tool_calls"] = tool_calls
-    return _trace_response(
+    usage: dict[str, int | None] = {"tokens_in": None, "tokens_out": None}
+    for key, field in (
+        ("tokens_in", settings.tokens_in_field),
+        ("tokens_out", settings.tokens_out_field),
+    ):
+        if field and str(row[field]).strip():
+            try:
+                usage[key] = int(str(row[field]))
+            except ValueError as exc:
+                raise ValueError(
+                    f"Mapped {field} value must be a whole number"
+                ) from exc
+    extras: dict[str, object] = {"steps": steps}
+    if settings.latency_ms_field:
+        try:
+            latency_ms = float(str(row[settings.latency_ms_field]))
+        except ValueError as exc:
+            raise ValueError(
+                f"Mapped {settings.latency_ms_field} value must be numeric"
+            ) from exc
+        if latency_ms < 0:
+            raise ValueError("Mapped latency_ms value cannot be negative")
+        extras["latency_ms"] = latency_ms
+    result = _trace_response(
         output,
         started,
         row,
-        extras={"steps": steps},
+        usage=usage,
+        extras=extras,
     )
+    result["preview"] = settings.rows[:3]
+    return result
 
 
 async def _test_website_url(

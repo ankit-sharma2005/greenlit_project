@@ -29,7 +29,9 @@ class DatasetItemDraft(BaseModel):
     reference_answer: str | None = Field(default=None, max_length=20_000)
     reference_context: str | None = Field(default=None, max_length=20_000)
     category: str = "normal"
-    provenance: Literal["uploaded", "synthetic", "red-team", "production-sample"]
+    provenance: Literal[
+        "uploaded", "synthetic", "red-team", "production-sample", "chat-session"
+    ]
     split: Literal["dev", "test"] = "dev"
     data: dict[str, object] = Field(default_factory=dict)
 

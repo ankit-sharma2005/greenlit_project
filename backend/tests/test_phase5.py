@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from collections.abc import AsyncIterator
 from typing import Literal
 from uuid import UUID, uuid4
@@ -42,16 +43,50 @@ def score(
     *,
     status: Literal["scored", "not_instrumented", "not_configured", "error"] = "scored",
     reason: str = "fixed fixture",
+    method: Literal["rule", "llm_judge"] = "rule",
 ) -> MetricScoreOut:
     return MetricScoreOut(
         name=name,
         category=category,
-        method="rule",
+        method=method,
         status=status,
         score=value,
         reason=reason,
         rubric_version=1,
     )
+
+
+def test_judge_error_requires_review_even_when_rule_metrics_pass() -> None:
+    report = evaluate_verdict(
+        VerdictCriteria(go_threshold=0.8, review_threshold=0.6),
+        [
+            VerdictItem(
+                id="run-item-1",
+                position=1,
+                status="completed",
+                category="quality",
+                scores=[
+                    score("output_nonempty", "quality", 1.0),
+                    score("answer_match", "quality", 1.0),
+                    score(
+                        "answer_quality:dev",
+                        "quality",
+                        None,
+                        status="error",
+                        reason="Judge provider request timed out after 12 seconds",
+                        method="llm_judge",
+                    ),
+                ],
+            )
+        ],
+        run_status="completed",
+    )
+
+    assert report.verdict == "REVIEW"
+    assert report.reasons == [
+        "Judge metric 'answer_quality:dev' failed on item #1: "
+        "Judge provider request timed out after 12 seconds"
+    ]
 
 
 def test_hard_gate_failure_forces_no_go_with_exact_reason() -> None:
@@ -70,7 +105,7 @@ def test_hard_gate_failure_forces_no_go_with_exact_reason() -> None:
                 category="normal",
                 scores=[
                     score("output_nonempty", "quality", 0.4),
-                    score("answer_exact_match", "quality", 1.0),
+                    score("answer_match", "quality", 1.0),
                     score("answer_quality", "quality", 1.0),
                 ],
             )
@@ -126,10 +161,16 @@ def test_failed_or_cancelled_run_cannot_receive_go(status: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("value", "expected"),
-    [(0.8, "GO"), (0.6, "REVIEW"), (0.59, "NO_GO")],
+    ("value", "expected", "reason_fragment"),
+    [
+        (0.8, "GO", ">= GO threshold 0.80"),
+        (0.6, "REVIEW", "between REVIEW threshold 0.60"),
+        (0.59, "NO_GO", "< REVIEW threshold 0.60"),
+    ],
 )
-def test_weighted_score_threshold_edges(value: float, expected: str) -> None:
+def test_weighted_score_threshold_edges(
+    value: float, expected: str, reason_fragment: str
+) -> None:
     report = evaluate_verdict(
         VerdictCriteria(go_threshold=0.8, review_threshold=0.6),
         [
@@ -145,6 +186,7 @@ def test_weighted_score_threshold_edges(value: float, expected: str) -> None:
     )
     assert report.verdict == expected
     assert report.score == pytest.approx(value)
+    assert reason_fragment in report.reasons[0]
 
 
 def test_category_weights_control_the_weighted_run_score() -> None:
@@ -300,7 +342,14 @@ async def test_criteria_api_is_project_scoped_and_reports_saved_run_snapshot() -
                 version=1,
                 connector_profile_id=None,
                 content_hash=None,
-                config_snapshot={},
+                config_snapshot={
+                    "entry_point_type": "UPLOAD_OUTPUTS",
+                    "model": "test-model",
+                    "settings": {
+                        "mapping": {"input_field": "question"},
+                        "api_key": "must-not-appear",
+                    },
+                },
                 access_level=None,
             )
             db.add_all([version, app_version])
@@ -308,7 +357,7 @@ async def test_criteria_api_is_project_scoped_and_reports_saved_run_snapshot() -
             dataset_item = DatasetItem(
                 dataset_version_id=version.id,
                 position=1,
-                input_text="What is the answer?",
+                input_text="=1+1",
                 reference_answer="42",
                 reference_context=None,
                 category="normal",
@@ -343,6 +392,7 @@ async def test_criteria_api_is_project_scoped_and_reports_saved_run_snapshot() -
                     "steps": {"retrieved_chunks": [{"text": "A supporting chunk"}]},
                     "usage": {"tokens_in": 10, "tokens_out": 5},
                     "model_used": "test-model",
+                    "authorization": "Bearer must-not-appear",
                 },
                 scores=[
                     {
@@ -364,7 +414,7 @@ async def test_criteria_api_is_project_scoped_and_reports_saved_run_snapshot() -
             await db.commit()
             run_id = run.id
 
-        response = await client.get(f"{base}/runs/{run_id}/report", headers=headers)
+        response = await client.get(f"/api/v1/runs/{run_id}/report", headers=headers)
         assert response.status_code == 200, response.text
         report = response.json()
         assert report["criteria"]["go_threshold"] == 0.9
@@ -377,9 +427,70 @@ async def test_criteria_api_is_project_scoped_and_reports_saved_run_snapshot() -
             "A supporting chunk"
         )
         assert report["verdict"]["readiness"]["status"] == "needs_attention"
+        assert report["metadata"]["project_name"] == "Phase 5 project"
+        assert report["metadata"]["dataset_version"] == 1
+        assert report["metadata"]["dataset_hash"] == "a" * 64
+        assert report["metadata"]["connector_type"] == "UPLOAD_OUTPUTS"
+        assert report["metrics"][0]["hard_gate_threshold"] == 0.9
+        assert report["metrics"][0]["hard_gate_failures"] == 1
+        assert report["failed_cases"][0]["position"] == 1
+        assert report["safety_results"]["available"] is False
+        assert report["calibration_summary"]["status"] == "unavailable"
+        assert "api_key" not in report["metadata"]["settings"]
+        assert "authorization" not in report["items"][0]["trace"]
+        assert "must-not-appear" not in response.text
         assert any(
             issue["component"] == "steps.tool_calls"
             for issue in report["verdict"]["readiness"]["issues"]
         )
+
+        invalid_format = await client.get(
+            f"{base}/runs/{run_id}/report",
+            params={"format": "docx"},
+            headers=headers,
+        )
+        assert invalid_format.status_code == 422
+
+        for export_format, media_type in (
+            ("html", "text/html"),
+            ("pdf", "application/pdf"),
+            ("csv", "text/csv"),
+        ):
+            exported = await client.get(
+                f"{base}/runs/{run_id}/report",
+                params={"format": export_format},
+                headers=headers,
+            )
+            assert exported.status_code == 200, exported.text
+            assert exported.headers["content-type"].startswith(media_type)
+            assert "attachment; filename=" in exported.headers["content-disposition"]
+            assert "must-not-appear" not in exported.text
+            if export_format == "html":
+                assert "<!doctype html>" in exported.text
+                assert "Regression vs baseline" in exported.text
+            elif export_format == "pdf":
+                assert exported.content.startswith(b"%PDF-1.4")
+                assert exported.content.rstrip().endswith(b"%%EOF")
+            else:
+                rows = list(csv.DictReader(exported.text.splitlines()))
+                assert rows[0]["metric"] == "output_nonempty"
+                assert rows[0]["hard_gate_threshold"] == "0.9"
+                assert rows[0]["input"] == "'=1+1"
+                assert rows[0]["failed_case"] == "True"
+                assert rows[0]["calibration_summary"]
+                assert rows[0]["regression_vs_baseline"]
+
+        unauthenticated = await client.get(f"/api/v1/runs/{run_id}/report")
+        assert unauthenticated.status_code == 401
+
+        other_client, _, _, other_token = await signed_in_client()
+        try:
+            forbidden = await other_client.get(
+                f"/api/v1/runs/{run_id}/report",
+                headers={"Authorization": f"Bearer {other_token}"},
+            )
+            assert forbidden.status_code == 403
+        finally:
+            await other_client.aclose()
     finally:
         await client.aclose()

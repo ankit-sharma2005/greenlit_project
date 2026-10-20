@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./greenlit.db"
     redis_url: str = "redis://localhost:6379/0"
     web_origin: str = "http://localhost:5173"
+    allowed_private_hosts: str = ""
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_username: str | None = None

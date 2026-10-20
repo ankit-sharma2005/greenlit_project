@@ -1,0 +1,15 @@
+flowchart LR
+  User[Team member] --> Web[React + TypeScript web app]
+  Web -->|HTTP / JSON| API[FastAPI API]
+  API --> DB[(PostgreSQL)]
+  API -->|enqueue jobs| Redis[(Redis broker)]
+  Redis --> Worker[Celery worker]
+  Worker --> DB
+  Worker --> Gateway[LLM Gateway]
+  Gateway --> GH[GitHub Models]
+  Gateway --> Ollama[Ollama]
+  Gateway --> Custom[OpenAI-compatible provider]
+  Worker --> Connector[Connector + trace normalization]
+  API --> Connector
+  Connector --> App[Supported app under test]
+  Connector -. gated / unverified types .-> Unsupported[Docker / Git / CLI / Proxy / Website / MCP]

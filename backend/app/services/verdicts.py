@@ -13,6 +13,7 @@ from app.phase5_schemas import (
     RunVerdict,
     VerdictCriteria,
 )
+from app.services.metrics import canonical_metric_name
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,7 @@ def evaluate_verdict(
     )
     hard_gate_failures: list[str] = []
     failed_items = [item for item in items if item.status == "failed"]
+    judge_errors: list[tuple[VerdictItem, MetricScoreOut]] = []
 
     for item in items:
         if item.status != "completed":
@@ -60,6 +62,8 @@ def evaluate_verdict(
 
         for score in item.scores:
             if score.status != "scored" or score.score is None:
+                if score.method == "llm_judge" and score.status == "error":
+                    judge_errors.append((item, score))
                 if score.status in {"error", "not_instrumented", "not_configured"}:
                     readiness_issues.append(
                         ReadinessIssue(
@@ -76,7 +80,9 @@ def evaluate_verdict(
                 else score.name
             )
             category_metric_values[score.category][metric_key].append(score.score)
-            gate_metric_name = score.name.split(":", maxsplit=1)[0]
+            gate_metric_name = canonical_metric_name(
+                score.name.split(":", maxsplit=1)[0]
+            )
             gate_threshold = criteria.hard_gates.get(gate_metric_name)
             if gate_threshold is not None and score.score < gate_threshold:
                 hard_gate_failures.append(
@@ -123,6 +129,14 @@ def evaluate_verdict(
         verdict = "REVIEW"
         reasons = ["The evaluation run is not complete."]
         summary = "The run must finish before a final verdict can be issued."
+    elif judge_errors:
+        verdict = "REVIEW"
+        reasons = [
+            f"Judge metric '{score.name}' failed on item #{item.position}: "
+            f"{score.reason}"
+            for item, score in judge_errors
+        ]
+        summary = "At least one configured judge did not produce a score."
     elif overall_score is None:
         verdict = "REVIEW"
         reasons = ["No configured metrics produced a score."]
@@ -130,7 +144,7 @@ def evaluate_verdict(
     elif overall_score >= criteria.go_threshold:
         verdict = "GO"
         reasons = [
-            f"Weighted score {overall_score:.2f} meets GO threshold "
+            f"Weighted score {overall_score:.2f} >= GO threshold "
             f"{criteria.go_threshold:.2f}."
         ]
         summary = "The weighted score meets the GO threshold."
@@ -145,7 +159,7 @@ def evaluate_verdict(
     else:
         verdict = "NO_GO"
         reasons = [
-            f"Weighted score {overall_score:.2f} is below REVIEW threshold "
+            f"Weighted score {overall_score:.2f} < REVIEW threshold "
             f"{criteria.review_threshold:.2f}."
         ]
         summary = "The weighted score is below the REVIEW threshold."

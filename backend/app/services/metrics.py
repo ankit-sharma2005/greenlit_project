@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from difflib import SequenceMatcher
 from typing import Literal
 from uuid import UUID
 
@@ -24,6 +26,7 @@ from app.models import (
     JudgeProfile,
     ProviderConfig,
 )
+from app.phase3_schemas import JudgeProfileSnapshot
 from app.phase4_schemas import MetricCatalogOut, MetricScoreOut
 from app.services.llm_gateway import ChatResult, LLMGateway, ProviderRequestError
 
@@ -64,7 +67,10 @@ class JudgeOutput(BaseModel):
 
 gateway = LLMGateway()
 JUDGE_METRIC_NAME = "answer_quality"
+ANSWER_MATCH_METRIC_NAME = "answer_match"
+LEGACY_ANSWER_MATCH_METRIC_NAMES = ("answer_exact_match",)
 JUDGE_RUBRIC_VERSION = 1
+JUDGE_REQUEST_TIMEOUT_SECONDS = 12
 JUDGE_SYSTEM_PROMPT = (
     "You are an impartial evaluator of an application response. "
     "Evaluate only the configured rubric and the supplied evaluation record. "
@@ -129,23 +135,61 @@ def _output_nonempty(case: MetricCase, trace: Mapping[str, object]) -> MetricSco
     )
 
 
-def _exact_match(case: MetricCase, trace: Mapping[str, object]) -> MetricScoreOut:
-    metric = METRIC_BY_NAME["answer_exact_match"]
+def _answer_similarity_score(output: str, reference: str) -> float:
+    normalized_output = _normalize_answer(output)
+    normalized_reference = _normalize_answer(reference)
+    if not normalized_output or not normalized_reference:
+        return 0.0
+    if normalized_output == normalized_reference:
+        return 1.0
+
+    output_tokens = normalized_output.split()
+    reference_tokens = normalized_reference.split()
+    shared_tokens = set(output_tokens) & set(reference_tokens)
+    if len(shared_tokens) < 2:
+        return 0.0
+
+    if output_tokens and reference_tokens:
+        token_overlap = len(shared_tokens) / len(
+            set(output_tokens) | set(reference_tokens)
+        )
+    else:
+        token_overlap = 0.0
+
+    sequence_similarity = SequenceMatcher(
+        None,
+        normalized_output,
+        normalized_reference,
+    ).ratio()
+    return max(token_overlap, sequence_similarity)
+
+
+def _answer_match(case: MetricCase, trace: Mapping[str, object]) -> MetricScoreOut:
+    """Estimate free-text answer match using normalized overlap and sequence similarity.
+
+    Text is case-folded, punctuation is removed, and common stop words are
+    discarded. Exact normalized matches score 1.0; other answers use the greater
+    of Jaccard token overlap and character sequence similarity. This heuristic
+    accepts some paraphrases, but is not a semantic-equivalence guarantee.
+    """
+    metric = METRIC_BY_NAME[ANSWER_MATCH_METRIC_NAME]
     output = trace.get("output")
     if not isinstance(output, str):
         return _not_instrumented(metric, "output")
     if not case.reference_answer:
         return _not_instrumented(metric, "reference_answer")
-    matched = _normalize_answer(output) == _normalize_answer(case.reference_answer)
-    return _score(
-        metric.name,
-        metric.category,
-        metric.method,
-        float(matched),
-        "Normalized output matches the reference"
-        if matched
-        else "Normalized output differs from the reference",
+
+    exact_match = _normalize_answer(output) == _normalize_answer(case.reference_answer)
+    score = (
+        1.0 if exact_match else _answer_similarity_score(output, case.reference_answer)
     )
+    if exact_match:
+        reason = "Normalized output matches the reference"
+    elif score >= 0.8:
+        reason = "Normalized output closely matches the reference"
+    else:
+        reason = "Normalized output differs from the reference"
+    return _score(metric.name, metric.category, metric.method, score, reason)
 
 
 def _context_recall(case: MetricCase, trace: Mapping[str, object]) -> MetricScoreOut:
@@ -294,14 +338,15 @@ METRIC_REGISTRY: tuple[MetricDefinition, ...] = (
         _output_nonempty,
     ),
     MetricDefinition(
-        "answer_exact_match",
+        ANSWER_MATCH_METRIC_NAME,
         "quality",
-        "Compares normalized output with its reference answer.",
+        "Compares normalized output with the reference answer and accepts valid "
+        "paraphrases while rejecting unrelated answers.",
         ("output", "reference_answer"),
         "reference_based",
         "rule",
         1,
-        _exact_match,
+        _answer_match,
     ),
     MetricDefinition(
         "retrieval_context_recall",
@@ -355,6 +400,14 @@ METRIC_REGISTRY: tuple[MetricDefinition, ...] = (
     ),
 )
 METRIC_BY_NAME = {metric.name: metric for metric in METRIC_REGISTRY}
+for legacy_name in LEGACY_ANSWER_MATCH_METRIC_NAMES:
+    METRIC_BY_NAME[legacy_name] = METRIC_BY_NAME[ANSWER_MATCH_METRIC_NAME]
+
+
+def canonical_metric_name(name: str) -> str:
+    if name in LEGACY_ANSWER_MATCH_METRIC_NAMES:
+        return ANSWER_MATCH_METRIC_NAME
+    return name
 
 
 def metric_catalog() -> list[MetricCatalogOut]:
@@ -427,13 +480,32 @@ async def score_run_item(
         item = await db.get(DatasetItem, dataset_item_id)
         if run is None or item is None:
             raise LookupError("Run or dataset item no longer exists")
-        profiles = list(
-            await db.scalars(
-                select(JudgeProfile)
-                .where(JudgeProfile.project_id == run.project_id)
-                .order_by(JudgeProfile.role)
+        if run.judge_profiles_snapshot is None:
+            profiles = list(
+                await db.scalars(
+                    select(JudgeProfile)
+                    .where(JudgeProfile.project_id == run.project_id)
+                    .order_by(JudgeProfile.role)
+                )
             )
-        )
+        else:
+            snapshots = [
+                JudgeProfileSnapshot.model_validate(snapshot)
+                for snapshot in run.judge_profiles_snapshot
+            ]
+            profiles = [
+                JudgeProfile(
+                    id=snapshot.id,
+                    project_id=run.project_id,
+                    role=snapshot.role,
+                    provider_id=snapshot.provider_id,
+                    model=snapshot.model,
+                    temperature=snapshot.temperature,
+                    rubric_prompt=snapshot.rubric_prompt,
+                    rubric_version=snapshot.rubric_version,
+                )
+                for snapshot in snapshots
+            ]
         provider_ids = {profile.provider_id for profile in profiles}
         providers = {
             provider.id: provider
@@ -527,7 +599,55 @@ def aggregate_judge_scores(
 
 
 def _normalize_answer(value: str) -> str:
-    return " ".join(value.casefold().split())
+    stop_words = {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "been",
+        "being",
+        "before",
+        "but",
+        "by",
+        "did",
+        "do",
+        "does",
+        "for",
+        "from",
+        "if",
+        "in",
+        "is",
+        "it",
+        "no",
+        "not",
+        "of",
+        "on",
+        "or",
+        "so",
+        "that",
+        "the",
+        "their",
+        "them",
+        "then",
+        "there",
+        "these",
+        "they",
+        "this",
+        "those",
+        "to",
+        "was",
+        "were",
+        "with",
+        "yes",
+    }
+    normalized = re.sub(r"[^\w\s]", " ", value.casefold())
+    tokens = [
+        token for token in normalized.split() if token and token not in stop_words
+    ]
+    return " ".join(tokens)
 
 
 async def score_with_judge(
@@ -546,7 +666,21 @@ async def score_with_judge(
 
     messages = _judge_messages(profile, case, trace)
     try:
-        output = await _request_judge(provider, profile, messages)
+        async with asyncio.timeout(JUDGE_REQUEST_TIMEOUT_SECONDS):
+            output = await _request_judge(provider, profile, messages)
+    except TimeoutError:
+        return _score(
+            metric_key,
+            "quality",
+            "llm_judge",
+            None,
+            f"Judge provider request timed out after "
+            f"{JUDGE_REQUEST_TIMEOUT_SECONDS} seconds",
+            status="error",
+            details={"error_code": "judge_timeout"},
+            judge_role=profile.role,
+            rubric_version=profile.rubric_version,
+        )
     except ProviderRequestError:
         return _score(
             metric_key,

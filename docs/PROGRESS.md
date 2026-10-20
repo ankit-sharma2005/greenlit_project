@@ -1,6 +1,6 @@
 # GreenLit phase progress
 
-Updated: 2026-10-08
+Updated: 2026-10-11
 
 ## Phase 1 - Foundation: DONE
 
@@ -114,9 +114,28 @@ on landing, login, and signup pages.
 - **KNOWN GAP** - Full browser coverage of every dynamic form and end-to-end
   execution/instrumentation for Python SDK Traced remains deferred with the
   isolated-runner work.
+- **UPDATED 2026-10-10** - Connector provider selection is sent as a top-level
+  `provider_id`; only entry points that require a provider receive it inside
+  their validated settings. UPLOAD_OUTPUTS ignores the optional provider rather
+  than persisting it in settings. Settings validation errors are returned as
+  readable messages while strict extra-field rejection remains enabled.
+- **UPDATED 2026-10-10** - The entry-point chooser displays all 13 types with
+  descriptions, selected/unavailable states, keyboard navigation, and large
+  responsive click targets. Connector dropdowns use larger controls and the
+  optional provider choice is labeled `None (not required)`.
+- **UPDATED 2026-10-10** - Added the root-level `outputs_good.csv` sample for
+  the documented UPLOAD_OUTPUTS retest flow.
 
 ### Validation
 
+- **UPDATED 2026-10-10** - `tests/test_phase2.py` in a fresh temporary SQLite
+  database: 17 passed; one Ollama-dependent test was deselected because no live
+  Ollama service was available. The temporary database was removed afterwards.
+- **PASS 2026-10-10** - Frontend tests (8), strict TypeScript check, ESLint,
+  Prettier check, and Vite production build.
+- **PASS 2026-10-10** - `docker compose up --build -d api web worker`; API and
+  web containers healthy, `/healthz` and `/readyz` successful, web returned
+  HTTP 200.
 - `docker compose ps` - API, web, worker, Redis, and PostgreSQL healthy.
 - `GET /healthz` - `{"status":"ok"}`; `GET /readyz` - `{"status":"ready"}`;
   `/docs` and `http://localhost:5173` returned HTTP 200.
@@ -184,6 +203,10 @@ Invoke-RestMethod http://localhost:8000/readyz
   rest of the run. Evidence: the run integration test verifies user pause and
   resume, quota pause and resume, cancellation, and 19 completed items plus one
   safely summarized failure.
+- **UPDATED 2026-10-10** - Evaluation sends the raw dataset input to the
+  UPLOAD_OUTPUTS connector so it can match the uploaded row. The recovery test
+  now includes saved upload rows and verifies the expected 19 completed items
+  plus one failed item.
 
 ### Validation
 
@@ -449,44 +472,41 @@ Sign in, open the project baseline controls, compare a baseline against a
 candidate run, and inspect the regression report with its reasons and
 new-failure list.
 
-## Phase 7 - Safety and red-team: DONE
+## Phase 7 - Safety and red-team: PARTIAL (helper logic only)
 
 ### Acceptance checklist
 
-- **PASS** - Attack packs include direct prompt injection, indirect prompt
-  injection, jailbreak, PII/canary leakage, system-prompt leakage, unsafe tool
-  use, and over-refusal scenarios. Evidence: `test_attack_pack_contains_required_red_team_scenarios`
-  passed.
-- **PASS** - Canary and system-prompt leakage detectors catch seeded secrets and
-  hidden-instruction prompts. Evidence: `test_canary_and_system_prompt_leaks_are_detected`
-  and `test_red_team_case_flags_canary_and_prompt_leaks` passed.
-- **PASS** - Safety summaries expose per-category attack success rate, leak rate,
-  over-refusal rate, unsafe-tool-call rate, and guardrail uplift. Evidence:
-  `test_phase7_summary_measures_attack_success_by_category_and_guardrail_uplift`
-  passed.
-- **PASS** - Guardrail ablation reports the ON/OFF comparison with a positive
-  uplift direction when guardrails help. Evidence:
-  `test_guardrail_ablation_reports_category_uplift` passed.
-- **PASS** - Helper functions align with the safety summary and red-team-case
-  outputs. Evidence: `test_attack_success_rate_helper_matches_summary` passed.
-- **PASS** - The Phase 7 safety contract is enforced by the new acceptance
-  tests. Evidence: the focused Phase 7 suite passed as a complete file.
+- **PARTIAL** - Attack-pack definitions cover the requested categories.
+  Evidence: `test_attack_pack_contains_required_red_team_scenarios`. They are
+  not executed against a selected app version by a red-team workflow.
+- **PARTIAL** - Canary and system-prompt detectors work on supplied text.
+  Evidence: `test_canary_and_system_prompt_leaks_are_detected` and
+  `test_red_team_case_flags_canary_and_prompt_leaks`. No integrated flow plants
+  a canary in an app system prompt and tests whether the app leaks it.
+- **PARTIAL** - Summary helpers calculate ASR, leak, over-refusal, unsafe-tool,
+  and guardrail-uplift values from supplied samples. Evidence:
+  `test_phase7_summary_measures_attack_success_by_category_and_guardrail_uplift`.
+  Results are not persisted or tied to live evaluation outputs.
+- **PARTIAL** - `guardrail_ablation()` computes an ON/OFF comparison from
+  supplied samples, covered by `test_guardrail_ablation_reports_category_uplift`;
+  there is no workflow that executes both app configurations.
+- **FAIL / KNOWN GAP** - Red-team findings cannot be promoted to
+  regression-critical dataset items.
+- **FAIL / KNOWN GAP** - Safety metrics are not supported as configured launch
+  hard gates.
+- **FAIL / KNOWN GAP** - There is no integrated red-team console or persisted
+  safety assessment API.
 
 ### Validation
 
-- Phase 7 focused tests: **6 passed**.
-- Full backend suite: **69 passed**, 2 deprecation warnings.
-- Frontend typecheck and production build: **passed**.
-- Docker services remained healthy: `GET /healthz` returned `{"status":"ok"}`;
-  `GET /readyz` returned `{"status":"ready"}`; `/docs` responded with HTTP
-  200.
+- Phase 7 helper tests: **6 passed**; this does not verify an integrated
+  red-team workflow.
 - No real provider credentials or live secrets were used in the safety tests.
 
 ### Assumptions, limitations, and deferred items
 
-- The Phase 7 checks validate the safety contracts and metric logic in code and
-  tests, not a live external red-team exercise against a deployed production app.
-- No Phase 8 work has started.
+- The Phase 7 checks validate helper logic, not a live or persisted red-team
+  assessment against an authorized app version.
 
 ### Run and verify
 
@@ -499,53 +519,39 @@ Invoke-RestMethod http://localhost:8000/readyz
 (Invoke-WebRequest -UseBasicParsing http://localhost:8000/docs).StatusCode
 ```
 
-Review the attack-pack generation, canary detection, guardrail uplift, and
-red-team-case outputs from the backend safety service and keep the safety suite
-as the regression gate for future changes.
+Use the helper tests as unit-level coverage only. Do not treat Phase 7 as
+complete until the missing integrated workflow and gates are implemented.
 
-## Phase 8 - Human review and calibration: DONE (service/API contract validated)
+## Phase 8 - Human review and calibration: PARTIAL (stateless helpers)
 
 ### Acceptance checklist
 
-- **PASS** - Low-confidence, disagreeing, near-threshold, and gate-failing items
-  are auto-queued. Evidence: `test_review_queue_auto_queues_risky_items` in
-  `backend/tests/test_phase8.py` passed and `queue_review_items()` in
-  `backend/app/services/human_review.py` enqueues the expected reasons.
-- **PASS** - Reviewer-role access is intentionally allowed for review workflows
-  while admin/engineer-only routes remain protected. Evidence:
-  `backend/app/routers/phase8.py` uses `Depends(require_roles("owner", "admin",
-  "engineer", "reviewer"))` for review endpoints, while the broader admin-only
-  settings routes continue to require stronger privileges.
-- **PASS** - Blind A/B comparisons hide labels and report the correct winner
-  and delta. Evidence: `test_blind_ab_compare_hides_labels_and_reports_winner`
-  in `backend/tests/test_phase8.py` passed; `blind_ab_compare()` in
-  `backend/app/services/human_review.py` returns `blinded=True` and the correct
-  `winner` value.
-- **PASS** - Overrides require justification and are audit-friendly. Evidence:
-  `test_override_requires_justification_and_tracks_audit_flag` passed, and
-  `validate_override()` in `backend/app/services/human_review.py` returns
-  `approved=False` when justification is blank and preserves the audit flag.
-- **PASS** - Calibration summaries produce kappa, alpha, Spearman and a
-  confusion matrix. Evidence: `test_calibration_summary_reports_kappa_alpha_and_confusion_data`
-  passed; `calibration_summary()` in `backend/app/services/human_review.py`
-  writes the expected metrics and `confusion_matrix` shape.
-- **PASS** - Final Report mode re-scores stored traces without relaunching the
-  app. Evidence: `test_final_report_reruns_score_summary_without_live_calls`
-  passed; `final_report_rescore()` in `backend/app/services/human_review.py`
-  computes summary means and returns `rerun_without_live_calls=True`.
-- **NEEDS MANUAL CHECK** - None. The current Phase 8 spec has no UI-only
-  acceptance item; the implemented contract is validated by code and tests, not an
-  interactive browser-only screen.
+- **PARTIAL** - `queue_review_items()` computes reasons for supplied review
+  candidates; `test_review_queue_auto_queues_risky_items` covers the helper.
+  Evaluation runs do not persistently enqueue their risky items.
+- **PARTIAL** - The review endpoints require a reviewer-capable workspace role,
+  but there is no persisted review queue or stored reviewer grading workflow.
+- **PARTIAL** - `blind_ab_compare()` computes a comparison from caller-supplied
+  scores (`test_blind_ab_compare_hides_labels_and_reports_winner`); it does not
+  load two runs or persist blinded assignments.
+- **FAIL / KNOWN GAP** - Override audit state is caller-supplied through
+  `audit_logged`; the endpoint does not persist an override or create an audit
+  record. Justification validation alone is not an audited override workflow.
+- **PARTIAL** - Calibration statistics are calculated from supplied values
+  (`test_calibration_summary_reports_kappa_alpha_and_confusion_data`); there is
+  no persisted calibration page or reviewer dataset.
+- **PARTIAL** - Final-report summary calculation is covered by
+  `test_final_report_reruns_score_summary_without_live_calls`, but the endpoint
+  accepts caller-supplied traces rather than loading and rescoring stored run
+  traces and scores.
+- **FAIL / KNOWN GAP** - No human-review UI or persisted review/audit schema.
 
 ### Validation
 
-- Phase 8 focused backend tests: **5 passed in 0.38s**.
+- Phase 8 helper tests: **5 passed in 0.38s**; no persisted workflow integration
+  tests are present.
 - Command: `cd backend; .\.venv\Scripts\python.exe -m pytest -q tests/test_phase8.py`
   - Result: **5 passed**.
-- Docker services remained healthy: `docker compose ps` shows all five services
-  healthy (`api`, `web`, `worker`, `redis`, `postgres`).
-- `/healthz` and `/readyz` were already confirmed healthy in earlier project
-  validation; no new Phase 9 work was started.
 
 ### Environment and repo-status notes
 
@@ -566,9 +572,8 @@ Invoke-RestMethod http://localhost:8000/readyz
 (Invoke-WebRequest -UseBasicParsing http://localhost:8000/docs).StatusCode
 ```
 
-The Phase 8 human-review and calibration service/API contract is validated and
-recorded. No Phase 9 work was started, and this status is now frozen pending
-explicit user direction.
+The Phase 8 helper logic is validated. The persistent review and audit workflow
+remains unimplemented.
 
 ## Phase 9 - CI regression and demo/export tooling: DONE WITH DOCUMENTED GAPS
 
@@ -613,13 +618,15 @@ explicit user direction.
 
 ### Assumptions, limitations, and deferred items
 
+- Docker/Git/CLI/Proxy sandbox execution, Website URL discovery, and MCP runtime verification remain unproven without a verified sandbox/browser/MCP environment. The UI disables these entry points with clear reasons, the API rejects them with a "not available yet" error, and no fake trace is returned. Website URL discovery and MCP require manual verification against the seeded demo website and live MCP server before they are considered complete.
 - The Phase 9 demo/export tooling is complete and validated, but the actual
   Docker/Git/CLI/Proxy connector runners and the browser automation golden path
   remain deferred.
 - The codebase still does not contain a real sandboxed execution service for
   runner-style connector types; it avoids unsafe execution by keeping them as
   later-phase work.
-- No Phase 10 work has started.
+- No Phase 10 completion is claimed. The separately requested UI/chat
+  follow-up below remains incomplete and is not a Phase 10 closeout.
 
 ### Run and verify
 
@@ -637,3 +644,90 @@ python scripts/research_analysis.py --output .tmp/research.json
 The Phase 9 CI token flow, demo-seeding output, and export/research scripts are
 validated. The remaining connector sandbox and browser E2E work remains a
 follow-up item, not a hidden blocker for the completed CI and demo tooling.
+
+## Requested UI, chat, and connector follow-up - STILL WORKING
+
+This is an incomplete user-requested follow-up, not a phase completion. The
+following status reflects repository tests and code inspection; mocked provider
+tests do not establish a live connection to a user's provider or application.
+
+### Entry-point audit
+
+| Entry point | Current status | Requirement or remaining work |
+| --- | --- | --- |
+| `HTTP_ENDPOINT` | Implemented and tested with mocked HTTP calls and SSRF checks | A live Docker-target smoke call has not been run. Private targets still require the existing Admin authorization path. |
+| `PYTHON_FUNCTION` | Not implemented; disabled honestly | Requires an isolated Python worker with no network by default, no host mounts or secret access, resource limits, and hard timeouts. Planned for a separately authorized sandbox phase. |
+| `PYTHON_SDK_TRACED` | Not implemented; disabled honestly | Requires the isolated Python worker plus real SDK instrumentation and trace-capture verification. Planned for a separately authorized sandbox phase. |
+| `PROMPT_APP` | Implemented and tested with a mocked LLM gateway | No live provider call has been made in this validation. |
+| `BUILTIN_RAG_APP` | Implemented and tested with a mocked LLM gateway | Retrieval and trace behavior are covered; no live provider call has been made. |
+| `BUILTIN_AGENT_APP` | Implemented and tested with mocked provider/tool calls | Tool schema validation is covered; no live provider call has been made. |
+| `DOCKER_IMAGE` | Not implemented; disabled honestly | Requires an isolated Docker runner, no host mounts, network disabled by default, resource quotas, and hard timeouts. Planned for a separately authorized sandbox phase. |
+| `GIT_REPO` | Not implemented; disabled honestly | Requires isolated checkout/execution, restricted network access, no host mounts or secrets, quotas, and timeouts. Planned for a separately authorized sandbox phase. |
+| `CLI_COMMAND` | Not implemented; disabled honestly | Requires isolated command execution with restricted filesystem/network access, quotas, and timeouts. Planned for a separately authorized sandbox phase. |
+| `PROXY_MODE` | Not implemented; disabled honestly | Requires a verified outbound proxy sandbox and persisted trace capture. Planned for a separately authorized sandbox phase. |
+| `UPLOAD_OUTPUTS` | Implemented and tested against uploaded sample rows | Lookup matching, mapping, preview, and validation are covered by backend/frontend tests. Live retest with `outputs_good.csv` is still requested. |
+| `WEBSITE_URL` | Not implemented; disabled honestly | Requires an SSRF-protected isolated browser plus manual verification against a real target. Planned for a separately authorized browser-verification phase. |
+| `MCP_SERVER` | Not implemented; disabled honestly | Requires a verified MCP runtime and manual protocol/auth verification. Planned for a separately authorized MCP phase. |
+
+All 13 choices remain visible in the entry-point chooser; unsupported runners
+are disabled with a reason. Their test calls are rejected rather than faked.
+
+### Implemented in this follow-up
+
+- Separate route navigation and page-specific sections, a mobile sidebar,
+  breadcrumbs, page-step links, a top-bar active-project selector, and a
+  workspace Assistant button.
+- Workspace-scoped default provider/project/page/entry-point/mapping
+  preferences; guarded drafts exclude uploaded rows and secret fields.
+- Connector settings are sent through a per-entry-point allow-list, with
+  provider/model at the top level. Backend settings remain strict.
+- Owner-scoped Assistant and Test Chat storage, redaction, bounded context and
+  summaries, searchable/renameable/deletable conversations, retention default
+  of 30 days, and pending-only chat-to-dataset drafts.
+- Test Chat stores the exact application context, trace/tool data when
+  available, latency, and usage. UPLOAD_OUTPUTS does not claim to support live
+  chat.
+- Migration revisions use SQLite-compatible batch alterations and the complete
+  migration chain was verified on a disposable SQLite database. The configured
+  PostgreSQL database was advanced to revision `0009_chat_preferences_connectors`
+  by the approved Compose upgrade; no database reset was performed.
+
+### Current verification and limitations
+
+- Backend full suite: **92 passed**, 2 dependency deprecation warnings.
+- Backend Ruff check/format and strict mypy passed for the application,
+  migrations, and tests.
+- Frontend: **9 tests passed**, ESLint, TypeScript, Prettier, and Vite production
+  build passed.
+- Compose rebuild and service-health checks passed; `api`, `web`, `worker`,
+  `redis`, and `postgres` were healthy, and `/healthz`, `/readyz`, and the web
+  app returned successful responses.
+- No authenticated browser retest of the provider/UPLOAD_OUTPUTS/Assistant/
+  Test Chat workflow has been completed. No live provider credentials were
+  used. Connector form, Assistant, and Test Chat coverage is not yet complete.
+- The Test Chat draft endpoint preserves prior dataset records, labels
+  provenance as `chat-session`, prevents sequential repeat additions, and
+  leaves new rows `pending`; a concurrent double-submit integration test is
+  still outstanding.
+- Full feature acceptance is not complete. Do not treat the checklist above as
+  completion of a new project phase.
+
+## Current verification and completeness status (2026-10-11)
+
+- **UPDATED** - The UPLOAD_OUTPUTS evaluation regression was fixed by passing
+  dataset inputs without a JSON wrapper. The focused Phase 3 suite passed:
+  `pytest -q tests\test_phase3.py` (**3 passed**).
+- **UPDATED** - Full backend suite: `pytest -q tests` (**92 passed**, 2
+  dependency deprecation warnings) using a temporary SQLite database.
+- **UPDATED** - Full frontend checks: 9 tests, TypeScript typecheck, ESLint,
+  Prettier, and production build.
+- **PASS** - Backend Ruff check/format and strict mypy after formatting:
+  `ruff check .`, `ruff format --check .`, and `mypy --strict app alembic tests`.
+- **CONFIRMED GAP** - Phase 7 and Phase 8 currently have helper calculations
+  and unit tests, not the integrated persisted safety and human-review
+  workflows described above.
+- **CONFIRMED GAP** - Runner-style sandboxing, proxy trace capture, full
+  Playwright E2E, website discovery, and live MCP support remain unavailable.
+- **VERDICT** - The project is **not complete overall**. The tested connector
+  workflow and automated suites pass, but the listed product requirements and
+  manual runtime checks remain incomplete.

@@ -27,7 +27,8 @@ def upgrade() -> None:
             server_default=sa.text("'[]'"),
         ),
     )
-    op.alter_column("eval_run_items", "scores", server_default=None)
+    with op.batch_alter_table("eval_run_items") as batch_op:
+        batch_op.alter_column("scores", server_default=None)
     op.create_table(
         "judge_metric_cache",
         sa.Column("cache_key", sa.String(length=64), nullable=False),

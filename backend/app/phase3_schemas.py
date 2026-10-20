@@ -91,11 +91,30 @@ class EvalRunCreate(StrictModel):
     split: Literal["all", "dev", "test"] = "all"
 
 
+class JudgeProfileSnapshot(StrictModel):
+    id: UUID
+    role: Literal["dev", "final", "secondary"]
+    provider_id: UUID
+    model: str
+    temperature: float
+    rubric_prompt: str
+    rubric_version: int
+
+
+class JudgeProfileSnapshotOut(BaseModel):
+    id: UUID
+    role: Literal["dev", "final", "secondary"]
+    provider_id: UUID
+    model: str
+    rubric_version: int
+
+
 class EvalRunOut(BaseModel):
     id: UUID
     project_id: UUID
     app_version_id: UUID
     dataset_version_id: UUID
+    judge_profiles_snapshot: list[JudgeProfileSnapshotOut] = Field(default_factory=list)
     split: str
     status: str
     total_items: int

@@ -37,9 +37,10 @@ Evidence:
 
 ## Known limitations
 
-- Real Docker/Git/CLI/Proxy sandbox execution is not implemented as a full isolated runner; the project keeps those connector types behind explicit contract validation and does not claim live sandbox execution beyond tests.
+- Docker/Git/CLI/Proxy sandbox execution, Website URL discovery, and MCP runtime verification remain unproven without a verified sandbox/browser/MCP environment. The UI disables these entry points with clear reasons, the API rejects them with a "not available yet" error, and no fake trace is returned. Website URL discovery and MCP require manual verification against the seeded demo website and live MCP server before they are considered complete.
 - Browser automation and Website URL discovery need manual validation with a real browser or seeded demo website when the environment has a verified browser runner.
 - MCP server testing is contract-validated, not proven against a production-like MCP server runtime in a live browser workflow.
+- Website URL discovery and MCP remain manual verification items until a real browser and live MCP runtime prove the live flow.
 
 ## Evidence and required manual checks
 

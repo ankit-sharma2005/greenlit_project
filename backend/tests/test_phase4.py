@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from uuid import UUID, uuid4
 
@@ -35,7 +36,7 @@ async def prepare_phase4_db() -> AsyncIterator[None]:
             1.0,
         ),
         (
-            "answer_exact_match",
+            "answer_match",
             MetricCase("question", " A useful answer ", None, "normal", {}),
             {"output": "a useful answer"},
             1.0,
@@ -114,7 +115,7 @@ def test_every_rule_metric_returns_fixed_expected_score(
             {},
         ),
         (
-            "answer_exact_match",
+            "answer_match",
             MetricCase("question", None, None, "normal", {}),
             {"output": "answer"},
         ),
@@ -218,7 +219,7 @@ def test_metric_catalog_and_multi_judge_aggregation() -> None:
     aggregate = metrics.aggregate_judge_scores(scores)
 
     assert {entry.name for entry in catalog} >= {
-        "answer_exact_match",
+        "answer_match",
         "retrieval_context_recall",
         "tool_call_match",
         "latency_under_5s",
@@ -228,6 +229,14 @@ def test_metric_catalog_and_multi_judge_aggregation() -> None:
     assert aggregate is not None
     assert aggregate.score == pytest.approx(0.7)
     assert aggregate.details == {"judge_count": 2, "score_range": pytest.approx(0.2)}
+
+
+def test_answer_match_legacy_name_resolves_to_canonical_metric() -> None:
+    assert (
+        metrics.METRIC_BY_NAME["answer_exact_match"]
+        is metrics.METRIC_BY_NAME["answer_match"]
+    )
+    assert metrics.canonical_metric_name("answer_exact_match") == "answer_match"
 
 
 @pytest.mark.asyncio
@@ -266,7 +275,7 @@ async def test_metric_catalog_api_is_project_scoped() -> None:
 
     assert response.status_code == 200, response.text
     assert {metric["name"] for metric in response.json()} >= {
-        "answer_exact_match",
+        "answer_match",
         "retrieval_context_recall",
         "tool_call_match",
         "latency_under_5s",
@@ -398,6 +407,41 @@ async def test_malformed_judge_json_is_retried_and_validated(
     assert calls == 2
     assert result.status == "scored"
     assert result.score == 0.4
+
+
+@pytest.mark.asyncio
+async def test_judge_timeout_is_reported_as_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _provider()
+    profile = _profile(provider.id)
+
+    async def mock_complete(
+        providers: list[ProviderConfig],
+        *,
+        model: str,
+        messages: list[ChatCompletionMessageParam],
+        temperature: float = 0.0,
+        max_output_tokens: int | None = None,
+    ) -> ChatResult:
+        del providers, model, messages, temperature, max_output_tokens
+        await asyncio.sleep(0.05)
+        raise AssertionError("Timed-out judge request unexpectedly completed")
+
+    monkeypatch.setattr(metrics.gateway, "complete", mock_complete)
+    monkeypatch.setattr(metrics, "JUDGE_REQUEST_TIMEOUT_SECONDS", 0.01)
+
+    result = await metrics.score_with_judge(
+        profile,
+        provider,
+        MetricCase("Question", None, None, "normal", {}),
+        {"output": "Answer"},
+    )
+
+    assert result.status == "error"
+    assert result.score is None
+    assert result.details["error_code"] == "judge_timeout"
+    assert "timed out" in result.reason
 
 
 @pytest.mark.asyncio

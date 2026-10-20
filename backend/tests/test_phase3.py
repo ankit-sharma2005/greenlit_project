@@ -72,9 +72,15 @@ async def add_upload_outputs_connector(
     async with async_session_maker() as db:
         connector = ConnectorProfile(
             project_id=project_id,
+            display_name="Uploaded outputs",
+            name_key="uploaded outputs",
             entry_point_type="UPLOAD_OUTPUTS",
             settings={
                 "entry_point_type": "UPLOAD_OUTPUTS",
+                "rows": [
+                    {"input": f"item-{index}", "output": f"answer-{index}"}
+                    for index in range(21)
+                ],
                 "input_field": "input",
                 "output_field": "output",
             },
@@ -415,6 +421,10 @@ async def test_twenty_item_run_resumes_without_duplicate_records_and_controls_wo
     assert created.status_code == 202, created.text
     run_id = created.json()["id"]
     assert created.json()["total_items"] == 20
+    judge_snapshot = created.json()["judge_profiles_snapshot"]
+    assert len(judge_snapshot) == 1
+    assert judge_snapshot[0]["model"] == "mock-run-judge"
+    assert judge_snapshot[0]["rubric_version"] == 1
     assert queued == [run_id]
     retry = await client.post(
         f"/api/v1/workspaces/{workspace_id}/projects/{project_id}/runs",
@@ -440,6 +450,15 @@ async def test_twenty_item_run_resumes_without_duplicate_records_and_controls_wo
         )
         assert run is not None
         assert len(run_items) == 20
+        saved_profile = await db.scalar(
+            select(JudgeProfile).where(
+                JudgeProfile.project_id == project_id,
+                JudgeProfile.role == "dev",
+            )
+        )
+        assert saved_profile is not None
+        saved_profile.model = "changed-after-run-creation"
+        saved_profile.rubric_version = 99
         run.status = "running"
         run.celery_task_id = "recovered-task"
         run_items[0].status = "running"
@@ -454,7 +473,7 @@ async def test_twenty_item_run_resumes_without_duplicate_records_and_controls_wo
         settings: UploadOutputsSettings, input_text: str, started: float
     ) -> dict[str, object]:
         nonlocal should_fail
-        if should_fail and '"input": "item-7"' in input_text:
+        if should_fail and input_text == "item-7":
             should_fail = False
             raise RuntimeError("private provider detail must not be stored")
         return original_uploaded_call(settings, input_text, started)
@@ -489,6 +508,7 @@ async def test_twenty_item_run_resumes_without_duplicate_records_and_controls_wo
             "provider_id": str(provider.id),
             "reasoning": "The answer is useful.",
         }
+        assert judge_score["rubric_version"] == 1
         failed = next(item for item in run_items if item.status == "failed")
         assert failed.error == "RuntimeError: connector execution failed"
         recovered = next(

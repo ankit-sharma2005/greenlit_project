@@ -35,7 +35,8 @@ def upgrade() -> None:
             server_default=sa.text("'{}'"),
         ),
     )
-    op.alter_column("eval_runs", "criteria_snapshot", server_default=None)
+    with op.batch_alter_table("eval_runs") as batch_op:
+        batch_op.alter_column("criteria_snapshot", server_default=None)
 
 
 def downgrade() -> None:

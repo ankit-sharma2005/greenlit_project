@@ -1,17 +1,39 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import {
+  FormEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { Link } from 'react-router-dom';
 import { apiRequest, Workspace } from './api';
 import DatasetStudio from './DatasetStudio';
+import { buildConnectorSettings } from './connectorPayload';
+import { parseUploadRows, UploadedRow } from './phase2Uploads';
+import { ProjectTestChat } from './WorkspaceChat';
 
 interface WorkspaceProjectsProps {
   accessToken: string;
   userRole: string;
+  userId?: string;
   workspace: Workspace;
+  page?: string;
+  activeProjectId?: string;
+  onProjectOptionsChange?: (
+    projects: Array<{ id: string; name: string }>,
+  ) => void;
+  onActiveProjectChange?: (projectId: string) => void;
 }
 
 interface Project {
   id: string;
   name: string;
   description?: string | null;
+  original_name?: string | null;
+  duplicate_of?: string | null;
+  is_duplicate?: boolean;
 }
 
 interface Provider {
@@ -19,6 +41,11 @@ interface Provider {
   name: string;
   provider_type: string;
   base_url?: string | null;
+  test_model?: string | null;
+  default_model?: string | null;
+  original_name?: string | null;
+  duplicate_of?: string | null;
+  is_duplicate?: boolean;
   rpm?: number | null;
   rpd?: number | null;
   max_input_tokens?: number | null;
@@ -56,13 +83,24 @@ interface TestCallResult {
   latency_ms: number;
   detected_fields: string[];
   missing_fields: string[];
+  preview?: UploadedRow[];
 }
 
 interface Connector {
   id?: string;
+  name?: string;
   entry_point_type?: string;
   settings?: Record<string, unknown>;
   created_at?: string;
+}
+
+interface WorkspacePreferences {
+  default_provider_id: string | null;
+  active_project_id: string | null;
+  last_page: string;
+  last_entry_point: string | null;
+  last_column_mapping: Record<string, unknown> | null;
+  chat_retention_days: number;
 }
 
 const fallbackTypes: EntryPointType[] = [
@@ -100,25 +138,25 @@ const fallbackTypes: EntryPointType[] = [
     type: 'DOCKER_IMAGE',
     label: 'Docker image',
     description: 'Docker image or compose file',
-    coming_in: 'Phase 3',
+    implemented: false,
   },
   {
     type: 'GIT_REPO',
     label: 'Git repository',
     description: 'Git repository + entrypoint',
-    coming_in: 'Phase 3',
+    implemented: false,
   },
   {
     type: 'CLI_COMMAND',
     label: 'CLI command',
     description: 'Command-line program with an input template',
-    coming_in: 'Phase 3',
+    implemented: false,
   },
   {
     type: 'PROXY_MODE',
     label: 'Proxy mode',
     description: 'Point your app LLM base URL at GreenLit',
-    coming_in: 'Phase 3',
+    implemented: false,
   },
   {
     type: 'UPLOAD_OUTPUTS',
@@ -146,43 +184,75 @@ const phaseTwoTypes = new Set([
   'BUILTIN_AGENT_APP',
   'UPLOAD_OUTPUTS',
 ]);
+const providerEntryTypes = new Set([
+  'PROMPT_APP',
+  'BUILTIN_RAG_APP',
+  'BUILTIN_AGENT_APP',
+]);
+
+const disabledReason = (entryType: EntryPointType) => {
+  if (
+    entryType.type === 'PYTHON_FUNCTION' ||
+    entryType.type === 'PYTHON_SDK_TRACED'
+  ) {
+    return 'Requires an isolated Python worker with no network access, resource limits, timeouts, and no host mounts.';
+  }
+  if (entryType.type === 'DOCKER_IMAGE') {
+    return 'Real Docker sandbox runner is not available yet';
+  }
+  if (entryType.type === 'GIT_REPO') {
+    return 'Real Git checkout sandbox is not available yet';
+  }
+  if (entryType.type === 'CLI_COMMAND') {
+    return 'Real CLI sandbox is not available yet';
+  }
+  if (entryType.type === 'PROXY_MODE') {
+    return 'Proxy mode needs a verified outbound request sandbox';
+  }
+  if (entryType.type === 'WEBSITE_URL') {
+    return 'Manual browser verification required';
+  }
+  if (entryType.type === 'MCP_SERVER') {
+    return 'Manual MCP runtime verification required';
+  }
+  return 'Not available yet';
+};
 
 const promptAppSchema: EntryPointType['settings_schema'] = {
   type: 'object',
-  required: ['system_prompt', 'model'],
+  required: ['system_prompt'],
   properties: {
     system_prompt: {
       type: 'string',
       title: 'System prompt',
       description: 'Instructions sent to the model for every request.',
     },
-    model: {
-      type: 'string',
-      title: 'Model',
-      description: 'Model identifier supported by the selected provider.',
-    },
     temperature: {
       type: 'number',
       title: 'Temperature',
-      default: 0.2,
+      default: 0,
     },
-    output_schema: {
-      type: 'string',
+    output_json_schema: {
+      type: 'object',
       title: 'Output JSON schema (optional)',
       description: 'Optional JSON Schema used to describe structured output.',
+    },
+    context_messages: {
+      type: 'integer',
+      title: 'Context messages',
+      default: 10,
     },
   },
 };
 
 const ragAppSchema: EntryPointType['settings_schema'] = {
   type: 'object',
-  required: ['documents', 'prompt', 'model'],
+  required: ['documents', 'prompt'],
   properties: {
     documents: {
-      type: 'string',
-      title: 'Documents',
-      description:
-        'Paste sample documents, one per line, for the built-in RAG app.',
+      type: 'array',
+      title: 'Documents (JSON)',
+      description: 'Enter a JSON array of documents with title and text.',
     },
     chunk_size: {
       type: 'integer',
@@ -194,34 +264,25 @@ const ragAppSchema: EntryPointType['settings_schema'] = {
       title: 'Chunk overlap',
       default: 100,
     },
-    embedding_model: {
-      type: 'string',
-      title: 'Embedding model',
-      default: 'text-embedding-3-small',
-    },
     top_k: {
       type: 'integer',
       title: 'Retrieved chunks (top-k)',
       default: 4,
-    },
-    reranker: {
-      type: 'string',
-      title: 'Reranker (optional)',
     },
     prompt: {
       type: 'string',
       title: 'Answer prompt',
       description: 'Prompt used to answer using retrieved document context.',
     },
-    model: {
-      type: 'string',
-      title: 'Model',
+    temperature: {
+      type: 'number',
+      title: 'Temperature',
+      default: 0,
     },
-    vector_store: {
-      type: 'string',
-      title: 'Vector store',
-      enum: ['Chroma', 'FAISS'],
-      default: 'Chroma',
+    context_messages: {
+      type: 'integer',
+      title: 'Context messages',
+      default: 10,
     },
   },
 };
@@ -235,14 +296,39 @@ const genericSchemas: Record<string, EntryPointType['settings_schema']> = {
       method: {
         type: 'string',
         title: 'HTTP method',
-        enum: ['POST', 'PUT'],
+        enum: ['POST', 'PUT', 'PATCH'],
         default: 'POST',
       },
-      headers: { type: 'string', title: 'Headers (JSON, optional)' },
+      request_body_template: {
+        type: 'string',
+        title: 'Request body template',
+      },
       input_field: {
         type: 'string',
-        title: 'Input field (optional)',
+        title: 'Input field',
         default: 'input',
+      },
+      output_field: {
+        type: 'string',
+        title: 'Output field',
+        default: 'output',
+      },
+      timeout_seconds: {
+        type: 'integer',
+        title: 'Timeout seconds',
+        default: 15,
+      },
+      context_messages: {
+        type: 'integer',
+        title: 'Context messages',
+        default: 10,
+      },
+      allow_private_targets: {
+        type: 'boolean',
+        title: 'Allow private targets',
+        default: false,
+        description:
+          'Explicitly permits this connector to call localhost or private network addresses. Only workspace owners or admins may authorize it.',
       },
     },
   },
@@ -274,19 +360,34 @@ const genericSchemas: Record<string, EntryPointType['settings_schema']> = {
   },
   BUILTIN_AGENT_APP: {
     type: 'object',
-    required: ['model'],
+    required: [],
     properties: {
-      model: { type: 'string', title: 'Model' },
+      tools: {
+        type: 'array',
+        title: 'Tools (JSON)',
+        default: [],
+      },
       max_steps: { type: 'integer', title: 'Maximum steps', default: 5 },
-      tool_definitions: {
+      system_prompt: {
         type: 'string',
-        title: 'Tool definitions (JSON, optional)',
+        title: 'System prompt',
+        default: 'You are a helpful assistant.',
+      },
+      temperature: {
+        type: 'number',
+        title: 'Temperature',
+        default: 0,
+      },
+      context_messages: {
+        type: 'integer',
+        title: 'Context messages',
+        default: 10,
       },
     },
   },
   UPLOAD_OUTPUTS: {
     type: 'object',
-    required: ['sample_output'],
+    required: [],
     properties: {
       sample_output: { type: 'string', title: 'Sample output' },
       input_field: { type: 'string', title: 'Input field (optional)' },
@@ -304,6 +405,11 @@ function safeProvider(provider: Provider): Provider {
     name: provider.name,
     provider_type: provider.provider_type,
     base_url: provider.base_url,
+    test_model: provider.default_model ?? provider.test_model,
+    default_model: provider.default_model ?? provider.test_model,
+    original_name: provider.original_name,
+    duplicate_of: provider.duplicate_of,
+    is_duplicate: provider.is_duplicate,
     rpm: provider.rpm,
     rpd: provider.rpd,
     max_input_tokens: provider.max_input_tokens,
@@ -315,6 +421,7 @@ function safeProvider(provider: Provider): Provider {
 function safeConnector(connector: Connector): Connector {
   return {
     id: connector.id,
+    name: connector.name,
     entry_point_type: connector.entry_point_type,
     created_at: connector.created_at,
   };
@@ -391,31 +498,263 @@ function secretSettings(settings: Record<string, unknown>) {
     .filter(Boolean);
 }
 
+function connectorRequestSettings(
+  entryPointType: string,
+  settings: Record<string, unknown>,
+  schema: EntryPointType['settings_schema'],
+) {
+  return buildConnectorSettings(entryPointType, settings, schema);
+}
+
 function phaseLabel(entryType: EntryPointType) {
   if (entryType.coming_in !== undefined && entryType.coming_in !== null) {
     const phase = String(entryType.coming_in);
     return /^phase/i.test(phase) ? phase : `Phase ${phase}`;
   }
-  return ['DOCKER_IMAGE', 'GIT_REPO', 'CLI_COMMAND', 'PROXY_MODE'].includes(
-    entryType.type,
-  )
-    ? 'Phase 3'
-    : 'Phase 4';
+  if (
+    ['DOCKER_IMAGE', 'GIT_REPO', 'CLI_COMMAND', 'PROXY_MODE'].includes(
+      entryType.type,
+    )
+  ) {
+    return 'Phase 3';
+  }
+  if (['WEBSITE_URL', 'MCP_SERVER'].includes(entryType.type)) {
+    return 'Phase 10';
+  }
+  return 'Phase 4';
 }
 
 function formatJson(value: unknown) {
   return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
 }
 
+interface WorkspaceDraft {
+  project?: { name: string; description: string };
+  provider?: {
+    name: string;
+    type: string;
+    baseUrl: string;
+    model: string;
+    rpm: string;
+    rpd: string;
+    inputTokens: string;
+    outputTokens: string;
+  };
+  connector?: {
+    selectedType: string;
+    providerId: string;
+    settings: Record<string, unknown>;
+    name: string;
+    testInput: string;
+  };
+}
+
+function workspaceDraftKey(
+  userId: string,
+  workspaceId: string,
+  section: keyof WorkspaceDraft,
+) {
+  return `greenlit:draft:${userId}:${workspaceId}:${section}`;
+}
+
+function readWorkspaceDraft<T>(
+  userId: string | undefined,
+  workspaceId: string,
+  section: keyof WorkspaceDraft,
+): T | null {
+  if (!userId || typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(
+      workspaceDraftKey(userId, workspaceId, section),
+    );
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeWorkspaceDraft(
+  userId: string | undefined,
+  workspaceId: string,
+  section: keyof WorkspaceDraft,
+  value: unknown,
+) {
+  if (!userId || typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(
+      workspaceDraftKey(userId, workspaceId, section),
+      JSON.stringify(redactDraftValue(value)),
+    );
+  } catch {
+    // Storage can be unavailable or full; the in-memory form remains usable.
+  }
+}
+
+function redactDraftValue(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return value
+      .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+      .replace(
+        /(\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|password|secret)\s*[:=]\s*['"]?)[^,\s'";&]+/gi,
+        '$1[REDACTED]',
+      )
+      .replace(
+        /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,})\b/gi,
+        '[REDACTED]',
+      );
+  }
+  if (Array.isArray(value)) return value.map(redactDraftValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).flatMap(([key, item]) =>
+        /api[_-]?key|secret|token|password|credential/i.test(key)
+          ? []
+          : [[key, redactDraftValue(item)]],
+      ),
+    );
+  }
+  return value;
+}
+
+function clearWorkspaceDraft(
+  userId: string | undefined,
+  workspaceId: string,
+  section: keyof WorkspaceDraft,
+) {
+  if (!userId || typeof window === 'undefined') return;
+  try {
+    window.localStorage.removeItem(
+      workspaceDraftKey(userId, workspaceId, section),
+    );
+  } catch {
+    // Keep the successful server save intact if browser cleanup is unavailable.
+  }
+}
+
+function safeDraftSettings(settings: Record<string, unknown>) {
+  return Object.fromEntries(
+    Object.entries(settings).filter(
+      ([key]) =>
+        key !== 'rows' &&
+        !/api[_-]?key|secret|token|password|credential/i.test(key),
+    ),
+  );
+}
+
 function SettingsEditor({
   entryType,
   settings,
+  testInput,
   onChange,
+  onError,
 }: {
   entryType: EntryPointType;
   settings: Record<string, unknown>;
+  testInput: string;
   onChange: (nextSettings: Record<string, unknown>) => void;
+  onError: (message: string) => void;
 }) {
+  if (entryType.type === 'UPLOAD_OUTPUTS') {
+    const rows = Array.isArray(settings.rows)
+      ? (settings.rows as UploadedRow[])
+      : [];
+    const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
+    const mappings = [
+      ['input_field', 'Input column', true],
+      ['output_field', 'Output column', true],
+      ['retrieved_contexts_field', 'Retrieved context column', false],
+      ['latency_ms_field', 'Latency (ms) column', false],
+      ['tokens_in_field', 'Input tokens column', false],
+      ['tokens_out_field', 'Output tokens column', false],
+    ] as const;
+    return (
+      <div className="phase2-form-stack">
+        <label className="phase2-field">
+          <span>Upload outputs file *</span>
+          <input
+            type="file"
+            accept=".csv,.json,.jsonl,text/csv,application/json"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              onError('');
+              onChange({ ...settings, rows: [] });
+              if (!file) return;
+              void parseUploadRows(file)
+                .then((nextRows) => {
+                  const nextColumns = Object.keys(nextRows[0]);
+                  const guess = (pattern: RegExp) =>
+                    nextColumns.find((column) => pattern.test(column)) ?? '';
+                  onChange({
+                    ...settings,
+                    rows: nextRows,
+                    input_field: guess(/^input$|question|prompt/i),
+                    output_field: guess(/^output$|answer|response/i),
+                    retrieved_contexts_field: guess(/retrieved.?context/i),
+                    latency_ms_field: guess(/^latency(_ms)?$/i),
+                    tokens_in_field: guess(/^(tokens_in|input_tokens)$/i),
+                    tokens_out_field: guess(/^(tokens_out|output_tokens)$/i),
+                  });
+                  onError('');
+                })
+                .catch((error: unknown) => {
+                  onError(
+                    error instanceof Error
+                      ? error.message
+                      : 'The uploaded file could not be read.',
+                  );
+                });
+            }}
+          />
+          <small>CSV, JSON array, or JSONL; up to 10,000 rows.</small>
+        </label>
+        {!testInput.trim() && (
+          <small className="field-hint-error" role="status">
+            Enter a sample input before testing.
+          </small>
+        )}
+        {rows.length > 0 ? (
+          <>
+            <div className="phase2-form-grid">
+              {mappings.map(([key, label, required]) => (
+                <label className="phase2-field" key={key}>
+                  <span>
+                    {label}
+                    {required ? ' *' : ' (optional)'}
+                  </span>
+                  <select
+                    required={required}
+                    value={String(settings[key] ?? '')}
+                    onChange={(event) =>
+                      onChange({ ...settings, [key]: event.target.value })
+                    }
+                  >
+                    <option value="">Choose a column</option>
+                    {columns.map((column) => (
+                      <option key={column} value={column}>
+                        {column}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </div>
+            <div
+              className="phase2-test-result"
+              aria-label="Uploaded output preview"
+            >
+              <strong>Preview · first {Math.min(3, rows.length)} rows</strong>
+              <pre>{formatJson(rows.slice(0, 3))}</pre>
+            </div>
+          </>
+        ) : (
+          <p className="field-hint-error" role="status">
+            Upload a file to choose the input, output, and optional trace
+            columns.
+          </p>
+        )}
+      </div>
+    );
+  }
   const schema = getSettingsSchema(entryType);
   const fields = Object.entries(schema?.properties ?? {});
   if (fields.length === 0) {
@@ -475,7 +814,16 @@ function SettingsEditor({
               {label}
               {required ? <em aria-hidden="true"> *</em> : null}
             </span>
-            {field.enum ? (
+            {field.type === 'boolean' ? (
+              <input
+                className="phase2-checkbox"
+                type="checkbox"
+                checked={value === true}
+                onChange={(event) =>
+                  onChange({ ...settings, [key]: event.target.checked })
+                }
+              />
+            ) : field.enum ? (
               <select
                 required={required}
                 value={String(value)}
@@ -548,47 +896,108 @@ function SettingsEditor({
 export default function WorkspaceProjects({
   accessToken,
   userRole,
+  userId,
   workspace,
+  page,
+  activeProjectId,
+  onProjectOptionsChange,
+  onActiveProjectChange,
 }: WorkspaceProjectsProps) {
+  const activePage = page ?? 'all';
+  const projectDraft = readWorkspaceDraft<WorkspaceDraft['project']>(
+    userId,
+    workspace.id,
+    'project',
+  );
+  const providerDraft = readWorkspaceDraft<WorkspaceDraft['provider']>(
+    userId,
+    workspace.id,
+    'provider',
+  );
+  const connectorDraft = readWorkspaceDraft<WorkspaceDraft['connector']>(
+    userId,
+    workspace.id,
+    'connector',
+  );
   const [projects, setProjects] = useState<Project[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [entryTypes, setEntryTypes] = useState<EntryPointType[]>(fallbackTypes);
-  const [selectedProjectId, setSelectedProjectId] = useState('');
+  const [localSelectedProjectId, setLocalSelectedProjectId] = useState('');
+  const selectedProjectId = activeProjectId ?? localSelectedProjectId;
+  const setSelectedProjectId = useCallback(
+    (projectId: string) => {
+      setLocalSelectedProjectId(projectId);
+      onActiveProjectChange?.(projectId);
+    },
+    [onActiveProjectChange],
+  );
+  const [defaultProviderId, setDefaultProviderId] = useState('');
+  const [chatRetentionDays, setChatRetentionDays] = useState(30);
   const [connectors, setConnectors] = useState<Connector[]>([]);
-  const [projectName, setProjectName] = useState('');
-  const [projectDescription, setProjectDescription] = useState('');
-  const [providerName, setProviderName] = useState('');
-  const [providerType, setProviderType] = useState('github_models');
-  const [providerBaseUrl, setProviderBaseUrl] = useState('');
+  const [projectName, setProjectName] = useState(projectDraft?.name ?? '');
+  const [projectDescription, setProjectDescription] = useState(
+    projectDraft?.description ?? '',
+  );
+  const [providerName, setProviderName] = useState(providerDraft?.name ?? '');
+  const [providerType, setProviderType] = useState(
+    providerDraft?.type ?? 'github_models',
+  );
+  const [providerBaseUrl, setProviderBaseUrl] = useState(
+    providerDraft?.baseUrl ?? '',
+  );
+  const [providerTestModel, setProviderTestModel] = useState(
+    providerDraft?.model ?? '',
+  );
   const [providerApiKey, setProviderApiKey] = useState('');
-  const [providerRpm, setProviderRpm] = useState('60');
-  const [providerRpd, setProviderRpd] = useState('1000');
-  const [providerInputTokens, setProviderInputTokens] = useState('8192');
-  const [providerOutputTokens, setProviderOutputTokens] = useState('2048');
+  const [providerRpm, setProviderRpm] = useState(providerDraft?.rpm ?? '60');
+  const [providerRpd, setProviderRpd] = useState(providerDraft?.rpd ?? '1000');
+  const [providerInputTokens, setProviderInputTokens] = useState(
+    providerDraft?.inputTokens ?? '8192',
+  );
+  const [providerOutputTokens, setProviderOutputTokens] = useState(
+    providerDraft?.outputTokens ?? '2048',
+  );
+  const [providerTestToken, setProviderTestToken] = useState('');
+  const [providerTesting, setProviderTesting] = useState(false);
   const [providerTestId, setProviderTestId] = useState('');
+  const [settingDefaultProviderId, setSettingDefaultProviderId] = useState('');
   const [searchText, setSearchText] = useState('');
-  const [selectedType, setSelectedType] = useState('');
-  const [selectedProviderId, setSelectedProviderId] = useState('');
+  const [selectedType, setSelectedType] = useState(
+    connectorDraft?.selectedType ?? '',
+  );
+  const [selectedProviderId, setSelectedProviderId] = useState(
+    connectorDraft?.providerId ?? '',
+  );
   const [connectorSettings, setConnectorSettings] = useState<
     Record<string, unknown>
-  >({});
+  >(connectorDraft?.settings ?? {});
   const [connectorApiKey, setConnectorApiKey] = useState('');
-  const [testInput, setTestInput] = useState('');
+  const [connectorName, setConnectorName] = useState(
+    connectorDraft?.name ?? '',
+  );
+  const [testInput, setTestInput] = useState(connectorDraft?.testInput ?? '');
   const [testResult, setTestResult] = useState<TestCallResult | null>(null);
   const [testResultSaved, setTestResultSaved] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [overviewDatasetApproved, setOverviewDatasetApproved] = useState(false);
+  const [overviewRunCompleted, setOverviewRunCompleted] = useState(false);
   const [savingProject, setSavingProject] = useState(false);
   const [savingProvider, setSavingProvider] = useState(false);
   const [testingConnector, setTestingConnector] = useState(false);
   const [savingConnector, setSavingConnector] = useState(false);
+  const projectRequestLock = useRef(false);
+  const providerTestLock = useRef(false);
+  const providerSaveLock = useRef(false);
+  const connectorTestLock = useRef(false);
+  const connectorSaveLock = useRef(false);
 
   const enabledTypes = useMemo(
     () =>
       entryTypes.map((entryType) => ({
         ...entryType,
-        implemented: phaseTwoTypes.has(entryType.type),
+        implemented: entryType.implemented ?? phaseTwoTypes.has(entryType.type),
       })),
     [entryTypes],
   );
@@ -610,7 +1019,11 @@ export default function WorkspaceProjects({
   const requiredSettings = (currentSchema?.required ?? []).filter(
     (key) => key !== 'provider_id',
   );
-  const requiresProvider = currentSchema?.required?.includes('provider_id');
+  const requiresProvider = Boolean(
+    activeType && providerEntryTypes.has(activeType.type),
+  );
+  const selectedModel =
+    activeProvider?.default_model ?? activeProvider?.test_model ?? undefined;
   const canTest =
     Boolean(activeType) &&
     Boolean(testInput.trim()) &&
@@ -623,33 +1036,170 @@ export default function WorkspaceProjects({
     }) &&
     !testingConnector &&
     !savingConnector;
+  const canTestProvider =
+    Boolean(providerName.trim()) &&
+    (providerType === 'ollama' ||
+      (providerType === 'github_models' && Boolean(providerApiKey.trim())) ||
+      (providerType === 'custom' &&
+        Boolean(providerBaseUrl.trim()) &&
+        Boolean(providerApiKey.trim())));
+
+  useEffect(() => {
+    if (projectName.trim() || projectDescription.trim()) {
+      writeWorkspaceDraft(userId, workspace.id, 'project', {
+        name: projectName,
+        description: projectDescription,
+      });
+    } else {
+      clearWorkspaceDraft(userId, workspace.id, 'project');
+    }
+  }, [projectDescription, projectName, userId, workspace.id]);
+
+  useEffect(() => {
+    if (
+      providerName.trim() ||
+      providerBaseUrl.trim() ||
+      providerTestModel.trim()
+    ) {
+      writeWorkspaceDraft(userId, workspace.id, 'provider', {
+        name: providerName,
+        type: providerType,
+        baseUrl: providerBaseUrl,
+        model: providerTestModel,
+        rpm: providerRpm,
+        rpd: providerRpd,
+        inputTokens: providerInputTokens,
+        outputTokens: providerOutputTokens,
+      });
+    } else {
+      clearWorkspaceDraft(userId, workspace.id, 'provider');
+    }
+  }, [
+    providerBaseUrl,
+    providerInputTokens,
+    providerName,
+    providerOutputTokens,
+    providerRpd,
+    providerRpm,
+    providerTestModel,
+    providerType,
+    userId,
+    workspace.id,
+  ]);
+
+  useEffect(() => {
+    if (testResultSaved) {
+      clearWorkspaceDraft(userId, workspace.id, 'connector');
+      return;
+    }
+    writeWorkspaceDraft(userId, workspace.id, 'connector', {
+      selectedType,
+      providerId: selectedProviderId,
+      settings: safeDraftSettings(connectorSettings),
+      name: connectorName,
+      testInput,
+    });
+  }, [
+    connectorName,
+    connectorSettings,
+    selectedProviderId,
+    selectedType,
+    testInput,
+    testResultSaved,
+    userId,
+    workspace.id,
+  ]);
+
+  const saveWorkspacePreferences = useCallback(
+    async (preferences: Record<string, unknown>) => {
+      await apiRequest<WorkspacePreferences>(
+        makeWorkspacePath(workspace.id, '/preferences'),
+        {
+          method: 'PUT',
+          body: JSON.stringify(preferences),
+          signal: AbortSignal.timeout(15_000),
+        },
+        accessToken,
+      );
+    },
+    [accessToken, workspace.id],
+  );
+
+  useEffect(() => {
+    if (activePage === 'all') return;
+    void saveWorkspacePreferences({ last_page: activePage }).catch(() =>
+      setError('Could not save the last-page preference.'),
+    );
+  }, [activePage, saveWorkspacePreferences]);
 
   useEffect(() => {
     let isCurrent = true;
     const projectPath = makeWorkspacePath(workspace.id, '/projects');
     const providerPath = makeWorkspacePath(workspace.id, '/providers');
+    const preferencesPath = makeWorkspacePath(workspace.id, '/preferences');
 
     async function loadWorkspaceData() {
-      const [projectResponse, providerResponse, typeResponse] =
-        await Promise.allSettled([
-          apiRequest<Project[]>(projectPath, {}, accessToken),
-          apiRequest<Provider[]>(providerPath, {}, accessToken),
-          apiRequest<EntryPointType[]>('/entry-point-types', {}, accessToken),
-        ]);
+      const [
+        projectResponse,
+        providerResponse,
+        typeResponse,
+        preferenceResponse,
+      ] = await Promise.allSettled([
+        apiRequest<Project[]>(projectPath, {}, accessToken),
+        apiRequest<Provider[]>(providerPath, {}, accessToken),
+        apiRequest<EntryPointType[]>('/entry-point-types', {}, accessToken),
+        apiRequest<WorkspacePreferences>(preferencesPath, {}, accessToken),
+      ]);
       if (!isCurrent) return;
 
       if (projectResponse.status === 'fulfilled') {
         setProjects(projectResponse.value);
-        setSelectedProjectId(
-          (current) => current || projectResponse.value[0]?.id || '',
-        );
+        onProjectOptionsChange?.(projectResponse.value);
+        const storedProjectId =
+          preferenceResponse.status === 'fulfilled'
+            ? preferenceResponse.value.active_project_id
+            : null;
+        const initialProjectId =
+          projectResponse.value.find(
+            (project) => project.id === storedProjectId,
+          )?.id ??
+          projectResponse.value[0]?.id ??
+          '';
+        setSelectedProjectId(initialProjectId);
+        onActiveProjectChange?.(initialProjectId);
+        if (initialProjectId && !storedProjectId) {
+          void saveWorkspacePreferences({
+            active_project_id: initialProjectId,
+          }).catch(() =>
+            setError('Could not save the active project preference.'),
+          );
+        }
       } else {
         setError(
           'Projects could not be loaded. Refresh the page to try again.',
         );
       }
       if (providerResponse.status === 'fulfilled') {
-        setProviders(providerResponse.value.map(safeProvider));
+        const loadedProviders = providerResponse.value.map(safeProvider);
+        setProviders(loadedProviders);
+        const storedProviderId =
+          preferenceResponse.status === 'fulfilled'
+            ? preferenceResponse.value.default_provider_id
+            : null;
+        const initialProviderId =
+          loadedProviders.find((provider) => provider.id === storedProviderId)
+            ?.id ??
+          loadedProviders[0]?.id ??
+          '';
+        setDefaultProviderId(initialProviderId);
+        setSelectedProviderId(initialProviderId);
+        if (initialProviderId && !storedProviderId) {
+          void saveWorkspacePreferences({
+            default_provider_id: initialProviderId,
+          }).catch(() =>
+            setError('Could not save the workspace default provider.'),
+          );
+        }
       }
       if (
         typeResponse.status === 'fulfilled' &&
@@ -664,6 +1214,30 @@ export default function WorkspaceProjects({
             ...suppliedTypes.get(fallbackType.type),
           })),
         );
+        if (preferenceResponse.status === 'fulfilled') {
+          const rememberedType = preferenceResponse.value.last_entry_point;
+          const selectedEntryType = fallbackTypes
+            .map((fallbackType) => ({
+              ...fallbackType,
+              ...suppliedTypes.get(fallbackType.type),
+            }))
+            .find(
+              (entryType) =>
+                entryType.type === rememberedType && entryType.implemented,
+            );
+          if (selectedEntryType) {
+            setSelectedType(selectedEntryType.type);
+            setConnectorSettings({
+              ...initialSettings(selectedEntryType),
+              ...(preferenceResponse.value.last_column_mapping ?? {}),
+            });
+          }
+        }
+      }
+      if (preferenceResponse.status === 'fulfilled') {
+        setChatRetentionDays(
+          preferenceResponse.value.chat_retention_days ?? 30,
+        );
       }
       setLoading(false);
     }
@@ -672,7 +1246,34 @@ export default function WorkspaceProjects({
     return () => {
       isCurrent = false;
     };
-  }, [accessToken, workspace.id]);
+  }, [
+    accessToken,
+    onActiveProjectChange,
+    onProjectOptionsChange,
+    saveWorkspacePreferences,
+    setSelectedProjectId,
+    workspace.id,
+  ]);
+
+  async function makeDefaultProvider(providerId: string) {
+    if (settingDefaultProviderId) return;
+    setSettingDefaultProviderId(providerId);
+    setError('');
+    try {
+      await saveWorkspacePreferences({ default_provider_id: providerId });
+      setDefaultProviderId(providerId);
+      setSelectedProviderId(providerId);
+      setMessage('Workspace default provider saved.');
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : 'Could not save the workspace default provider.',
+      );
+    } finally {
+      setSettingDefaultProviderId('');
+    }
+  }
 
   useEffect(() => {
     if (!selectedProjectId) return;
@@ -693,15 +1294,133 @@ export default function WorkspaceProjects({
     };
   }, [accessToken, selectedProjectId, workspace.id]);
 
+  useEffect(() => {
+    if (activePage !== 'overview' || !selectedProjectId) return;
+    let isCurrent = true;
+    const projectBase = makeWorkspacePath(
+      workspace.id,
+      `/projects/${encodeURIComponent(selectedProjectId)}`,
+    );
+    void Promise.all([
+      apiRequest<Array<{ approved_items?: number }>>(
+        `${projectBase}/datasets`,
+        {},
+        accessToken,
+      ),
+      apiRequest<Array<{ status?: string }>>(
+        `${projectBase}/runs`,
+        {},
+        accessToken,
+      ),
+    ])
+      .then(([datasets, runs]) => {
+        if (!isCurrent) return;
+        setOverviewDatasetApproved(
+          datasets.some((dataset) => (dataset.approved_items ?? 0) > 0),
+        );
+        setOverviewRunCompleted(
+          runs.some((run) => run.status?.toLowerCase() === 'completed'),
+        );
+      })
+      .catch((reason: unknown) => {
+        if (!isCurrent) return;
+        setOverviewDatasetApproved(false);
+        setOverviewRunCompleted(false);
+        setError(
+          reason instanceof Error
+            ? `Overview setup status could not be loaded: ${reason.message}`
+            : 'Overview setup status could not be loaded.',
+        );
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [accessToken, activePage, selectedProjectId, workspace.id]);
+
   function updateConnectorSettings(nextSettings: Record<string, unknown>) {
     setConnectorSettings(nextSettings);
     setTestResult(null);
     setTestResultSaved(false);
     setMessage('');
+    setError('');
+    if (selectedType === 'UPLOAD_OUTPUTS') {
+      const mapping = Object.fromEntries(
+        [
+          'input_field',
+          'output_field',
+          'retrieved_contexts_field',
+          'tool_calls_field',
+          'latency_ms_field',
+          'tokens_in_field',
+          'tokens_out_field',
+        ]
+          .filter((key) => key in nextSettings)
+          .map((key) => [key, nextSettings[key]]),
+      );
+      void saveWorkspacePreferences({ last_column_mapping: mapping }).catch(
+        () => setError('Could not save the last column mapping.'),
+      );
+    }
+  }
+
+  function selectEntryPoint(nextType: string) {
+    const nextEntryType = enabledTypes.find((item) => item.type === nextType);
+    if (!nextEntryType?.implemented) return;
+    setSelectedType(nextType);
+    void saveWorkspacePreferences({ last_entry_point: nextType }).catch(() =>
+      setError('Could not save the last entry-point preference.'),
+    );
+    setSelectedProviderId(defaultProviderId);
+    setConnectorSettings(initialSettings(nextEntryType));
+    setConnectorName(nextEntryType.label);
+    setTestResult(null);
+    setTestResultSaved(false);
+    setMessage('');
+    setError('');
+  }
+
+  function handleEntryPointListKeyDown(
+    event: ReactKeyboardEvent<HTMLDivElement>,
+  ) {
+    const availableTypes = filteredTypes.filter(
+      (entryType) => entryType.implemented,
+    );
+    if (availableTypes.length === 0) return;
+
+    const currentIndex = availableTypes.findIndex(
+      (entryType) => entryType.type === selectedType,
+    );
+    let nextIndex: number | undefined;
+    if (event.key === 'ArrowDown') {
+      nextIndex = (currentIndex + 1) % availableTypes.length;
+    } else if (event.key === 'ArrowUp') {
+      nextIndex =
+        currentIndex < 0
+          ? availableTypes.length - 1
+          : (currentIndex - 1 + availableTypes.length) % availableTypes.length;
+    } else if (event.key === 'Home') {
+      nextIndex = 0;
+    } else if (event.key === 'End') {
+      nextIndex = availableTypes.length - 1;
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      const selected =
+        availableTypes.find((entryType) => entryType.type === selectedType) ??
+        availableTypes[0];
+      event.preventDefault();
+      selectEntryPoint(selected.type);
+      return;
+    }
+
+    if (nextIndex !== undefined) {
+      event.preventDefault();
+      selectEntryPoint(availableTypes[nextIndex].type);
+    }
   }
 
   async function handleCreateProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (projectRequestLock.current) return;
+    projectRequestLock.current = true;
     setError('');
     setMessage('');
     setSavingProject(true);
@@ -714,28 +1433,57 @@ export default function WorkspaceProjects({
             name: projectName.trim(),
             description: projectDescription.trim(),
           }),
+          signal: AbortSignal.timeout(20_000),
         },
         accessToken,
       );
-      setProjects((current) => [...current, createdProject]);
+      setProjects((current) =>
+        current.some((project) => project.id === createdProject.id)
+          ? current.map((project) =>
+              project.id === createdProject.id ? createdProject : project,
+            )
+          : [...current, createdProject],
+      );
       setSelectedProjectId(createdProject.id);
+      onProjectOptionsChange?.([
+        ...projects,
+        { id: createdProject.id, name: createdProject.name },
+      ]);
+      onActiveProjectChange?.(createdProject.id);
+      void saveWorkspacePreferences({
+        active_project_id: createdProject.id,
+      }).catch(() =>
+        setError(
+          'Project created, but the active-project preference could not be saved.',
+        ),
+      );
       setConnectors([]);
       setTestResult(null);
       setTestResultSaved(false);
       setProjectName('');
       setProjectDescription('');
+      clearWorkspaceDraft(userId, workspace.id, 'project');
       setMessage('Project created.');
-    } catch {
+    } catch (error: unknown) {
       setError(
-        'Project could not be created. Check the details and try again.',
+        error instanceof Error
+          ? error.message
+          : 'Project could not be created. Check the details and try again.',
       );
     } finally {
+      projectRequestLock.current = false;
       setSavingProject(false);
     }
   }
 
   async function handleCreateProvider(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (providerSaveLock.current) return;
+    if (!providerTestToken) {
+      setError('Test this provider successfully before saving it.');
+      return;
+    }
+    providerSaveLock.current = true;
     setError('');
     setMessage('');
     setSavingProvider(true);
@@ -743,11 +1491,16 @@ export default function WorkspaceProjects({
     const providerPayload: Record<string, unknown> = {
       name: providerName.trim(),
       provider_type: providerType,
-      base_url: providerBaseUrl.trim() || null,
+      base_url:
+        providerType === 'github_models'
+          ? null
+          : providerBaseUrl.trim() || null,
+      default_model: providerTestModel.trim() || null,
       rpm: Number(providerRpm),
       rpd: Number(providerRpd),
       max_input_tokens: Number(providerInputTokens),
       max_output_tokens: Number(providerOutputTokens),
+      test_token: providerTestToken,
     };
     if (secret) providerPayload.api_key = secret;
 
@@ -757,24 +1510,98 @@ export default function WorkspaceProjects({
         {
           method: 'POST',
           body: JSON.stringify(providerPayload),
+          signal: AbortSignal.timeout(20_000),
         },
         accessToken,
       );
-      setProviders((current) => [...current, safeProvider(createdProvider)]);
+      setProviders((current) =>
+        current.some((provider) => provider.id === createdProvider.id)
+          ? current.map((provider) =>
+              provider.id === createdProvider.id
+                ? safeProvider(createdProvider)
+                : provider,
+            )
+          : [...current, safeProvider(createdProvider)],
+      );
       setSelectedProviderId(createdProvider.id);
+      if (!defaultProviderId) {
+        setDefaultProviderId(createdProvider.id);
+        void saveWorkspacePreferences({
+          default_provider_id: createdProvider.id,
+        }).catch(() =>
+          setError(
+            'Provider saved, but the default preference could not be saved.',
+          ),
+        );
+      }
       setTestResult(null);
       setTestResultSaved(false);
       setProviderName('');
       setProviderBaseUrl('');
+      setProviderTestModel('');
+      setProviderTestToken('');
       setProviderApiKey('');
+      clearWorkspaceDraft(userId, workspace.id, 'provider');
       setMessage('Provider saved. Test its connection before using it.');
-    } catch {
-      setProviderApiKey('');
+    } catch (error: unknown) {
       setError(
-        'Provider could not be saved. Check the configuration and retry.',
+        error instanceof Error
+          ? error.message
+          : 'Provider could not be saved. Check the configuration and retry.',
       );
     } finally {
+      providerSaveLock.current = false;
       setSavingProvider(false);
+    }
+  }
+
+  async function handleTestProviderForm() {
+    if (providerTestLock.current || providerTesting || !canTestProvider) return;
+    providerTestLock.current = true;
+    setError('');
+    setMessage('');
+    setProviderTestToken('');
+    setProviderTesting(true);
+    const payload: Record<string, unknown> = {
+      name: providerName.trim(),
+      provider_type: providerType,
+      base_url:
+        providerType === 'github_models'
+          ? null
+          : providerBaseUrl.trim() || null,
+      default_model: providerTestModel.trim() || null,
+      rpm: Number(providerRpm),
+      rpd: Number(providerRpd),
+      max_input_tokens: Number(providerInputTokens),
+      max_output_tokens: Number(providerOutputTokens),
+    };
+    if (providerApiKey) payload.api_key = providerApiKey;
+    try {
+      const result = await apiRequest<{
+        test_token: string;
+        test_model?: string;
+      }>(
+        makeWorkspacePath(workspace.id, '/providers/test-connection'),
+        {
+          method: 'POST',
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(130_000),
+        },
+        accessToken,
+      );
+      setProviderTestToken(result.test_token);
+      setMessage(
+        result.test_model
+          ? `Provider test succeeded with ${result.test_model}. Save to add it.`
+          : 'Provider test succeeded. Save to add it.',
+      );
+    } catch (error: unknown) {
+      setError(
+        error instanceof Error ? error.message : 'Provider connection failed.',
+      );
+    } finally {
+      providerTestLock.current = false;
+      setProviderTesting(false);
     }
   }
 
@@ -783,18 +1610,29 @@ export default function WorkspaceProjects({
     setMessage('');
     setProviderTestId(providerId);
     try {
-      await apiRequest(
+      const result = await apiRequest<{
+        test_model?: string;
+        output?: string;
+      }>(
         makeWorkspacePath(
           workspace.id,
           `/providers/${encodeURIComponent(providerId)}/test-connection`,
         ),
-        { method: 'POST', body: JSON.stringify({}) },
+        {
+          method: 'POST',
+          body: JSON.stringify({}),
+          signal: AbortSignal.timeout(130_000),
+        },
         accessToken,
       );
-      setMessage('Provider connection successful.');
-    } catch {
+      setMessage(
+        result.test_model
+          ? `Provider connection successful with ${result.test_model}.`
+          : 'Provider connection successful.',
+      );
+    } catch (error: unknown) {
       setError(
-        'Provider connection failed. Verify the provider configuration.',
+        error instanceof Error ? error.message : 'Provider connection failed.',
       );
     } finally {
       setProviderTestId('');
@@ -803,10 +1641,42 @@ export default function WorkspaceProjects({
 
   async function handleTestConnector(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!activeType || !canTest) return;
+    if (connectorTestLock.current || !activeType || !canTest) return;
+    if (!selectedProjectId) {
+      setError('Select a project before testing a connector.');
+      return;
+    }
+    if (activeType.type === 'UPLOAD_OUTPUTS') {
+      const rows = connectorSettings.rows;
+      if (!Array.isArray(rows) || rows.length === 0) {
+        setError('Upload a .csv, .json, or .jsonl file before testing.');
+        return;
+      }
+      if (
+        !connectorSettings.input_field ||
+        !connectorSettings.output_field ||
+        !Object.keys(rows[0] as UploadedRow).includes(
+          String(connectorSettings.input_field),
+        ) ||
+        !Object.keys(rows[0] as UploadedRow).includes(
+          String(connectorSettings.output_field),
+        )
+      ) {
+        setError(
+          'Choose valid input and output columns from the uploaded file.',
+        );
+        return;
+      }
+    }
+    if (!testInput.trim()) {
+      setError('Enter a sample input before testing.');
+      return;
+    }
+    connectorTestLock.current = true;
     setError('');
     setMessage('');
     setTestingConnector(true);
+    setTestResult(null);
     setTestResultSaved(false);
     const secretValues = [
       connectorApiKey,
@@ -814,9 +1684,11 @@ export default function WorkspaceProjects({
     ].filter(Boolean);
     const credentials: Record<string, string> = {};
     if (connectorApiKey) credentials.api_key = connectorApiKey;
-    const settings = selectedProviderId
-      ? { ...connectorSettings, provider_id: selectedProviderId }
-      : connectorSettings;
+    const settings = connectorRequestSettings(
+      activeType.type,
+      connectorSettings,
+      currentSchema,
+    );
     try {
       const result = await apiRequest<TestCallResult>(
         makeWorkspacePath(workspace.id, '/connectors/test-call'),
@@ -825,35 +1697,51 @@ export default function WorkspaceProjects({
           body: JSON.stringify({
             entry_point_type: activeType.type,
             settings,
+            provider_id: selectedProviderId || undefined,
+            model: selectedModel,
             credentials,
             input: testInput,
           }),
+          signal: AbortSignal.timeout(150_000),
         },
         accessToken,
       );
       setTestResult(scrubSecrets(result, secretValues) as TestCallResult);
       setTestResultSaved(false);
       setMessage('Test call succeeded. You can now save this connector.');
-    } catch {
+    } catch (error: unknown) {
       setTestResult(null);
-      setConnectorApiKey('');
-      setError('Test call failed. Review the settings and try again.');
+      setError(
+        error instanceof Error
+          ? error.message
+          : 'Test call failed. Review the settings and try again.',
+      );
     } finally {
+      connectorTestLock.current = false;
       setTestingConnector(false);
     }
   }
 
   async function handleSaveConnector() {
-    if (!activeType || !selectedProjectId || !testResult) return;
+    if (
+      connectorSaveLock.current ||
+      !activeType ||
+      !selectedProjectId ||
+      !testResult
+    )
+      return;
+    connectorSaveLock.current = true;
     setError('');
     setMessage('');
     setSavingConnector(true);
     const secret = connectorApiKey;
     const credentials: Record<string, string> = {};
     if (secret) credentials.api_key = secret;
-    const settings = selectedProviderId
-      ? { ...connectorSettings, provider_id: selectedProviderId }
-      : connectorSettings;
+    const settings = connectorRequestSettings(
+      activeType.type,
+      connectorSettings,
+      currentSchema,
+    );
     try {
       const createdConnector = await apiRequest<Connector>(
         makeWorkspacePath(
@@ -865,15 +1753,28 @@ export default function WorkspaceProjects({
           body: JSON.stringify({
             entry_point_type: activeType.type,
             settings,
+            provider_id: selectedProviderId || undefined,
+            model: selectedModel,
             credentials,
             test_call_id: testResult.test_call_id,
+            name: connectorName.trim() || activeType.label,
           }),
+          signal: AbortSignal.timeout(20_000),
         },
         accessToken,
       );
-      setConnectors((current) => [...current, safeConnector(createdConnector)]);
+      setConnectors((current) =>
+        current.some((connector) => connector.id === createdConnector.id)
+          ? current.map((connector) =>
+              connector.id === createdConnector.id
+                ? safeConnector(createdConnector)
+                : connector,
+            )
+          : [...current, safeConnector(createdConnector)],
+      );
       setTestResultSaved(true);
       setConnectorApiKey('');
+      clearWorkspaceDraft(userId, workspace.id, 'connector');
       setConnectorSettings((current) =>
         Object.fromEntries(
           Object.entries(current).filter(
@@ -883,18 +1784,213 @@ export default function WorkspaceProjects({
         ),
       );
       setMessage('Connector saved.');
-    } catch {
-      setConnectorApiKey('');
-      setTestResult(null);
-      setTestResultSaved(false);
-      setError('Connector could not be saved. Run a new test and try again.');
+    } catch (error: unknown) {
+      setError(
+        error instanceof Error
+          ? error.message
+          : 'Connector could not be saved. Run a new test and try again.',
+      );
     } finally {
+      connectorSaveLock.current = false;
       setSavingConnector(false);
+    }
+  }
+
+  async function handleRenameProject(project: Project) {
+    const name = window.prompt('Rename project', project.name)?.trim();
+    if (!name || name === project.name) return;
+    setError('');
+    try {
+      const updated = await apiRequest<Project>(
+        makeWorkspacePath(
+          workspace.id,
+          `/projects/${encodeURIComponent(project.id)}`,
+        ),
+        {
+          method: 'PATCH',
+          body: JSON.stringify({
+            name,
+            description: project.description ?? '',
+          }),
+        },
+        accessToken,
+      );
+      setProjects((current) =>
+        current.map((item) => (item.id === updated.id ? updated : item)),
+      );
+      onProjectOptionsChange?.(
+        projects.map((item) =>
+          item.id === updated.id
+            ? { id: updated.id, name: updated.name }
+            : { id: item.id, name: item.name },
+        ),
+      );
+      setMessage('Project renamed.');
+    } catch (error: unknown) {
+      setError(
+        error instanceof Error ? error.message : 'Project rename failed.',
+      );
+    }
+  }
+
+  async function handleDeleteProject(project: Project) {
+    if (
+      !window.confirm(
+        `Permanently delete "${project.name}" and its app versions, connectors, datasets, and evaluation runs? This cannot be undone.`,
+      )
+    )
+      return;
+    setError('');
+    try {
+      await apiRequest(
+        makeWorkspacePath(
+          workspace.id,
+          `/projects/${encodeURIComponent(project.id)}`,
+        ),
+        { method: 'DELETE' },
+        accessToken,
+      );
+      const remaining = projects.filter((item) => item.id !== project.id);
+      setProjects(remaining);
+      onProjectOptionsChange?.(remaining);
+      if (selectedProjectId === project.id) {
+        const nextProjectId = remaining[0]?.id ?? '';
+        setSelectedProjectId(nextProjectId);
+        onActiveProjectChange?.(nextProjectId);
+        setConnectors([]);
+        setTestResult(null);
+        setTestResultSaved(false);
+      }
+      setMessage('Project deleted.');
+    } catch (error: unknown) {
+      setError(
+        error instanceof Error ? error.message : 'Project deletion failed.',
+      );
+    }
+  }
+
+  async function handleRenameProvider(provider: Provider) {
+    const name = window.prompt('Rename provider', provider.name)?.trim();
+    if (!name || name === provider.name) return;
+    setError('');
+    try {
+      const updated = await apiRequest<Provider>(
+        makeWorkspacePath(
+          workspace.id,
+          `/providers/${encodeURIComponent(provider.id)}`,
+        ),
+        { method: 'PATCH', body: JSON.stringify({ name }) },
+        accessToken,
+      );
+      setProviders((current) =>
+        current.map((item) =>
+          item.id === updated.id ? safeProvider(updated) : item,
+        ),
+      );
+      setMessage('Provider renamed.');
+    } catch (error: unknown) {
+      setError(
+        error instanceof Error ? error.message : 'Provider rename failed.',
+      );
+    }
+  }
+
+  async function handleDeleteProvider(provider: Provider) {
+    if (!window.confirm(`Delete provider "${provider.name}"?`)) return;
+    setError('');
+    try {
+      await apiRequest(
+        makeWorkspacePath(
+          workspace.id,
+          `/providers/${encodeURIComponent(provider.id)}`,
+        ),
+        { method: 'DELETE' },
+        accessToken,
+      );
+      setProviders((current) =>
+        current.filter((item) => item.id !== provider.id),
+      );
+      if (selectedProviderId === provider.id) {
+        setSelectedProviderId('');
+        setConnectorSettings((current) => {
+          const next = { ...current };
+          delete next.provider_id;
+          return next;
+        });
+        setTestResult(null);
+        setTestResultSaved(false);
+      }
+      setMessage('Provider deleted.');
+    } catch (error: unknown) {
+      setError(
+        error instanceof Error ? error.message : 'Provider deletion failed.',
+      );
+    }
+  }
+
+  async function handleRenameConnector(connector: Connector) {
+    if (!connector.id || !selectedProjectId) return;
+    const name = window
+      .prompt(
+        'Rename connector',
+        connector.name ?? connector.entry_point_type ?? '',
+      )
+      ?.trim();
+    if (!name || name === connector.name) return;
+    setError('');
+    try {
+      const updated = await apiRequest<Connector>(
+        makeWorkspacePath(
+          workspace.id,
+          `/projects/${encodeURIComponent(selectedProjectId)}/connectors/${encodeURIComponent(connector.id)}`,
+        ),
+        { method: 'PATCH', body: JSON.stringify({ name }) },
+        accessToken,
+      );
+      setConnectors((current) =>
+        current.map((item) => (item.id === updated.id ? updated : item)),
+      );
+      setMessage('Connector renamed.');
+    } catch (error: unknown) {
+      setError(
+        error instanceof Error ? error.message : 'Connector rename failed.',
+      );
+    }
+  }
+
+  async function handleDeleteConnector(connector: Connector) {
+    if (
+      !connector.id ||
+      !selectedProjectId ||
+      !window.confirm(
+        `Delete saved connector "${connector.name ?? connector.entry_point_type}"?`,
+      )
+    )
+      return;
+    setError('');
+    try {
+      await apiRequest(
+        makeWorkspacePath(
+          workspace.id,
+          `/projects/${encodeURIComponent(selectedProjectId)}/connectors/${encodeURIComponent(connector.id)}`,
+        ),
+        { method: 'DELETE' },
+        accessToken,
+      );
+      setConnectors((current) =>
+        current.filter((item) => item.id !== connector.id),
+      );
+      setMessage('Connector deleted.');
+    } catch (error: unknown) {
+      setError(
+        error instanceof Error ? error.message : 'Connector deletion failed.',
+      );
     }
   }
 
   const secretInputId = 'connector-api-key';
   const providerRequiresKey = providerType !== 'ollama';
+  const canManage = ['owner', 'admin'].includes(userRole.toLowerCase());
 
   return (
     <section
@@ -903,14 +1999,49 @@ export default function WorkspaceProjects({
     >
       <div className="phase2-heading">
         <div>
-          <p className="eyebrow">PHASE 2 · PROJECT SETUP</p>
-          <h2>{workspace.name} projects</h2>
+          <p className="eyebrow">
+            {activePage === 'overview' && 'WORKSPACE OVERVIEW'}
+            {activePage === 'providers' && 'LLM PROVIDERS'}
+            {activePage === 'projects' && 'PROJECTS'}
+            {activePage === 'connector' && 'PROJECT CONNECTOR'}
+            {activePage === 'dataset' && 'DATASET STUDIO'}
+            {activePage === 'evaluation' && 'EVALUATION RUNS'}
+            {activePage === 'results' && 'RESULTS / REPORTS'}
+            {activePage === 'test-chat' && 'TEST CHAT'}
+            {activePage === 'settings' && 'SETTINGS'}
+          </p>
+          <h2>
+            {activePage === 'overview' && 'Workspace overview'}
+            {activePage === 'providers' && 'LLM provider setup'}
+            {activePage === 'projects' && `${workspace.name} projects`}
+            {activePage === 'connector' && 'Connect and test your app'}
+            {activePage === 'dataset' && 'Build and review your dataset'}
+            {activePage === 'evaluation' && 'Run and monitor evaluations'}
+            {activePage === 'results' && 'Results and reports'}
+            {activePage === 'test-chat' && 'Test your app'}
+            {activePage === 'settings' && 'Workspace settings'}
+          </h2>
           <p className="muted-text">
-            Configure an LLM provider, choose an app entry point, and verify it
-            with a test call before saving.
+            {activePage === 'overview' &&
+              'See the current setup status and next tasks.'}
+            {activePage === 'providers' &&
+              'Manage the models that power your evaluations.'}
+            {activePage === 'projects' &&
+              'Create and manage the projects in this workspace.'}
+            {activePage === 'connector' &&
+              'Choose a connector and validate the request format.'}
+            {activePage === 'dataset' &&
+              'Upload or generate curated examples before running a judge.'}
+            {activePage === 'evaluation' &&
+              'Launch runs and track quality across the golden dataset.'}
+            {activePage === 'results' &&
+              'Review verdicts, metrics, and exportable reports.'}
+            {activePage === 'test-chat' &&
+              'Send sample prompts to confirm the app behaves as expected.'}
+            {activePage === 'settings' &&
+              'Adjust workspace preferences and retention settings.'}
           </p>
         </div>
-        <span className="phase2-workspace-tag">{workspace.slug}</span>
       </div>
 
       {(error || message) && (
@@ -922,8 +2053,101 @@ export default function WorkspaceProjects({
         </div>
       )}
 
+      {activePage === 'overview' && (
+        <section
+          className="dashboard-card phase2-card setup-checklist"
+          aria-label="Workspace setup checklist"
+        >
+          <div className="phase2-section-heading">
+            <div>
+              <p className="eyebrow">GETTING STARTED</p>
+              <h3>Setup checklist</h3>
+            </div>
+            {!selectedProjectId && (
+              <span className="muted-text">Choose or create a project</span>
+            )}
+          </div>
+          <ul>
+            {[
+              {
+                label: 'Provider saved',
+                done: providers.length > 0,
+                to: '/workspace/providers',
+              },
+              {
+                label: 'Project created',
+                done: projects.length > 0,
+                to: '/workspace/projects',
+              },
+              {
+                label: 'Connector tested and saved',
+                done: connectors.length > 0,
+                to: '/workspace/connector',
+              },
+              {
+                label: 'Dataset approved',
+                done: overviewDatasetApproved,
+                to: '/workspace/dataset',
+              },
+              {
+                label: 'Evaluation run completed',
+                done: overviewRunCompleted,
+                to: '/workspace/evaluation',
+              },
+            ].map((item) => (
+              <li key={item.label}>
+                <span aria-label={item.done ? 'Complete' : 'Incomplete'}>
+                  {item.done ? '✓' : '○'}
+                </span>
+                <Link to={item.to}>{item.label}</Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {activePage === 'settings' && (
+        <section
+          className="dashboard-card phase2-card workspace-settings"
+          aria-label="Workspace settings"
+        >
+          <div className="phase2-section-heading">
+            <div>
+              <p className="eyebrow">PRIVACY</p>
+              <h3>Chat history retention</h3>
+            </div>
+          </div>
+          <label className="phase2-field">
+            <span>Delete chat history older than</span>
+            <select
+              value={chatRetentionDays}
+              onChange={(event) => {
+                const days = Number(event.target.value);
+                setChatRetentionDays(days);
+                void saveWorkspacePreferences({
+                  chat_retention_days: days,
+                }).catch(() => setError('Chat retention could not be saved.'));
+              }}
+            >
+              {[7, 30, 90, 365].map((days) => (
+                <option value={days} key={days}>
+                  {days} days
+                </option>
+              ))}
+            </select>
+            <small>
+              Expired conversations are removed from your account when chat
+              history is opened. Each conversation is private to its owner.
+            </small>
+          </label>
+        </section>
+      )}
+
       <div className="phase2-top-grid">
-        <section className="dashboard-card phase2-card">
+        <section
+          className="dashboard-card phase2-card"
+          hidden={activePage !== 'all' && activePage !== 'projects'}
+        >
           <div className="phase2-section-heading">
             <div>
               <p className="eyebrow">PROJECTS</p>
@@ -937,7 +2161,10 @@ export default function WorkspaceProjects({
               <input
                 required
                 value={projectName}
-                onChange={(event) => setProjectName(event.target.value)}
+                onChange={(event) => {
+                  setProjectName(event.target.value);
+                  setError('');
+                }}
                 placeholder="Customer support assistant"
               />
             </label>
@@ -948,7 +2175,10 @@ export default function WorkspaceProjects({
               <textarea
                 rows={2}
                 value={projectDescription}
-                onChange={(event) => setProjectDescription(event.target.value)}
+                onChange={(event) => {
+                  setProjectDescription(event.target.value);
+                  setError('');
+                }}
                 placeholder="What are you evaluating?"
               />
             </label>
@@ -967,31 +2197,65 @@ export default function WorkspaceProjects({
               <p className="muted-text">Your projects will appear here.</p>
             ) : (
               projects.map((project) => (
-                <button
-                  className={`phase2-project-option ${
-                    selectedProjectId === project.id ? 'selected' : ''
-                  }`}
-                  key={project.id}
-                  onClick={() => {
-                    setSelectedProjectId(project.id);
-                    setConnectors([]);
-                    setTestResult(null);
-                    setTestResultSaved(false);
-                  }}
-                  type="button"
-                >
-                  <span>
-                    <strong>{project.name}</strong>
-                    <small>{project.description || 'No description'}</small>
-                  </span>
-                  <span aria-hidden="true">›</span>
-                </button>
+                <div className="phase2-project-entry" key={project.id}>
+                  <button
+                    className={`phase2-project-option ${
+                      selectedProjectId === project.id ? 'selected' : ''
+                    }`}
+                    onClick={() => {
+                      setSelectedProjectId(project.id);
+                      void saveWorkspacePreferences({
+                        active_project_id: project.id,
+                      }).catch(() =>
+                        setError(
+                          'Could not save the active project preference.',
+                        ),
+                      );
+                      setConnectors([]);
+                      setTestResult(null);
+                      setTestResultSaved(false);
+                      setError('');
+                    }}
+                    type="button"
+                  >
+                    <span>
+                      <strong>{project.name}</strong>
+                      <small>
+                        {project.is_duplicate
+                          ? `Duplicate flagged; original name: ${project.original_name}`
+                          : project.description || 'No description'}
+                      </small>
+                    </span>
+                    <span aria-hidden="true">›</span>
+                  </button>
+                  {canManage && (
+                    <div className="phase2-row-actions">
+                      <button
+                        className="secondary-button phase2-small-button"
+                        type="button"
+                        onClick={() => void handleRenameProject(project)}
+                      >
+                        Rename
+                      </button>
+                      <button
+                        className="secondary-button phase2-small-button"
+                        type="button"
+                        onClick={() => void handleDeleteProject(project)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  )}
+                </div>
               ))
             )}
           </div>
         </section>
 
-        <section className="dashboard-card phase2-card">
+        <section
+          className="dashboard-card phase2-card"
+          hidden={activePage !== 'all' && activePage !== 'providers'}
+        >
           <div className="phase2-section-heading">
             <div>
               <p className="eyebrow">LLM PROVIDERS</p>
@@ -1005,7 +2269,11 @@ export default function WorkspaceProjects({
               <input
                 required
                 value={providerName}
-                onChange={(event) => setProviderName(event.target.value)}
+                onChange={(event) => {
+                  setProviderName(event.target.value);
+                  setProviderTestToken('');
+                  setError('');
+                }}
                 placeholder="Team GitHub Models"
               />
             </label>
@@ -1013,7 +2281,20 @@ export default function WorkspaceProjects({
               <span>Provider *</span>
               <select
                 value={providerType}
-                onChange={(event) => setProviderType(event.target.value)}
+                onChange={(event) => {
+                  const type = event.target.value;
+                  setProviderType(type);
+                  setProviderTestModel(type === 'ollama' ? 'hermes3:8b' : '');
+                  setProviderTestToken('');
+                  setError('');
+                  if (type === 'github_models') setProviderBaseUrl('');
+                  if (type === 'ollama') {
+                    setProviderBaseUrl(
+                      (current) =>
+                        current || 'http://host.docker.internal:11434/v1',
+                    );
+                  }
+                }}
               >
                 <option value="github_models">GitHub Models</option>
                 <option value="ollama">Ollama</option>
@@ -1027,15 +2308,38 @@ export default function WorkspaceProjects({
                   required
                   type="url"
                   value={providerBaseUrl}
-                  onChange={(event) => setProviderBaseUrl(event.target.value)}
+                  onChange={(event) => {
+                    setProviderBaseUrl(event.target.value);
+                    setProviderTestToken('');
+                    setError('');
+                  }}
                   placeholder={
                     providerType === 'ollama'
-                      ? 'http://localhost:11434'
+                      ? 'http://host.docker.internal:11434/v1'
                       : 'https://api.example.com/v1'
                   }
                 />
               </label>
             )}
+            <label className="phase2-field">
+              <span>Default model</span>
+              <input
+                value={providerTestModel}
+                onChange={(event) => {
+                  setProviderTestModel(event.target.value);
+                  setProviderTestToken('');
+                  setError('');
+                }}
+                placeholder={
+                  providerType === 'ollama'
+                    ? 'hermes3:8b'
+                    : 'Optional; otherwise select a model per project'
+                }
+              />
+              <small>
+                Used for connection tests, generation, and default judging.
+              </small>
+            </label>
             {providerRequiresKey && (
               <label className="phase2-field">
                 <span>API key {providerRequiresKey ? '*' : '(optional)'}</span>
@@ -1044,7 +2348,11 @@ export default function WorkspaceProjects({
                   autoComplete="new-password"
                   required={providerRequiresKey}
                   value={providerApiKey}
-                  onChange={(event) => setProviderApiKey(event.target.value)}
+                  onChange={(event) => {
+                    setProviderApiKey(event.target.value);
+                    setProviderTestToken('');
+                    setError('');
+                  }}
                   placeholder="Stored securely; never shown again"
                 />
               </label>
@@ -1057,7 +2365,11 @@ export default function WorkspaceProjects({
                   min="1"
                   required
                   value={providerRpm}
-                  onChange={(event) => setProviderRpm(event.target.value)}
+                  onChange={(event) => {
+                    setProviderRpm(event.target.value);
+                    setProviderTestToken('');
+                    setError('');
+                  }}
                 />
               </label>
               <label className="phase2-field">
@@ -1067,7 +2379,11 @@ export default function WorkspaceProjects({
                   min="1"
                   required
                   value={providerRpd}
-                  onChange={(event) => setProviderRpd(event.target.value)}
+                  onChange={(event) => {
+                    setProviderRpd(event.target.value);
+                    setProviderTestToken('');
+                    setError('');
+                  }}
                 />
               </label>
               <label className="phase2-field">
@@ -1077,9 +2393,11 @@ export default function WorkspaceProjects({
                   min="1"
                   required
                   value={providerInputTokens}
-                  onChange={(event) =>
-                    setProviderInputTokens(event.target.value)
-                  }
+                  onChange={(event) => {
+                    setProviderInputTokens(event.target.value);
+                    setProviderTestToken('');
+                    setError('');
+                  }}
                 />
               </label>
               <label className="phase2-field">
@@ -1089,19 +2407,36 @@ export default function WorkspaceProjects({
                   min="1"
                   required
                   value={providerOutputTokens}
-                  onChange={(event) =>
-                    setProviderOutputTokens(event.target.value)
-                  }
+                  onChange={(event) => {
+                    setProviderOutputTokens(event.target.value);
+                    setProviderTestToken('');
+                    setError('');
+                  }}
                 />
               </label>
             </div>
-            <button
-              className="secondary-button"
-              type="submit"
-              disabled={savingProvider || !providerName.trim()}
-            >
-              {savingProvider ? 'Saving provider…' : 'Save provider'}
-            </button>
+            <div className="phase2-save-row">
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={providerTesting || savingProvider || !canTestProvider}
+                onClick={() => void handleTestProviderForm()}
+              >
+                {providerTesting ? 'Testing provider…' : 'Test connection'}
+              </button>
+              <button
+                className="primary-button"
+                type="submit"
+                disabled={
+                  savingProvider ||
+                  providerTesting ||
+                  !providerName.trim() ||
+                  !providerTestToken
+                }
+              >
+                {savingProvider ? 'Saving provider…' : 'Save provider'}
+              </button>
+            </div>
           </form>
           <div className="phase2-provider-list" aria-label="Saved providers">
             {providers.map((provider) => (
@@ -1109,27 +2444,69 @@ export default function WorkspaceProjects({
                 <div>
                   <strong>{provider.name}</strong>
                   <small>
-                    {provider.provider_type} ·{' '}
-                    {provider.has_api_key ? 'API key configured' : 'No API key'}
+                    {provider.is_duplicate
+                      ? `Duplicate flagged; original name: ${provider.original_name}`
+                      : provider.provider_type}{' '}
+                    ·{' '}
+                    {provider.has_api_key
+                      ? 'Credentials stored securely'
+                      : 'No API key'}
                   </small>
                 </div>
-                <button
-                  className="secondary-button phase2-small-button"
-                  type="button"
-                  disabled={providerTestId === provider.id}
-                  onClick={() => void handleTestProvider(provider.id)}
-                >
-                  {providerTestId === provider.id
-                    ? 'Testing…'
-                    : 'Test connection'}
-                </button>
+                <div className="phase2-row-actions">
+                  {defaultProviderId === provider.id ? (
+                    <span className="phase2-step-tag">Workspace default</span>
+                  ) : (
+                    <button
+                      className="secondary-button phase2-small-button"
+                      type="button"
+                      disabled={settingDefaultProviderId === provider.id}
+                      onClick={() => void makeDefaultProvider(provider.id)}
+                    >
+                      {settingDefaultProviderId === provider.id
+                        ? 'Saving…'
+                        : 'Set as default'}
+                    </button>
+                  )}
+                  <button
+                    className="secondary-button phase2-small-button"
+                    type="button"
+                    disabled={providerTestId === provider.id}
+                    onClick={() => void handleTestProvider(provider.id)}
+                  >
+                    {providerTestId === provider.id
+                      ? 'Testing…'
+                      : 'Test connection'}
+                  </button>
+                  {canManage && (
+                    <>
+                      <button
+                        className="secondary-button phase2-small-button"
+                        type="button"
+                        onClick={() => void handleRenameProvider(provider)}
+                      >
+                        Rename
+                      </button>
+                      <button
+                        className="secondary-button phase2-small-button"
+                        type="button"
+                        onClick={() => void handleDeleteProvider(provider)}
+                      >
+                        Delete
+                      </button>
+                    </>
+                  )}
+                </div>
               </article>
             ))}
           </div>
         </section>
       </div>
 
-      <section className="dashboard-card phase2-card connector-wizard">
+      <section
+        className="dashboard-card phase2-card connector-wizard"
+        hidden={activePage !== 'all' && activePage !== 'connector'}
+      >
         <div className="phase2-section-heading">
           <div>
             <p className="eyebrow">PROJECT CONNECTOR</p>
@@ -1138,8 +2515,9 @@ export default function WorkspaceProjects({
           <span className="phase2-step-tag">TEST REQUIRED TO SAVE</span>
         </div>
         {!selectedProjectId ? (
-          <p className="muted-text">
-            Create a project or select one above to configure its connector.
+          <p className="field-hint-error" role="alert">
+            No project selected. Create a project or select one above before
+            configuring a connector.
           </p>
         ) : (
           <>
@@ -1156,38 +2534,58 @@ export default function WorkspaceProjects({
                     aria-label="Search entry-point types"
                   />
                 </label>
-                <label className="phase2-field">
-                  <span>Entry-point type</span>
-                  <select
-                    size={Math.min(filteredTypes.length || 1, 8)}
-                    value={selectedType}
-                    onChange={(event) => {
-                      const nextType = event.target.value;
-                      setSelectedType(nextType);
-                      setConnectorSettings(
-                        initialSettings(
-                          enabledTypes.find((item) => item.type === nextType),
-                        ),
-                      );
-                      setTestResult(null);
-                      setTestResultSaved(false);
-                    }}
-                    aria-label="Select entry-point type"
+                <div className="phase2-field">
+                  <span id="phase2-entry-point-label">Entry-point type</span>
+                  <div
+                    className="phase2-entry-type-list"
+                    role="listbox"
+                    tabIndex={0}
+                    aria-labelledby="phase2-entry-point-label"
+                    aria-activedescendant={
+                      filteredTypes.some(
+                        (entryType) => entryType.type === selectedType,
+                      )
+                        ? `phase2-entry-point-${selectedType}`
+                        : undefined
+                    }
+                    onKeyDown={handleEntryPointListKeyDown}
                   >
                     {filteredTypes.map((entryType) => (
-                      <option
+                      <button
+                        className={`phase2-entry-type-option${
+                          selectedType === entryType.type ? ' selected' : ''
+                        }${entryType.implemented ? '' : ' unavailable'}`}
+                        id={`phase2-entry-point-${entryType.type}`}
                         key={entryType.type}
-                        value={entryType.type}
+                        type="button"
+                        role="option"
+                        tabIndex={-1}
+                        aria-selected={selectedType === entryType.type}
                         disabled={!entryType.implemented}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => selectEntryPoint(entryType.type)}
                       >
-                        {entryType.label}{' '}
-                        {!entryType.implemented
-                          ? `— ${phaseLabel(entryType)}`
-                          : '— Phase 2'}
-                      </option>
+                        <span className="phase2-entry-type-copy">
+                          <strong>{entryType.label}</strong>
+                          <small>{entryType.description}</small>
+                          <small>
+                            Access: {entryType.access_level ?? 'not specified'}
+                          </small>
+                        </span>
+                        <span className="phase2-entry-type-status">
+                          {entryType.implemented
+                            ? 'Available · Phase 2'
+                            : `${phaseLabel(entryType)} · ${disabledReason(entryType)}`}
+                        </span>
+                      </button>
                     ))}
-                  </select>
-                </label>
+                    {filteredTypes.length === 0 && (
+                      <p className="phase2-entry-type-empty">
+                        No entry-point types match your search.
+                      </p>
+                    )}
+                  </div>
+                </div>
                 {activeType && (
                   <div className="phase2-type-description">
                     <strong>{activeType.label}</strong>
@@ -1206,8 +2604,21 @@ export default function WorkspaceProjects({
                     <SettingsEditor
                       entryType={activeType}
                       settings={connectorSettings}
+                      testInput={testInput}
                       onChange={updateConnectorSettings}
+                      onError={setError}
                     />
+                    <label className="phase2-field">
+                      <span>Connector name</span>
+                      <input
+                        value={connectorName}
+                        onChange={(event) => {
+                          setConnectorName(event.target.value);
+                          setError('');
+                        }}
+                        placeholder={activeType.label}
+                      />
+                    </label>
                     <label className="phase2-field" htmlFor={secretInputId}>
                       <span>Connector API key (optional)</span>
                       <input
@@ -1219,6 +2630,7 @@ export default function WorkspaceProjects({
                           setConnectorApiKey(event.target.value);
                           setTestResult(null);
                           setTestResultSaved(false);
+                          setError('');
                         }}
                         placeholder="Used for the test and cleared after save"
                       />
@@ -1237,9 +2649,10 @@ export default function WorkspaceProjects({
                             setSelectedProviderId(event.target.value);
                             setTestResult(null);
                             setTestResultSaved(false);
+                            setError('');
                           }}
                         >
-                          <option value="">No provider selected</option>
+                          <option value="">None (not required)</option>
                           {providers.map((provider) => (
                             <option key={provider.id} value={provider.id}>
                               {provider.name} ({provider.provider_type})
@@ -1258,13 +2671,13 @@ export default function WorkspaceProjects({
                   <label className="phase2-field">
                     <span>Sample input</span>
                     <textarea
-                      required
                       rows={5}
                       value={testInput}
                       onChange={(event) => {
                         setTestInput(event.target.value);
                         setTestResult(null);
                         setTestResultSaved(false);
+                        setError('');
                       }}
                       placeholder="Ask a question or provide an example input…"
                     />
@@ -1330,7 +2743,12 @@ export default function WorkspaceProjects({
               <button
                 className="primary-button"
                 type="button"
-                disabled={!testResult || testResultSaved || savingConnector}
+                disabled={
+                  !testResult ||
+                  testResultSaved ||
+                  savingConnector ||
+                  testingConnector
+                }
                 onClick={() => void handleSaveConnector()}
               >
                 {savingConnector
@@ -1344,7 +2762,10 @@ export default function WorkspaceProjects({
         )}
       </section>
 
-      <section className="dashboard-card phase2-card">
+      <section
+        className="dashboard-card phase2-card"
+        hidden={activePage !== 'all' && activePage !== 'connector'}
+      >
         <div className="phase2-section-heading">
           <div>
             <p className="eyebrow">SAVED CONFIGURATIONS</p>
@@ -1368,23 +2789,56 @@ export default function WorkspaceProjects({
                   key={connector.id ?? `${connector.entry_point_type}-${index}`}
                 >
                   <div>
-                    <strong>{type?.label ?? connector.entry_point_type}</strong>
+                    <strong>
+                      {connector.name ??
+                        type?.label ??
+                        connector.entry_point_type}
+                    </strong>
                     <small>
                       {connector.entry_point_type} · settings saved securely
                     </small>
                   </div>
+                  {canManage && (
+                    <div className="phase2-row-actions">
+                      <button
+                        className="secondary-button phase2-small-button"
+                        type="button"
+                        onClick={() => void handleRenameConnector(connector)}
+                      >
+                        Rename
+                      </button>
+                      <button
+                        className="secondary-button phase2-small-button"
+                        type="button"
+                        onClick={() => void handleDeleteConnector(connector)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  )}
                 </article>
               );
             })}
           </div>
         )}
       </section>
-      {selectedProjectId && (
-        <DatasetStudio
-          key={selectedProjectId}
+      {selectedProjectId &&
+        ['all', 'dataset', 'evaluation', 'results'].includes(activePage) && (
+          <DatasetStudio
+            key={selectedProjectId}
+            accessToken={accessToken}
+            workspace={workspace}
+            projectId={selectedProjectId}
+          />
+        )}
+      {activePage === 'test-chat' && (
+        <ProjectTestChat
           accessToken={accessToken}
           workspace={workspace}
           projectId={selectedProjectId}
+          connectorType={
+            connectors[connectors.length - 1]?.entry_point_type ?? null
+          }
         />
       )}
       {userRole.toLowerCase() === 'admin' && (

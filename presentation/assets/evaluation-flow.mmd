@@ -1,0 +1,15 @@
+flowchart LR
+  Task[Define task and app version] --> Criteria[Set hard gates and soft thresholds]
+  Criteria --> Dataset[Create or upload golden dataset]
+  Dataset --> Approval[Review and approve items]
+  Approval --> Run[Run app on dataset]
+  Run --> Trace[Capture output and available trace fields]
+  Trace --> Score[Score with rules and configured judges]
+  Score --> Verdict{Decision engine}
+  Verdict -->|GO| Ready[Review readiness report]
+  Verdict -->|REVIEW / NO_GO| Improve[Improve prompt, app, or criteria]
+  Improve --> Run
+  Ready --> Baseline[Approve baseline]
+  Baseline --> Candidate[Evaluate changed version on same suite]
+  Candidate --> Regress[Compare paired results]
+  Regress -->|PASS / WARN / BLOCK| Improve

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json as json_module
 from collections.abc import AsyncIterator
-from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
@@ -37,62 +35,11 @@ async def signed_in_client() -> tuple[AsyncClient, str, str]:
 async def test_website_url_and_mcp_server_test_calls_are_validated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class FakeClient:
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            self.kwargs = kwargs
+    def unexpected_outbound(*args: object, **kwargs: object) -> None:
+        pytest.fail("unavailable entry points must not execute")
 
-        async def __aenter__(self) -> FakeClient:
-            return self
-
-        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
-            return None
-
-        async def get(
-            self,
-            url: str,
-            headers: dict[str, str] | None = None,
-        ) -> object:
-            assert url == "https://example.com/"
-            assert headers == {}
-            return SimpleNamespace(
-                status_code=200,
-                text=(
-                    "<html><head><title>Example Chat</title></head>"
-                    "<body>hello</body></html>"
-                ),
-            )
-
-        async def post(self, url: str, **kwargs: object) -> object:
-            payload = kwargs["json"]
-            payload_dict = payload if isinstance(payload, dict) else {}
-            headers = kwargs.get("headers")
-            assert url == "https://mcp.example.com/tool"
-            assert payload_dict["tool"] == "chat"
-            assert payload_dict["input"] == "hello"
-            assert headers == {"Content-Type": "application/json"}
-            return SimpleNamespace(
-                status_code=200,
-                content=json_module.dumps({"output": "MCP reply"}).encode(),
-                json=lambda: {"output": "MCP reply"},
-            )
-
-    monkeypatch.setattr(
-        "app.services.connectors.make_http_client",
-        lambda timeout: FakeClient(),
-    )
-
-    def fake_run(
-        argv: list[str],
-        capture_output: bool,
-        text: bool,
-        timeout: int,
-        check: bool,
-    ) -> object:
-        assert argv[:2] == ["python", "-m"]
-        assert argv[2].endswith("chat_server.py")
-        return SimpleNamespace(returncode=0, stdout="command ok\n", stderr="")
-
-    monkeypatch.setattr("app.services.connectors.subprocess.run", fake_run)
+    monkeypatch.setattr("app.services.connectors.make_http_client", unexpected_outbound)
+    monkeypatch.setattr("app.services.connectors.subprocess.run", unexpected_outbound)
 
     client, workspace_id, access_token = await signed_in_client()
     headers = {"Authorization": f"Bearer {access_token}"}
@@ -112,11 +59,8 @@ async def test_website_url_and_mcp_server_test_calls_are_validated(
             "input": "hello",
         },
     )
-    assert website.status_code == 200, website.text
-    payload = website.json()
-    assert payload["trace"]["output"].startswith("Discovered website")
-    assert payload["detected_fields"]
-    assert "steps.tool_calls" in payload["detected_fields"]
+    assert website.status_code == 422, website.text
+    assert "not available yet" in website.json()["detail"]
 
     mcp = await client.post(
         f"/api/v1/workspaces/{workspace_id}/connectors/test-call",
@@ -132,8 +76,8 @@ async def test_website_url_and_mcp_server_test_calls_are_validated(
             "input": "hello",
         },
     )
-    assert mcp.status_code == 200, mcp.text
-    assert mcp.json()["trace"]["output"] == "MCP reply"
+    assert mcp.status_code == 422, mcp.text
+    assert "not available yet" in mcp.json()["detail"]
 
     await client.aclose()
 
@@ -148,8 +92,16 @@ async def test_entry_point_registry_lists_phase10_types() -> None:
     assert response.status_code == 200, response.text
     types = response.json()
     phases = {item["type"]: item["coming_in"] for item in types}
-    assert phases["WEBSITE_URL"] == "phase 10"
-    assert phases["MCP_SERVER"] == "phase 10"
+    assert str(phases["WEBSITE_URL"]).startswith("Phase 10")
+    assert str(phases["MCP_SERVER"]).startswith("Phase 10")
+    assert (
+        next(item for item in types if item["type"] == "WEBSITE_URL")["implemented"]
+        is False
+    )
+    assert (
+        next(item for item in types if item["type"] == "MCP_SERVER")["implemented"]
+        is False
+    )
     assert any(item["type"] == "WEBSITE_URL" for item in types)
     assert any(item["type"] == "MCP_SERVER" for item in types)
     await client.aclose()

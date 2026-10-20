@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import { apiRequest, streamApiEvents, Workspace } from './api';
+import { apiRequest, downloadApiFile, streamApiEvents, Workspace } from './api';
 
 interface DatasetItem {
   id: string;
@@ -54,6 +54,15 @@ interface EvalRun {
   started_at: string | null;
   finished_at: string | null;
   item_statuses?: Record<string, number>;
+  judge_profiles_snapshot?: JudgeProfileRunSnapshot[];
+}
+
+interface JudgeProfileRunSnapshot {
+  id: string;
+  role: 'dev' | 'final' | 'secondary';
+  provider_id: string;
+  model: string;
+  rubric_version: number;
 }
 
 interface EvalRunItem {
@@ -196,6 +205,7 @@ interface Provider {
   id: string;
   name: string;
   provider_type: string;
+  test_model?: string | null;
   has_api_key: boolean;
 }
 
@@ -203,6 +213,7 @@ interface DatasetStudioProps {
   accessToken: string;
   workspace: Workspace;
   projectId: string;
+  page?: 'dataset' | 'evaluation' | 'results' | 'all';
 }
 
 const taskTypes = ['rag', 'chatbot', 'agent', 'extraction'] as const;
@@ -214,6 +225,13 @@ function pathFor(workspaceId: string, projectId: string, suffix: string) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function canonicalMetricName(name: string) {
+  const [baseName, ...suffix] = name.split(':');
+  const canonicalBase =
+    baseName === 'answer_exact_match' ? 'answer_match' : baseName;
+  return [canonicalBase, ...suffix].join(':');
 }
 
 export default function DatasetStudio({
@@ -232,6 +250,9 @@ export default function DatasetStudio({
   const [selectedRun, setSelectedRun] = useState<EvalRun | null>(null);
   const [runItems, setRunItems] = useState<EvalRunItem[]>([]);
   const [runReport, setRunReport] = useState<RunReport | null>(null);
+  const [reportDownloading, setReportDownloading] = useState<
+    'html' | 'pdf' | 'json' | 'csv' | null
+  >(null);
   const [criteria, setCriteria] = useState<VerdictCriteria | null>(null);
   const [projectBaseline, setProjectBaseline] =
     useState<ProjectBaseline | null>(null);
@@ -275,6 +296,12 @@ export default function DatasetStudio({
   const selectedProvider = providers.find(
     (provider) => provider.id === generationProvider,
   );
+  const defaultJudgeProvider =
+    providers.find(
+      (provider) =>
+        provider.provider_type === 'ollama' &&
+        provider.test_model === 'hermes3:8b',
+    ) ?? providers[0];
   const selectedRunId = selectedRun?.id;
   const selectedRunStatus = selectedRun?.status;
   const appVersionsWithConnectors = useMemo(
@@ -347,7 +374,24 @@ export default function DatasetStudio({
       setJudgeProvider((current) =>
         current && providerRows.some((provider) => provider.id === current)
           ? current
-          : (providerRows[0]?.id ?? ''),
+          : (providerRows.find(
+              (provider) =>
+                provider.provider_type === 'ollama' &&
+                provider.test_model === 'hermes3:8b',
+            )?.id ??
+            providerRows[0]?.id ??
+            ''),
+      );
+      setJudgeModel((current) =>
+        current.trim()
+          ? current
+          : (providerRows.find(
+              (provider) =>
+                provider.provider_type === 'ollama' &&
+                provider.test_model === 'hermes3:8b',
+            )?.test_model ??
+            providerRows[0]?.test_model ??
+            ''),
       );
     }
     if (runRows.length) setSelectedRun(runRows[0]);
@@ -421,6 +465,31 @@ export default function DatasetStudio({
     },
     [accessToken, projectId, workspace.id],
   );
+
+  async function downloadRunReport(format: 'html' | 'pdf' | 'json' | 'csv') {
+    if (!selectedRun) return;
+    setReportDownloading(format);
+    setError('');
+    try {
+      await downloadApiFile(
+        `${pathFor(
+          workspace.id,
+          projectId,
+          `/runs/${encodeURIComponent(selectedRun.id)}/report`,
+        )}?format=${format}`,
+        accessToken,
+        `greenlit-run-${selectedRun.id}.${format}`,
+      );
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : 'The evaluation report could not be downloaded.',
+      );
+    } finally {
+      setReportDownloading(null);
+    }
+  }
 
   useEffect(() => {
     if (!selectedRunId) return;
@@ -895,9 +964,11 @@ export default function DatasetStudio({
                       (candidate) => candidate.role === role,
                     );
                     setJudgeProvider(
-                      profile?.provider_id ?? providers[0]?.id ?? '',
+                      profile?.provider_id ?? defaultJudgeProvider?.id ?? '',
                     );
-                    setJudgeModel(profile?.model ?? '');
+                    setJudgeModel(
+                      profile?.model ?? defaultJudgeProvider?.test_model ?? '',
+                    );
                     setJudgeRubric(profile?.rubric_prompt ?? '');
                   }}
                 >
@@ -911,7 +982,14 @@ export default function DatasetStudio({
                 <select
                   required
                   value={judgeProvider}
-                  onChange={(event) => setJudgeProvider(event.target.value)}
+                  onChange={(event) => {
+                    const provider = providers.find(
+                      (candidate) => candidate.id === event.target.value,
+                    );
+                    setJudgeProvider(event.target.value);
+                    if (provider?.test_model)
+                      setJudgeModel(provider.test_model);
+                  }}
                 >
                   <option value="">Choose provider</option>
                   {providers.map((provider) => (
@@ -1424,6 +1502,30 @@ export default function DatasetStudio({
               >
                 Start evaluation run
               </button>
+              <div
+                className="phase4-run-judge-summary"
+                role="status"
+                aria-label="Judge configuration for new run"
+              >
+                <strong>Judge profiles for this run</strong>
+                {judgeProfiles.length ? (
+                  judgeProfiles.map((profile) => (
+                    <span key={profile.id}>
+                      {profile.role}: {profile.model} · rubric v
+                      {profile.rubric_version}
+                    </span>
+                  ))
+                ) : (
+                  <span>
+                    No profile saved; answer_quality will be marked
+                    not_configured.
+                  </span>
+                )}
+                <small>
+                  Profiles are snapshotted when the run starts; judge requests
+                  time out after 12 seconds.
+                </small>
+              </div>
             </form>
 
             <section
@@ -1635,6 +1737,21 @@ export default function DatasetStudio({
                       selectedRun.completed_items + selectedRun.failed_items
                     }
                   />
+                  {selectedRun.judge_profiles_snapshot?.length ? (
+                    <p className="phase4-run-judge-summary">
+                      Judge snapshot:{' '}
+                      {selectedRun.judge_profiles_snapshot
+                        .map(
+                          (profile) =>
+                            `${profile.role} ${profile.model} · rubric v${profile.rubric_version}`,
+                        )
+                        .join('; ')}
+                    </p>
+                  ) : (
+                    <p className="phase4-run-judge-summary">
+                      No judge profile was snapshotted for this run.
+                    </p>
+                  )}
                   {selectedRun.pause_reason === 'quota' && (
                     <p className="phase3-warning">
                       Waiting for provider quota. Resume when the quota is
@@ -1694,6 +1811,26 @@ export default function DatasetStudio({
                           <li key={reason}>{reason}</li>
                         ))}
                       </ul>
+                      <div
+                        className="phase5-report-downloads"
+                        aria-label="Download evaluation report"
+                      >
+                        {(['html', 'pdf', 'json', 'csv'] as const).map(
+                          (format) => (
+                            <button
+                              className="secondary-button"
+                              type="button"
+                              key={format}
+                              disabled={reportDownloading !== null}
+                              onClick={() => void downloadRunReport(format)}
+                            >
+                              {reportDownloading === format
+                                ? `Preparing ${format.toUpperCase()}…`
+                                : `Download ${format.toUpperCase()}`}
+                            </button>
+                          ),
+                        )}
+                      </div>
                       <div className="phase5-result-grid">
                         <section aria-labelledby="category-results-title">
                           <h5 id="category-results-title">Category scores</h5>
@@ -1948,7 +2085,9 @@ export default function DatasetStudio({
                             <ul className="phase4-score-list">
                               {item.scores.map((score) => (
                                 <li key={score.name}>
-                                  <strong>{score.name}</strong>
+                                  <strong>
+                                    {canonicalMetricName(score.name)}
+                                  </strong>
                                   {score.judge_role && (
                                     <span> · {score.judge_role}</span>
                                   )}
@@ -1995,7 +2134,9 @@ export default function DatasetStudio({
                                           (entry.score === 0 ||
                                             entry.score <
                                               (runReport?.criteria.hard_gates[
-                                                entry.name.split(':', 1)[0]
+                                                canonicalMetricName(
+                                                  entry.name,
+                                                ).split(':', 1)[0]
                                               ] ?? 0)),
                                       )
                                       .map(

@@ -27,7 +27,8 @@ def upgrade() -> None:
             server_default=sa.false(),
         ),
     )
-    op.alter_column("dataset_items", "regression_critical", server_default=None)
+    with op.batch_alter_table("dataset_items") as batch_op:
+        batch_op.alter_column("regression_critical", server_default=None)
     op.create_table(
         "project_baselines",
         sa.Column("project_id", sa.Uuid(), nullable=False),

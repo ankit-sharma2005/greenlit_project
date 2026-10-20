@@ -24,8 +24,9 @@ def test_canary_and_system_prompt_leaks_are_detected() -> None:
     assert not detect_system_prompt_leak("Need a safe answer about logistics.")
 
 
-def test_phase7_summary_measures_attack_success_by_category_and_guardrail_uplift(
-) -> None:
+def test_phase7_summary_measures_attack_success_by_category_and_guardrail_uplift() -> (
+    None
+):
     rows = [
         SafetySample(
             category="prompt_injection",

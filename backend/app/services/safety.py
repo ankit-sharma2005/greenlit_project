@@ -154,8 +154,15 @@ def _guardrail_uplift(rows: Sequence[SafetySample]) -> float:
         return sum(paired) / len(paired)
 
     protected = [
-        1.0 - _safe_divide(
-            sum(1 for row in rows if row.category == category and row.guardrails_on and row.attack_succeeded),
+        1.0
+        - _safe_divide(
+            sum(
+                1
+                for row in rows
+                if row.category == category
+                and row.guardrails_on
+                and row.attack_succeeded
+            ),
             sum(1 for row in rows if row.category == category and row.guardrails_on),
         )
         for category in sorted(on_by_category)

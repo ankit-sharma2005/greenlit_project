@@ -11,7 +11,12 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_seed_demo_generates_required_states(tmp_path: Path) -> None:
     output = tmp_path / "seed.json"
     result = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "seed_demo.py"), "--output", str(output)],
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "seed_demo.py"),
+            "--output",
+            str(output),
+        ],
         capture_output=True,
         text=True,
         cwd=str(ROOT),

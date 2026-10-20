@@ -3,7 +3,7 @@ from __future__ import annotations
 import secrets
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,9 +50,7 @@ def summarize_ci_status(checks: Sequence[Mapping[str, Any]] | None) -> StatusVal
     return "PASS"
 
 
-async def validate_api_token(
-    db: AsyncSession, token_value: str
-) -> ApiToken | None:
+async def validate_api_token(db: AsyncSession, token_value: str) -> ApiToken | None:
     token_hash = hash_token(token_value)
     now = datetime.now(UTC)
     record = await db.scalar(
@@ -62,7 +60,7 @@ async def validate_api_token(
             (ApiToken.expires_at.is_(None) | (ApiToken.expires_at > now)),
         )
     )
-    return cast(ApiToken | None, record)
+    return record
 
 
 def build_ci_response(

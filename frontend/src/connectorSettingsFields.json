@@ -1,0 +1,87 @@
+{
+  "HTTP_ENDPOINT": [
+    "url",
+    "method",
+    "request_body_template",
+    "input_field",
+    "output_field",
+    "timeout_seconds",
+    "context_messages",
+    "allow_private_targets"
+  ],
+  "PYTHON_FUNCTION": [
+    "module",
+    "function",
+    "working_directory",
+    "timeout_seconds"
+  ],
+  "PYTHON_SDK_TRACED": [
+    "module",
+    "function",
+    "working_directory",
+    "timeout_seconds"
+  ],
+  "PROMPT_APP": [
+    "system_prompt",
+    "temperature",
+    "output_json_schema",
+    "context_messages"
+  ],
+  "BUILTIN_RAG_APP": [
+    "documents",
+    "chunk_size",
+    "chunk_overlap",
+    "top_k",
+    "prompt",
+    "temperature",
+    "context_messages"
+  ],
+  "BUILTIN_AGENT_APP": [
+    "tools",
+    "max_steps",
+    "system_prompt",
+    "temperature",
+    "context_messages"
+  ],
+  "DOCKER_IMAGE": [
+    "image",
+    "command",
+    "env",
+    "working_directory",
+    "timeout_seconds",
+    "memory_mb",
+    "cpus"
+  ],
+  "GIT_REPO": ["repo_url", "branch", "command", "timeout_seconds"],
+  "CLI_COMMAND": ["command", "working_directory", "timeout_seconds"],
+  "PROXY_MODE": [
+    "base_url",
+    "request_body_template",
+    "allow_private_targets",
+    "timeout_seconds"
+  ],
+  "UPLOAD_OUTPUTS": [
+    "rows",
+    "input_field",
+    "output_field",
+    "retrieved_contexts_field",
+    "tool_calls_field",
+    "latency_ms_field",
+    "tokens_in_field",
+    "tokens_out_field"
+  ],
+  "WEBSITE_URL": [
+    "url",
+    "authorized",
+    "request_cap",
+    "timeout_seconds",
+    "detect_widget"
+  ],
+  "MCP_SERVER": [
+    "server_url",
+    "command",
+    "tool_name",
+    "prompt_template",
+    "timeout_seconds"
+  ]
+}

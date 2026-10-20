@@ -1,0 +1,2 @@
+id,input,output,retrieved_context,latency_ms,tokens_in,tokens_out
+sample-1,What is GreenLit?,GreenLit is a product for marketing teams.,GreenLit is a mobile app for customer support.,4200,18,8
