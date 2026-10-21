@@ -30,11 +30,16 @@ from app.models import (
     ProviderConfig,
     WorkspaceMembership,
 )
-from app.phase2_schemas import CONNECTOR_SETTINGS_MODELS
+from app.phase2_schemas import (
+    CONNECTOR_SETTINGS_MODELS,
+    ConnectorSaveRequest,
+    ConnectorTestCallRequest,
+)
 from app.routers import phase2 as phase2_router
 from app.routers.chat import redact_chat_text
 from app.routers.phase2 import gateway
 from app.services import connectors
+from app.services.connectors import validate_connector_settings
 from app.services.llm_gateway import (
     ChatResult,
     LLMGateway,
@@ -518,6 +523,150 @@ async def test_registry_lists_all_thirteen_types_and_validates_type_settings() -
         )
         assert response.status_code == 422, (entry_point_type, response.text)
         assert "not available yet" in response.json()["detail"].lower()
+    await client.aclose()
+
+
+def test_connector_entry_point_payloads_validate_against_backend_models() -> None:
+    provider_id = str(uuid4())
+    examples = [
+        {
+            "entry_point_type": "UPLOAD_OUTPUTS",
+            "settings": {
+                "rows": [{"input": "sample", "output": "answer"}],
+                "input_field": "input",
+                "output_field": "output",
+            },
+            "input": "sample",
+        },
+        {
+            "entry_point_type": "HTTP_ENDPOINT",
+            "settings": {
+                "url": "https://app.example.com/run",
+                "method": "POST",
+                "request_body_template": '{"input": {{input}}}',
+                "output_field": "data.answer",
+                "timeout_seconds": 15,
+            },
+            "credentials": {"api_key": "test-only"},
+            "input": "sample",
+        },
+        {
+            "entry_point_type": "PROMPT_APP",
+            "settings": {"system_prompt": "Answer clearly.", "temperature": 0},
+            "provider_id": provider_id,
+            "model": "test-model",
+            "input": "sample",
+        },
+    ]
+
+    for example in examples:
+        test_request = ConnectorTestCallRequest.model_validate(example)
+        validate_connector_settings(
+            test_request.entry_point_type, test_request.settings
+        )
+        save_example = {
+            key: value for key, value in example.items() if key != "input"
+        }
+        save_example.update(
+            {"name": "Test connector", "test_call_id": "test-token"}
+        )
+        save_request = ConnectorSaveRequest.model_validate(save_example)
+        validate_connector_settings(
+            save_request.entry_point_type, save_request.settings
+        )
+        assert "provider_id" not in save_request.settings
+        assert "model" not in save_request.settings
+
+
+@pytest.mark.asyncio
+async def test_unknown_connector_setting_returns_clear_422() -> None:
+    client, workspace_id, access_token = await signed_in_client()
+    response = await client.post(
+        f"/api/v1/workspaces/{workspace_id}/connectors/test-call",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "entry_point_type": "UPLOAD_OUTPUTS",
+            "settings": {
+                "rows": [{"input": "sample", "output": "answer"}],
+                "unknown_setting": "unexpected",
+            },
+            "input": "sample",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Unsupported setting 'unknown_setting'" in response.json()["detail"]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_connector_name_returns_helpful_conflict() -> None:
+    client, workspace_id, access_token = await signed_in_client()
+    headers = {"Authorization": f"Bearer {access_token}"}
+    project_response = await client.post(
+        f"/api/v1/workspaces/{workspace_id}/projects",
+        headers=headers,
+        json={"name": "Connector name conflict"},
+    )
+    assert project_response.status_code == 201, project_response.text
+    project_id = project_response.json()["id"]
+    settings = {
+        "rows": [{"input": "sample", "output": "first answer"}],
+        "input_field": "input",
+        "output_field": "output",
+    }
+    first_test = await client.post(
+        f"/api/v1/workspaces/{workspace_id}/connectors/test-call",
+        headers=headers,
+        json={
+            "entry_point_type": "UPLOAD_OUTPUTS",
+            "settings": settings,
+            "input": "sample",
+        },
+    )
+    assert first_test.status_code == 200, first_test.text
+    first_save = await client.post(
+        f"/api/v1/workspaces/{workspace_id}/projects/{project_id}/connectors",
+        headers=headers,
+        json={
+            "entry_point_type": "UPLOAD_OUTPUTS",
+            "settings": settings,
+            "test_call_id": first_test.json()["test_call_id"],
+            "name": "Existing outputs",
+        },
+    )
+    assert first_save.status_code == 201, first_save.text
+
+    changed_settings = {
+        **settings,
+        "rows": [{"input": "sample", "output": "different answer"}],
+    }
+    second_test = await client.post(
+        f"/api/v1/workspaces/{workspace_id}/connectors/test-call",
+        headers=headers,
+        json={
+            "entry_point_type": "UPLOAD_OUTPUTS",
+            "settings": changed_settings,
+            "input": "sample",
+        },
+    )
+    assert second_test.status_code == 200, second_test.text
+    duplicate_save = await client.post(
+        f"/api/v1/workspaces/{workspace_id}/projects/{project_id}/connectors",
+        headers=headers,
+        json={
+            "entry_point_type": "UPLOAD_OUTPUTS",
+            "settings": changed_settings,
+            "test_call_id": second_test.json()["test_call_id"],
+            "name": "Existing outputs",
+        },
+    )
+
+    assert duplicate_save.status_code == 409
+    assert (
+        duplicate_save.json()["detail"]
+        == "A connector with this name already exists in this project."
+    )
     await client.aclose()
 
 

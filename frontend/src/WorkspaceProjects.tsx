@@ -1,6 +1,5 @@
 import {
   FormEvent,
-  KeyboardEvent as ReactKeyboardEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -10,7 +9,7 @@ import {
 import { Link } from 'react-router-dom';
 import { apiRequest, Workspace } from './api';
 import DatasetStudio from './DatasetStudio';
-import { buildConnectorSettings } from './connectorPayload';
+import { buildConnectorPayload } from './connectorPayload';
 import { parseUploadRows, UploadedRow } from './phase2Uploads';
 import { ProjectTestChat } from './WorkspaceChat';
 
@@ -84,6 +83,12 @@ interface TestCallResult {
   detected_fields: string[];
   missing_fields: string[];
   preview?: UploadedRow[];
+}
+
+interface TestFailure {
+  reason: string;
+  nextStep: string;
+  rawResponse?: unknown;
 }
 
 interface Connector {
@@ -190,34 +195,6 @@ const providerEntryTypes = new Set([
   'BUILTIN_AGENT_APP',
 ]);
 
-const disabledReason = (entryType: EntryPointType) => {
-  if (
-    entryType.type === 'PYTHON_FUNCTION' ||
-    entryType.type === 'PYTHON_SDK_TRACED'
-  ) {
-    return 'Requires an isolated Python worker with no network access, resource limits, timeouts, and no host mounts.';
-  }
-  if (entryType.type === 'DOCKER_IMAGE') {
-    return 'Real Docker sandbox runner is not available yet';
-  }
-  if (entryType.type === 'GIT_REPO') {
-    return 'Real Git checkout sandbox is not available yet';
-  }
-  if (entryType.type === 'CLI_COMMAND') {
-    return 'Real CLI sandbox is not available yet';
-  }
-  if (entryType.type === 'PROXY_MODE') {
-    return 'Proxy mode needs a verified outbound request sandbox';
-  }
-  if (entryType.type === 'WEBSITE_URL') {
-    return 'Manual browser verification required';
-  }
-  if (entryType.type === 'MCP_SERVER') {
-    return 'Manual MCP runtime verification required';
-  }
-  return 'Not available yet';
-};
-
 const promptAppSchema: EntryPointType['settings_schema'] = {
   type: 'object',
   required: ['system_prompt'],
@@ -296,7 +273,7 @@ const genericSchemas: Record<string, EntryPointType['settings_schema']> = {
       method: {
         type: 'string',
         title: 'HTTP method',
-        enum: ['POST', 'PUT', 'PATCH'],
+        enum: ['POST', 'GET'],
         default: 'POST',
       },
       request_body_template: {
@@ -498,34 +475,104 @@ function secretSettings(settings: Record<string, unknown>) {
     .filter(Boolean);
 }
 
-function connectorRequestSettings(
-  entryPointType: string,
-  settings: Record<string, unknown>,
-  schema: EntryPointType['settings_schema'],
-) {
-  return buildConnectorSettings(entryPointType, settings, schema);
-}
-
-function phaseLabel(entryType: EntryPointType) {
-  if (entryType.coming_in !== undefined && entryType.coming_in !== null) {
-    const phase = String(entryType.coming_in);
-    return /^phase/i.test(phase) ? phase : `Phase ${phase}`;
+function connectorFailure(error: unknown, entryPointType: string) {
+  const detail =
+    error instanceof Error
+      ? error.message
+      : 'The test could not be completed. Review the settings and try again.';
+  const message = detail.toLowerCase();
+  if (message.includes('timeout') || message.includes('timed out')) {
+    return {
+      reason: 'The request timed out after 15 seconds.',
+      nextStep:
+        'Check that the app is running and increase the timeout in Advanced if needed.',
+    };
   }
   if (
-    ['DOCKER_IMAGE', 'GIT_REPO', 'CLI_COMMAND', 'PROXY_MODE'].includes(
-      entryType.type,
-    )
+    message.includes('private endpoint') ||
+    message.includes('private targets') ||
+    message.includes('ssrf')
   ) {
-    return 'Phase 3';
+    return {
+      reason: 'GreenLit blocked this private URL to protect your workspace.',
+      nextStep:
+        'For a local app in Docker, use host.docker.internal and enable Allow private targets in Advanced. Only workspace owners or admins can do this.',
+    };
   }
-  if (['WEBSITE_URL', 'MCP_SERVER'].includes(entryType.type)) {
-    return 'Phase 10';
+  if (message.includes('http 401') || message.includes('http 403')) {
+    return {
+      reason: 'Your app returned an authorization error (401/403).',
+      nextStep: 'Check the app credentials and API key, then test again.',
+    };
   }
-  return 'Phase 4';
+  if (message.includes('response field') && message.includes('not found')) {
+    return {
+      reason: 'The JSON path for the answer was not found in the response.',
+      nextStep:
+        'Check the raw response and update the JSON path for the answer.',
+    };
+  }
+  if (message.includes('json') && message.includes('response')) {
+    return {
+      reason: 'The app returned a non-JSON response.',
+      nextStep:
+        'Make the endpoint return JSON and check that the answer path exists.',
+    };
+  }
+  if (
+    message.includes('could not connect') ||
+    message.includes('could not be resolved') ||
+    message.includes('did not resolve') ||
+    message.includes('fetch failed') ||
+    message.includes('networkerror') ||
+    message.includes('failed to fetch')
+  ) {
+    return {
+      reason: 'The URL is unreachable.',
+      nextStep:
+        'Check the URL, port, and that the app is running and reachable from GreenLit.',
+    };
+  }
+  if (
+    message.includes('mapped columns are missing') ||
+    message.includes('missing column') ||
+    message.includes('choose valid input and output columns')
+  ) {
+    return {
+      reason: 'A required column is missing from the uploaded file.',
+      nextStep:
+        'Choose the correct input and output columns, or upload a file that contains both.',
+    };
+  }
+  if (message.includes('connector with this name already exists')) {
+    return {
+      reason: 'That connector name is already in use in this project.',
+      nextStep: 'Choose a different connector name and save again.',
+    };
+  }
+  return {
+    reason: detail,
+    nextStep:
+      entryPointType === 'HTTP_ENDPOINT'
+        ? 'Check the URL, request body, API key, and answer JSON path.'
+        : 'Review the settings and sample input, then run the test again.',
+  };
 }
 
 function formatJson(value: unknown) {
   return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+}
+
+function traceOutput(trace: unknown): unknown {
+  if (
+    trace &&
+    typeof trace === 'object' &&
+    !Array.isArray(trace) &&
+    'output' in trace
+  ) {
+    return trace.output;
+  }
+  return trace;
 }
 
 interface WorkspaceDraft {
@@ -644,13 +691,11 @@ function safeDraftSettings(settings: Record<string, unknown>) {
 function SettingsEditor({
   entryType,
   settings,
-  testInput,
   onChange,
   onError,
 }: {
   entryType: EntryPointType;
   settings: Record<string, unknown>;
-  testInput: string;
   onChange: (nextSettings: Record<string, unknown>) => void;
   onError: (message: string) => void;
 }) {
@@ -660,20 +705,37 @@ function SettingsEditor({
       : [];
     const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
     const mappings = [
-      ['input_field', 'Input column', true],
-      ['output_field', 'Output column', true],
-      ['retrieved_contexts_field', 'Retrieved context column', false],
-      ['latency_ms_field', 'Latency (ms) column', false],
-      ['tokens_in_field', 'Input tokens column', false],
-      ['tokens_out_field', 'Output tokens column', false],
+      ['input_field', 'Input', true],
+      ['output_field', 'Output', true],
+      ['retrieved_contexts_field', 'Retrieved context', false],
+      ['latency_ms_field', 'Latency (ms)', false],
+      ['tokens_in_field', 'Tokens in', false],
+      ['tokens_out_field', 'Tokens out', false],
     ] as const;
+    const detected = [
+      ['id', /^(id|record_id|example_id)$/i],
+      ['input', /^(input|question|prompt|query)$/i],
+      ['output', /^(output|answer|response|completion)$/i],
+      ['retrieved_context', /^(retrieved_contexts?|contexts?)$/i],
+      ['latency_ms', /^latency(_ms)?$/i],
+      ['tokens_in', /^(tokens_in|input_tokens)$/i],
+      ['tokens_out', /^(tokens_out|output_tokens)$/i],
+    ].flatMap(([name, pattern]) => {
+      if (!(pattern instanceof RegExp)) return [];
+      const match = columns.find((column) => pattern.test(column));
+      return match ? [`${String(name)}: ${match}`] : [];
+    });
+    const mappingFailed =
+      rows.length > 0 &&
+      (!String(settings.input_field ?? '') ||
+        !String(settings.output_field ?? ''));
     return (
       <div className="phase2-form-stack">
         <label className="phase2-field">
-          <span>Upload outputs file *</span>
+          <span>Outputs file *</span>
           <input
             type="file"
-            accept=".csv,.json,.jsonl,text/csv,application/json"
+            accept=".csv,.json,.jsonl,.xlsx,text/csv,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             onChange={(event) => {
               const file = event.target.files?.[0];
               onError('');
@@ -682,17 +744,22 @@ function SettingsEditor({
               void parseUploadRows(file)
                 .then((nextRows) => {
                   const nextColumns = Object.keys(nextRows[0]);
-                  const guess = (pattern: RegExp) =>
+                  const findColumn = (pattern: RegExp) =>
                     nextColumns.find((column) => pattern.test(column)) ?? '';
                   onChange({
                     ...settings,
                     rows: nextRows,
-                    input_field: guess(/^input$|question|prompt/i),
-                    output_field: guess(/^output$|answer|response/i),
-                    retrieved_contexts_field: guess(/retrieved.?context/i),
-                    latency_ms_field: guess(/^latency(_ms)?$/i),
-                    tokens_in_field: guess(/^(tokens_in|input_tokens)$/i),
-                    tokens_out_field: guess(/^(tokens_out|output_tokens)$/i),
+                    input_field: findColumn(/^(input|question|prompt|query)$/i),
+                    output_field: findColumn(
+                      /^(output|answer|response|completion)$/i,
+                    ),
+                    retrieved_contexts_field:
+                      findColumn(/^(retrieved_contexts?|contexts?)$/i) || null,
+                    latency_ms_field: findColumn(/^latency(_ms)?$/i) || null,
+                    tokens_in_field:
+                      findColumn(/^(tokens_in|input_tokens)$/i) || null,
+                    tokens_out_field:
+                      findColumn(/^(tokens_out|output_tokens)$/i) || null,
                   });
                   onError('');
                 })
@@ -705,53 +772,232 @@ function SettingsEditor({
                 });
             }}
           />
-          <small>CSV, JSON array, or JSONL; up to 10,000 rows.</small>
+          <small>CSV, JSON, JSONL, or XLSX; up to 10,000 rows.</small>
         </label>
-        {!testInput.trim() && (
-          <small className="field-hint-error" role="status">
-            Enter a sample input before testing.
-          </small>
-        )}
         {rows.length > 0 ? (
           <>
-            <div className="phase2-form-grid">
-              {mappings.map(([key, label, required]) => (
-                <label className="phase2-field" key={key}>
-                  <span>
-                    {label}
-                    {required ? ' *' : ' (optional)'}
-                  </span>
-                  <select
-                    required={required}
-                    value={String(settings[key] ?? '')}
-                    onChange={(event) =>
-                      onChange({ ...settings, [key]: event.target.value })
-                    }
-                  >
-                    <option value="">Choose a column</option>
-                    {columns.map((column) => (
-                      <option key={column} value={column}>
-                        {column}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ))}
-            </div>
+            <p className="phase2-inline-note">
+              {detected.length > 0
+                ? `Detected columns: ${detected.join(', ')}`
+                : 'No standard columns were detected.'}
+            </p>
+            {mappingFailed && (
+              <div className="phase2-form-grid">
+                {mappings.map(([key, label, required]) => (
+                  <label className="phase2-field" key={key}>
+                    <span>
+                      {label}
+                      {required ? ' column *' : ' column (optional)'}
+                    </span>
+                    <select
+                      required={required}
+                      value={String(settings[key] ?? '')}
+                      onChange={(event) =>
+                        onChange({
+                          ...settings,
+                          [key]: event.target.value || null,
+                        })
+                      }
+                    >
+                      <option value="">Choose a column</option>
+                      {columns.map((column) => (
+                        <option key={column} value={column}>
+                          {column}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
+              </div>
+            )}
             <div
               className="phase2-test-result"
               aria-label="Uploaded output preview"
             >
-              <strong>Preview · first {Math.min(3, rows.length)} rows</strong>
-              <pre>{formatJson(rows.slice(0, 3))}</pre>
+              <strong>Preview · first {Math.min(5, rows.length)} rows</strong>
+              <pre>{formatJson(rows.slice(0, 5))}</pre>
             </div>
           </>
         ) : (
           <p className="field-hint-error" role="status">
-            Upload a file to choose the input, output, and optional trace
-            columns.
+            Choose a file to preview and detect its columns.
           </p>
         )}
+      </div>
+    );
+  }
+  if (entryType.type === 'HTTP_ENDPOINT') {
+    return (
+      <div className="phase2-form-stack">
+        <label className="phase2-field">
+          <span>App URL *</span>
+          <input
+            required
+            type="url"
+            value={String(settings.url ?? '')}
+            onChange={(event) =>
+              onChange({ ...settings, url: event.target.value })
+            }
+            placeholder="https://your-app.example.com/answer"
+          />
+        </label>
+        <label className="phase2-field">
+          <span>Method</span>
+          <select
+            value={String(settings.method ?? 'POST')}
+            onChange={(event) =>
+              onChange({ ...settings, method: event.target.value })
+            }
+          >
+            <option value="POST">POST</option>
+            <option value="GET">GET</option>
+          </select>
+        </label>
+        {settings.method !== 'GET' && (
+          <label className="phase2-field">
+            <span>Request body template</span>
+            <textarea
+              rows={3}
+              value={String(
+                settings.request_body_template ?? '{"input": {{input}}}',
+              )}
+              onChange={(event) =>
+                onChange({
+                  ...settings,
+                  request_body_template: event.target.value,
+                })
+              }
+            />
+            <small>Use {'{{input}}'} wherever the sample input belongs.</small>
+          </label>
+        )}
+        <label className="phase2-field">
+          <span>JSON path for the answer</span>
+          <input
+            value={String(settings.output_field ?? 'output')}
+            onChange={(event) =>
+              onChange({ ...settings, output_field: event.target.value })
+            }
+            placeholder="output or data.answer"
+          />
+          <small>Use dots for nested JSON, for example data.answer.</small>
+        </label>
+        <details className="phase2-advanced">
+          <summary>Advanced</summary>
+          <label className="phase2-field">
+            <span>Timeout (seconds)</span>
+            <input
+              type="number"
+              min="1"
+              max="60"
+              value={String(settings.timeout_seconds ?? 15)}
+              onChange={(event) =>
+                onChange({
+                  ...settings,
+                  timeout_seconds: Number(event.target.value),
+                })
+              }
+            />
+          </label>
+          <label className="phase2-field">
+            <span>GET input parameter name</span>
+            <input
+              value={String(settings.input_field ?? 'input')}
+              onChange={(event) =>
+                onChange({ ...settings, input_field: event.target.value })
+              }
+            />
+          </label>
+          <label className="phase2-field phase2-checkbox-field">
+            <input
+              className="phase2-checkbox"
+              type="checkbox"
+              checked={Boolean(settings.allow_private_targets)}
+              onChange={(event) =>
+                onChange({
+                  ...settings,
+                  allow_private_targets: event.target.checked,
+                })
+              }
+            />
+            <span>Allow private targets (workspace owner/admin only)</span>
+          </label>
+        </details>
+      </div>
+    );
+  }
+  if (entryType.type === 'PROMPT_APP') {
+    return (
+      <div className="phase2-form-stack">
+        <label className="phase2-field">
+          <span>System prompt *</span>
+          <textarea
+            required
+            rows={6}
+            value={String(settings.system_prompt ?? '')}
+            onChange={(event) =>
+              onChange({ ...settings, system_prompt: event.target.value })
+            }
+            placeholder="Describe how your app should respond."
+          />
+        </label>
+        <label className="phase2-field">
+          <span>Temperature</span>
+          <input
+            type="number"
+            min="0"
+            max="2"
+            step="0.1"
+            value={String(settings.temperature ?? 0)}
+            onChange={(event) =>
+              onChange({
+                ...settings,
+                temperature: Number(event.target.value),
+              })
+            }
+          />
+        </label>
+        <details className="phase2-advanced">
+          <summary>Advanced</summary>
+          <label className="phase2-field">
+            <span>Context messages</span>
+            <input
+              type="number"
+              min="0"
+              max="50"
+              value={String(settings.context_messages ?? 10)}
+              onChange={(event) =>
+                onChange({
+                  ...settings,
+                  context_messages: Number(event.target.value),
+                })
+              }
+            />
+          </label>
+          <label className="phase2-field">
+            <span>Output JSON schema (optional)</span>
+            <textarea
+              rows={4}
+              value={formatJson(settings.output_json_schema ?? {})}
+              onChange={(event) => {
+                try {
+                  const output_json_schema: unknown = JSON.parse(
+                    event.target.value,
+                  );
+                  if (
+                    output_json_schema &&
+                    typeof output_json_schema === 'object' &&
+                    !Array.isArray(output_json_schema)
+                  ) {
+                    onChange({ ...settings, output_json_schema });
+                  }
+                } catch {
+                  onError('Output JSON schema must be a valid JSON object.');
+                }
+              }}
+            />
+          </label>
+        </details>
       </div>
     );
   }
@@ -961,7 +1207,6 @@ export default function WorkspaceProjects({
   const [providerTesting, setProviderTesting] = useState(false);
   const [providerTestId, setProviderTestId] = useState('');
   const [settingDefaultProviderId, setSettingDefaultProviderId] = useState('');
-  const [searchText, setSearchText] = useState('');
   const [selectedType, setSelectedType] = useState(
     connectorDraft?.selectedType ?? '',
   );
@@ -977,6 +1222,7 @@ export default function WorkspaceProjects({
   );
   const [testInput, setTestInput] = useState(connectorDraft?.testInput ?? '');
   const [testResult, setTestResult] = useState<TestCallResult | null>(null);
+  const [testFailure, setTestFailure] = useState<TestFailure | null>(null);
   const [testResultSaved, setTestResultSaved] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -1001,16 +1247,6 @@ export default function WorkspaceProjects({
       })),
     [entryTypes],
   );
-  const filteredTypes = useMemo(() => {
-    const query = searchText.trim().toLowerCase();
-    return enabledTypes.filter(
-      (entryType) =>
-        !query ||
-        entryType.label.toLowerCase().includes(query) ||
-        entryType.type.toLowerCase().includes(query) ||
-        entryType.description.toLowerCase().includes(query),
-    );
-  }, [enabledTypes, searchText]);
   const activeType = enabledTypes.find((item) => item.type === selectedType);
   const activeProvider = providers.find(
     (provider) => provider.id === selectedProviderId,
@@ -1022,11 +1258,21 @@ export default function WorkspaceProjects({
   const requiresProvider = Boolean(
     activeType && providerEntryTypes.has(activeType.type),
   );
+  const uploadRows = Array.isArray(connectorSettings.rows)
+    ? connectorSettings.rows
+    : [];
+  const uploadReady =
+    activeType?.type !== 'UPLOAD_OUTPUTS' ||
+    (uploadRows.length > 0 &&
+      Boolean(connectorSettings.input_field) &&
+      Boolean(connectorSettings.output_field));
   const selectedModel =
     activeProvider?.default_model ?? activeProvider?.test_model ?? undefined;
   const canTest =
     Boolean(activeType) &&
+    Boolean(connectorName.trim()) &&
     Boolean(testInput.trim()) &&
+    uploadReady &&
     (!requiresProvider || Boolean(selectedProviderId)) &&
     requiredSettings.every((key) => {
       const value = connectorSettings[key];
@@ -1340,6 +1586,7 @@ export default function WorkspaceProjects({
   function updateConnectorSettings(nextSettings: Record<string, unknown>) {
     setConnectorSettings(nextSettings);
     setTestResult(null);
+    setTestFailure(null);
     setTestResultSaved(false);
     setMessage('');
     setError('');
@@ -1374,47 +1621,11 @@ export default function WorkspaceProjects({
     setConnectorSettings(initialSettings(nextEntryType));
     setConnectorName(nextEntryType.label);
     setTestResult(null);
+    setTestFailure(null);
     setTestResultSaved(false);
+    setConnectorApiKey('');
     setMessage('');
     setError('');
-  }
-
-  function handleEntryPointListKeyDown(
-    event: ReactKeyboardEvent<HTMLDivElement>,
-  ) {
-    const availableTypes = filteredTypes.filter(
-      (entryType) => entryType.implemented,
-    );
-    if (availableTypes.length === 0) return;
-
-    const currentIndex = availableTypes.findIndex(
-      (entryType) => entryType.type === selectedType,
-    );
-    let nextIndex: number | undefined;
-    if (event.key === 'ArrowDown') {
-      nextIndex = (currentIndex + 1) % availableTypes.length;
-    } else if (event.key === 'ArrowUp') {
-      nextIndex =
-        currentIndex < 0
-          ? availableTypes.length - 1
-          : (currentIndex - 1 + availableTypes.length) % availableTypes.length;
-    } else if (event.key === 'Home') {
-      nextIndex = 0;
-    } else if (event.key === 'End') {
-      nextIndex = availableTypes.length - 1;
-    } else if (event.key === 'Enter' || event.key === ' ') {
-      const selected =
-        availableTypes.find((entryType) => entryType.type === selectedType) ??
-        availableTypes[0];
-      event.preventDefault();
-      selectEntryPoint(selected.type);
-      return;
-    }
-
-    if (nextIndex !== undefined) {
-      event.preventDefault();
-      selectEntryPoint(availableTypes[nextIndex].type);
-    }
   }
 
   async function handleCreateProject(event: FormEvent<HTMLFormElement>) {
@@ -1459,6 +1670,7 @@ export default function WorkspaceProjects({
       );
       setConnectors([]);
       setTestResult(null);
+      setTestFailure(null);
       setTestResultSaved(false);
       setProjectName('');
       setProjectDescription('');
@@ -1535,6 +1747,7 @@ export default function WorkspaceProjects({
         );
       }
       setTestResult(null);
+      setTestFailure(null);
       setTestResultSaved(false);
       setProviderName('');
       setProviderBaseUrl('');
@@ -1649,7 +1862,10 @@ export default function WorkspaceProjects({
     if (activeType.type === 'UPLOAD_OUTPUTS') {
       const rows = connectorSettings.rows;
       if (!Array.isArray(rows) || rows.length === 0) {
-        setError('Upload a .csv, .json, or .jsonl file before testing.');
+        setTestFailure({
+          reason: 'No file has been uploaded.',
+          nextStep: 'Choose a CSV, JSON, JSONL, or XLSX file first.',
+        });
         return;
       }
       if (
@@ -1662,14 +1878,20 @@ export default function WorkspaceProjects({
           String(connectorSettings.output_field),
         )
       ) {
-        setError(
-          'Choose valid input and output columns from the uploaded file.',
+        setTestFailure(
+          connectorFailure('Missing column mapping', activeType.type),
         );
         return;
       }
     }
     if (!testInput.trim()) {
-      setError('Enter a sample input before testing.');
+      setTestFailure({
+        reason: 'A sample input is required.',
+        nextStep:
+          activeType.type === 'UPLOAD_OUTPUTS'
+            ? 'Enter an input that exactly matches a row in the uploaded file.'
+            : 'Enter a sample input and run the test again.',
+      });
       return;
     }
     connectorTestLock.current = true;
@@ -1677,6 +1899,7 @@ export default function WorkspaceProjects({
     setMessage('');
     setTestingConnector(true);
     setTestResult(null);
+    setTestFailure(null);
     setTestResultSaved(false);
     const secretValues = [
       connectorApiKey,
@@ -1684,38 +1907,45 @@ export default function WorkspaceProjects({
     ].filter(Boolean);
     const credentials: Record<string, string> = {};
     if (connectorApiKey) credentials.api_key = connectorApiKey;
-    const settings = connectorRequestSettings(
-      activeType.type,
-      connectorSettings,
-      currentSchema,
-    );
     try {
+      const payload = buildConnectorPayload(
+        activeType.type,
+        {
+          settings: connectorSettings,
+          credentials,
+          provider_id: selectedProviderId || undefined,
+          model: selectedModel,
+          input: testInput,
+        },
+        currentSchema,
+      );
       const result = await apiRequest<TestCallResult>(
         makeWorkspacePath(workspace.id, '/connectors/test-call'),
         {
           method: 'POST',
-          body: JSON.stringify({
-            entry_point_type: activeType.type,
-            settings,
-            provider_id: selectedProviderId || undefined,
-            model: selectedModel,
-            credentials,
-            input: testInput,
-          }),
-          signal: AbortSignal.timeout(150_000),
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(15_000),
         },
         accessToken,
       );
+      if (
+        activeType.type === 'HTTP_ENDPOINT' &&
+        typeof result.raw_response === 'string'
+      ) {
+        setTestFailure({
+          reason: 'The app returned a non-JSON response.',
+          nextStep:
+            'Make the endpoint return JSON and check that the configured answer path exists.',
+          rawResponse: result.raw_response,
+        });
+        return;
+      }
       setTestResult(scrubSecrets(result, secretValues) as TestCallResult);
       setTestResultSaved(false);
       setMessage('Test call succeeded. You can now save this connector.');
     } catch (error: unknown) {
       setTestResult(null);
-      setError(
-        error instanceof Error
-          ? error.message
-          : 'Test call failed. Review the settings and try again.',
-      );
+      setTestFailure(connectorFailure(error, activeType.type));
     } finally {
       connectorTestLock.current = false;
       setTestingConnector(false);
@@ -1727,7 +1957,8 @@ export default function WorkspaceProjects({
       connectorSaveLock.current ||
       !activeType ||
       !selectedProjectId ||
-      !testResult
+      !testResult ||
+      !connectorName.trim()
     )
       return;
     connectorSaveLock.current = true;
@@ -1737,12 +1968,19 @@ export default function WorkspaceProjects({
     const secret = connectorApiKey;
     const credentials: Record<string, string> = {};
     if (secret) credentials.api_key = secret;
-    const settings = connectorRequestSettings(
-      activeType.type,
-      connectorSettings,
-      currentSchema,
-    );
     try {
+      const payload = buildConnectorPayload(
+        activeType.type,
+        {
+          settings: connectorSettings,
+          credentials,
+          provider_id: selectedProviderId || undefined,
+          model: selectedModel,
+          test_call_id: testResult.test_call_id,
+          name: connectorName.trim(),
+        },
+        currentSchema,
+      );
       const createdConnector = await apiRequest<Connector>(
         makeWorkspacePath(
           workspace.id,
@@ -1750,16 +1988,8 @@ export default function WorkspaceProjects({
         ),
         {
           method: 'POST',
-          body: JSON.stringify({
-            entry_point_type: activeType.type,
-            settings,
-            provider_id: selectedProviderId || undefined,
-            model: selectedModel,
-            credentials,
-            test_call_id: testResult.test_call_id,
-            name: connectorName.trim() || activeType.label,
-          }),
-          signal: AbortSignal.timeout(20_000),
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(15_000),
         },
         accessToken,
       );
@@ -1785,11 +2015,8 @@ export default function WorkspaceProjects({
       );
       setMessage('Connector saved.');
     } catch (error: unknown) {
-      setError(
-        error instanceof Error
-          ? error.message
-          : 'Connector could not be saved. Run a new test and try again.',
-      );
+      const failure = connectorFailure(error, activeType.type);
+      setError(`${failure.reason} ${failure.nextStep}`);
     } finally {
       connectorSaveLock.current = false;
       setSavingConnector(false);
@@ -1859,6 +2086,7 @@ export default function WorkspaceProjects({
         onActiveProjectChange?.(nextProjectId);
         setConnectors([]);
         setTestResult(null);
+        setTestFailure(null);
         setTestResultSaved(false);
       }
       setMessage('Project deleted.');
@@ -1918,6 +2146,7 @@ export default function WorkspaceProjects({
           return next;
         });
         setTestResult(null);
+        setTestFailure(null);
         setTestResultSaved(false);
       }
       setMessage('Provider deleted.');
@@ -2213,6 +2442,7 @@ export default function WorkspaceProjects({
                       );
                       setConnectors([]);
                       setTestResult(null);
+                      setTestFailure(null);
                       setTestResultSaved(false);
                       setError('');
                     }}
@@ -2521,183 +2751,187 @@ export default function WorkspaceProjects({
           </p>
         ) : (
           <>
-            <div className="phase2-wizard-grid">
-              <section className="phase2-wizard-step">
-                <h4>1. Choose an entry point</h4>
+            <h3 className="connector-question">
+              How can GreenLit reach your application?
+            </h3>
+            <div className="connector-choices" aria-label="Connector options">
+              {[
+                {
+                  type: 'UPLOAD_OUTPUTS',
+                  title: "I have my app's answers in a file",
+                  description:
+                    'Upload the inputs and outputs you already have.',
+                },
+                {
+                  type: 'HTTP_ENDPOINT',
+                  title: 'My app runs at a URL',
+                  description: 'Send a sample request to your running app.',
+                },
+                {
+                  type: 'PROMPT_APP',
+                  title: 'I only have a prompt and a model',
+                  description: 'Use your saved default provider and model.',
+                },
+              ].map((choice) => (
+                <button
+                  className={`connector-choice${selectedType === choice.type ? ' selected' : ''}`}
+                  type="button"
+                  key={choice.type}
+                  aria-pressed={selectedType === choice.type}
+                  onClick={() => selectEntryPoint(choice.type)}
+                >
+                  <strong>{choice.title}</strong>
+                  <span>{choice.description}</span>
+                </button>
+              ))}
+            </div>
+            <details className="connector-more-ways">
+              <summary>More ways (coming soon)</summary>
+              <div className="connector-more-grid">
+                {enabledTypes
+                  .filter(
+                    (entryType) =>
+                      ![
+                        'UPLOAD_OUTPUTS',
+                        'HTTP_ENDPOINT',
+                        'PROMPT_APP',
+                      ].includes(entryType.type),
+                  )
+                  .map((entryType) => (
+                    <button
+                      className={`connector-more-card${entryType.implemented ? ' available' : ''}`}
+                      type="button"
+                      key={entryType.type}
+                      disabled={!entryType.implemented}
+                      aria-pressed={selectedType === entryType.type}
+                      onClick={() => selectEntryPoint(entryType.type)}
+                    >
+                      <strong>{entryType.label}</strong>
+                      <span>
+                        {entryType.implemented
+                          ? entryType.description
+                          : `${entryType.description} · Coming soon`}
+                      </span>
+                    </button>
+                  ))}
+              </div>
+            </details>
+            {activeType && (
+              <div className="connector-config">
                 <label className="phase2-field">
-                  <span>Search entry-point types</span>
+                  <span>Connector name *</span>
                   <input
-                    type="search"
-                    value={searchText}
-                    onChange={(event) => setSearchText(event.target.value)}
-                    placeholder="Search by name or type…"
-                    aria-label="Search entry-point types"
+                    required
+                    value={connectorName}
+                    onChange={(event) => {
+                      setConnectorName(event.target.value);
+                      setError('');
+                    }}
+                    placeholder="Name this connector"
                   />
                 </label>
-                <div className="phase2-field">
-                  <span id="phase2-entry-point-label">Entry-point type</span>
-                  <div
-                    className="phase2-entry-type-list"
-                    role="listbox"
-                    tabIndex={0}
-                    aria-labelledby="phase2-entry-point-label"
-                    aria-activedescendant={
-                      filteredTypes.some(
-                        (entryType) => entryType.type === selectedType,
-                      )
-                        ? `phase2-entry-point-${selectedType}`
-                        : undefined
-                    }
-                    onKeyDown={handleEntryPointListKeyDown}
-                  >
-                    {filteredTypes.map((entryType) => (
-                      <button
-                        className={`phase2-entry-type-option${
-                          selectedType === entryType.type ? ' selected' : ''
-                        }${entryType.implemented ? '' : ' unavailable'}`}
-                        id={`phase2-entry-point-${entryType.type}`}
-                        key={entryType.type}
-                        type="button"
-                        role="option"
-                        tabIndex={-1}
-                        aria-selected={selectedType === entryType.type}
-                        disabled={!entryType.implemented}
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => selectEntryPoint(entryType.type)}
-                      >
-                        <span className="phase2-entry-type-copy">
-                          <strong>{entryType.label}</strong>
-                          <small>{entryType.description}</small>
-                          <small>
-                            Access: {entryType.access_level ?? 'not specified'}
-                          </small>
-                        </span>
-                        <span className="phase2-entry-type-status">
-                          {entryType.implemented
-                            ? 'Available · Phase 2'
-                            : `${phaseLabel(entryType)} · ${disabledReason(entryType)}`}
-                        </span>
-                      </button>
-                    ))}
-                    {filteredTypes.length === 0 && (
-                      <p className="phase2-entry-type-empty">
-                        No entry-point types match your search.
-                      </p>
-                    )}
-                  </div>
-                </div>
-                {activeType && (
-                  <div className="phase2-type-description">
-                    <strong>{activeType.label}</strong>
-                    <p>{activeType.description}</p>
-                    <small>
-                      {activeType.access_level
-                        ? `Access: ${activeType.access_level}`
-                        : 'Available in Phase 2'}
-                    </small>
-                  </div>
-                )}
-
-                {activeType && (
-                  <div className="phase2-settings">
-                    <h4>2. Configure settings</h4>
-                    <SettingsEditor
-                      entryType={activeType}
-                      settings={connectorSettings}
-                      testInput={testInput}
-                      onChange={updateConnectorSettings}
-                      onError={setError}
+                <SettingsEditor
+                  entryType={activeType}
+                  settings={connectorSettings}
+                  onChange={updateConnectorSettings}
+                  onError={setError}
+                />
+                {activeType.type === 'HTTP_ENDPOINT' && (
+                  <label className="phase2-field" htmlFor={secretInputId}>
+                    <span>API key (optional)</span>
+                    <input
+                      id={secretInputId}
+                      type="password"
+                      autoComplete="new-password"
+                      value={connectorApiKey}
+                      onChange={(event) => {
+                        setConnectorApiKey(event.target.value);
+                        setTestResult(null);
+                        setTestFailure(null);
+                        setTestResultSaved(false);
+                        setError('');
+                      }}
+                      placeholder="Sent only to your app; never shown again"
                     />
-                    <label className="phase2-field">
-                      <span>Connector name</span>
-                      <input
-                        value={connectorName}
-                        onChange={(event) => {
-                          setConnectorName(event.target.value);
-                          setError('');
-                        }}
-                        placeholder={activeType.label}
-                      />
-                    </label>
-                    <label className="phase2-field" htmlFor={secretInputId}>
-                      <span>Connector API key (optional)</span>
-                      <input
-                        id={secretInputId}
-                        type="password"
-                        autoComplete="new-password"
-                        value={connectorApiKey}
-                        onChange={(event) => {
-                          setConnectorApiKey(event.target.value);
-                          setTestResult(null);
-                          setTestResultSaved(false);
-                          setError('');
-                        }}
-                        placeholder="Used for the test and cleared after save"
-                      />
-                    </label>
-                    {providers.length > 0 && (
-                      <label className="phase2-field">
-                        <span>
-                          {requiresProvider
-                            ? 'Provider *'
-                            : 'Provider (optional)'}
-                        </span>
-                        <select
-                          required={requiresProvider}
-                          value={selectedProviderId}
-                          onChange={(event) => {
-                            setSelectedProviderId(event.target.value);
-                            setTestResult(null);
-                            setTestResultSaved(false);
-                            setError('');
-                          }}
-                        >
-                          <option value="">None (not required)</option>
-                          {providers.map((provider) => (
-                            <option key={provider.id} value={provider.id}>
-                              {provider.name} ({provider.provider_type})
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    )}
-                  </div>
+                  </label>
                 )}
-              </section>
-
-              <section className="phase2-wizard-step">
-                <h4>3. Run a sample test</h4>
-                <form onSubmit={handleTestConnector}>
+                {activeType.type === 'PROMPT_APP' && (
+                  <p className="phase2-inline-note">
+                    {activeProvider
+                      ? `Using your saved provider: ${activeProvider.name}.`
+                      : 'Set a default provider in Provider setup before testing this path.'}
+                  </p>
+                )}
+                <form
+                  className="connector-test-form"
+                  onSubmit={handleTestConnector}
+                >
                   <label className="phase2-field">
-                    <span>Sample input</span>
+                    <span>
+                      {activeType.type === 'UPLOAD_OUTPUTS'
+                        ? 'Sample input (must match a file row)'
+                        : 'Sample input'}
+                    </span>
                     <textarea
-                      rows={5}
+                      rows={3}
                       value={testInput}
                       onChange={(event) => {
                         setTestInput(event.target.value);
                         setTestResult(null);
+                        setTestFailure(null);
                         setTestResultSaved(false);
                         setError('');
                       }}
-                      placeholder="Ask a question or provide an example input…"
+                      placeholder={
+                        activeType.type === 'UPLOAD_OUTPUTS'
+                          ? 'Enter the input from one uploaded row'
+                          : 'Enter an example input'
+                      }
                     />
                   </label>
-                  {activeProvider && (
-                    <p className="phase2-inline-note">
-                      Using {activeProvider.name}. Provider credentials are not
-                      displayed.
-                    </p>
-                  )}
                   <button
                     className="primary-button"
                     type="submit"
                     disabled={!canTest}
                   >
-                    {testingConnector ? 'Running test…' : 'Test call'}
+                    {testingConnector
+                      ? 'Sending…'
+                      : activeType.type === 'HTTP_ENDPOINT'
+                        ? 'Send sample input'
+                        : 'Test with sample input'}
                   </button>
+                  {!connectorName.trim() && (
+                    <p className="muted-text">
+                      Enter a connector name to test.
+                    </p>
+                  )}
+                  {requiresProvider && !selectedProviderId && (
+                    <p className="field-hint-error" role="status">
+                      A saved default provider is required for this option.
+                    </p>
+                  )}
                 </form>
+                {testFailure && (
+                  <div
+                    className="connector-result connector-result-failure"
+                    role="alert"
+                  >
+                    <strong>{testFailure.reason}</strong>
+                    <p>Next step: {testFailure.nextStep}</p>
+                    {testFailure.rawResponse !== undefined && (
+                      <details>
+                        <summary>Raw response</summary>
+                        <pre>{formatJson(testFailure.rawResponse)}</pre>
+                      </details>
+                    )}
+                  </div>
+                )}
                 {testResult && (
-                  <div className="phase2-test-result" role="region">
+                  <div
+                    className="phase2-test-result"
+                    role="region"
+                    aria-label="Test result"
+                  >
                     <div className="phase2-result-summary">
                       <span className="phase2-result-success">
                         Test succeeded
@@ -2706,39 +2940,29 @@ export default function WorkspaceProjects({
                     </div>
                     <div className="phase2-result-fields">
                       <div>
-                        <strong>Detected fields</strong>
-                        <p>
-                          {testResult.detected_fields?.length
-                            ? testResult.detected_fields.join(', ')
-                            : 'None reported'}
-                        </p>
+                        <strong>Sample input</strong>
+                        <p>{testInput}</p>
                       </div>
                       <div>
-                        <strong>Missing fields</strong>
-                        <p>
-                          {testResult.missing_fields?.length
-                            ? testResult.missing_fields.join(', ')
-                            : 'None reported'}
-                        </p>
+                        <strong>Output</strong>
+                        <p>{formatJson(traceOutput(testResult.trace))}</p>
                       </div>
                     </div>
-                    <details>
-                      <summary>Parsed trace</summary>
-                      <pre>{formatJson(testResult.trace)}</pre>
-                    </details>
-                    <details>
-                      <summary>Raw output</summary>
-                      <pre>{formatJson(testResult.raw_response)}</pre>
-                    </details>
+                    {activeType.type === 'HTTP_ENDPOINT' && (
+                      <details>
+                        <summary>Raw response</summary>
+                        <pre>{formatJson(testResult.raw_response)}</pre>
+                      </details>
+                    )}
                   </div>
                 )}
-              </section>
-            </div>
+              </div>
+            )}
             <div className="phase2-save-row">
               <p className="muted-text">
                 {testResult
                   ? 'The latest test passed. Save to add this connector to the project.'
-                  : 'Save is locked until a test call succeeds.'}
+                  : 'Save is disabled until a test succeeds. Run the test above to unlock it.'}
               </p>
               <button
                 className="primary-button"
@@ -2747,7 +2971,8 @@ export default function WorkspaceProjects({
                   !testResult ||
                   testResultSaved ||
                   savingConnector ||
-                  testingConnector
+                  testingConnector ||
+                  !connectorName.trim()
                 }
                 onClick={() => void handleSaveConnector()}
               >
