@@ -1,0 +1,22 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+RUN groupadd --system greenlit \
+    && useradd --system --gid greenlit --create-home greenlit
+
+COPY pyproject.toml ./
+COPY app ./app
+RUN pip install --upgrade pip && pip install -e ".[dev]"
+
+COPY alembic.ini ./
+COPY alembic ./alembic
+
+USER greenlit
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

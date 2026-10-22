@@ -1,0 +1,113 @@
+name: greenlit
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-greenlit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-greenlit}
+      POSTGRES_DB: ${POSTGRES_DB:-greenlit}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-greenlit} -d ${POSTGRES_DB:-greenlit}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  api:
+    build:
+      context: ./backend
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://greenlit:greenlit@postgres:5432/greenlit}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-dev-insecure-key-change-me}
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
+      DEFAULT_TIMEOUT_SECONDS: ${DEFAULT_TIMEOUT_SECONDS:-60}
+      DEFAULT_RUN_PARALLELISM: ${DEFAULT_RUN_PARALLELISM:-2}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  worker:
+    build:
+      context: ./backend
+    command: celery -A app.celery_app.celery worker --loglevel=INFO
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://greenlit:greenlit@postgres:5432/greenlit}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-dev-insecure-key-change-me}
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  web:
+    build:
+      context: ./frontend
+    command: npm run dev -- --host 0.0.0.0
+    ports:
+      - "5173:5173"
+    volumes:
+      # Mount sources only. Never mount over /app/node_modules (it would hide the
+      # dependencies installed by `npm ci` in the image).
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+      - ./frontend/tsconfig.json:/app/tsconfig.json
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:5173/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+volumes:
+  postgres-data:
