@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from fastapi.testclient import TestClient
 
 PASSWORD = "correct horse battery"
@@ -167,6 +169,56 @@ def test_last_admin_cannot_be_demoted(client: TestClient) -> None:
     assert "last admin" in response.json()["error"]["message"]
 
 
+def test_password_reset_debug_token_in_development(client: TestClient) -> None:
+    from app.config import get_settings
+
+    # Clear cached settings so env vars take effect
+    get_settings.cache_clear()
+    # Force development environment so debug_token is returned
+    register(client)
+
+    request = client.post("/api/v1/auth/password-reset/request", json={"email": "ada@example.com"})
+    assert request.status_code == 200
+    token = request.json()["debug_token"]
+    assert token is not None, "debug_token should be set in development mode"
+
+
+def test_password_reset_debug_token_not_in_production(client: TestClient) -> None:
+    from app.config import get_settings
+
+    # Clear cached settings so env vars take effect
+    get_settings.cache_clear()
+    # Force production environment so debug_token is NOT returned
+    os.environ["APP_ENV"] = "production"
+    os.environ.pop("DEBUG", None)
+    register(client)
+
+    request = client.post("/api/v1/auth/password-reset/request", json={"email": "ada@example.com"})
+    assert request.status_code == 200
+    token = request.json()["debug_token"]
+    assert token is None, "debug_token must be None in production mode"
+
+
+def test_password_reset_debug_token_with_debug_true(client: TestClient) -> None:
+    from app.config import get_settings
+
+    # Clear cached settings so env vars take effect
+    get_settings.cache_clear()
+    # Force production env but DEBUG=true should still return debug_token
+    os.environ["APP_ENV"] = "production"
+    os.environ["DEBUG"] = "true"
+    register(client)
+
+    request = client.post("/api/v1/auth/password-reset/request", json={"email": "ada@example.com"})
+    assert request.status_code == 200
+    token = request.json()["debug_token"]
+    assert token is not None, "debug_token should be set when DEBUG=true even in production"
+
+    # Clean up env vars
+    del os.environ["DEBUG"]
+    del os.environ["APP_ENV"]
+
+
 def test_password_reset_is_single_use_and_revokes_sessions(client: TestClient) -> None:
     register(client)
     before_reset = client.cookies.get("greenlit_refresh")
@@ -174,7 +226,7 @@ def test_password_reset_is_single_use_and_revokes_sessions(client: TestClient) -
     request = client.post("/api/v1/auth/password-reset/request", json={"email": "ada@example.com"})
     assert request.status_code == 200
     token = request.json()["debug_token"]
-    assert token
+    assert token is not None, "debug_token should be set in development mode"
 
     unknown = client.post(
         "/api/v1/auth/password-reset/request", json={"email": "nobody@example.com"}
@@ -206,8 +258,7 @@ def test_password_reset_is_single_use_and_revokes_sessions(client: TestClient) -
     )
     assert (
         fresh.post(
-            "/api/v1/auth/login",
-            json={"email": "ada@example.com", "password": NEW_PASSWORD},
+            "/api/v1/auth/login", json={"email": "ada@example.com", "password": NEW_PASSWORD}
         ).status_code
         == 200
     )

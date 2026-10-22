@@ -45,8 +45,11 @@ revokes the whole token family. Cookies get `Secure` automatically over HTTPS.
 - Admins can list users, change roles and read the append-only audit log. The last admin
 cannot be demoted.
 - Password reset creates a hashed, single-use token. **No email provider is configured yet**, so
-in development the API returns `debug_token` from
+in development (APP_ENV=development or DEBUG=true) the API returns `debug_token` from
 `POST /api/v1/auth/password-reset/request`; production needs an email integration.
+
+The `debug_token` is only returned when `APP_ENV=development` or `DEBUG=true`;
+it is never returned in production.
 
 Auth endpoints: `POST /api/v1/auth/register`, `/login`, `/refresh`, `/logout`,
 `/password-reset/request`, `/password-reset/confirm`, and `GET /api/v1/auth/me`. Admin

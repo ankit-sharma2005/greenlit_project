@@ -290,7 +290,7 @@ def request_password_reset(
             request=request,
         )
         db.commit()
-        if settings.is_development:
+        if settings.is_development or settings.debug:
             # No mail provider is configured yet; developers get the token directly.
             debug_token = raw_token
 

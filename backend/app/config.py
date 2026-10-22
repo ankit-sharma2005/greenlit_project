@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
 
     app_env: str = "development"
+    debug: bool = Field(default=False, description="debug")
     log_level: str = "INFO"
 
     # Used later to encrypt provider/connector secrets at rest.
