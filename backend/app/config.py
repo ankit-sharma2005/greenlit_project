@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # Used later to encrypt provider/connector secrets at rest.
-    app_secret_key: str = Field(default="dev-insecure-key-change-me", min_length=8)
+    app_secret_key: str = Field(default="dev-insecure-key-change-me-0123456789", min_length=8)
 
     database_url: str = "postgresql+psycopg://greenlit:greenlit@localhost:5436/greenlit"
     redis_url: str = "redis://localhost:6382/0"
@@ -30,6 +30,15 @@ class Settings(BaseSettings):
 
     default_timeout_seconds: int = Field(default=60, ge=1, le=600)
     default_run_parallelism: int = Field(default=2, ge=1, le=16)
+
+    # --- Accounts and sessions (M1) ---
+    access_token_expire_minutes: int = Field(default=15, ge=1, le=240)
+    refresh_token_expire_days: int = Field(default=14, ge=1, le=90)
+    password_reset_expire_minutes: int = Field(default=30, ge=5, le=240)
+    login_rate_limit_attempts: int = Field(default=5, ge=1, le=100)
+    login_rate_limit_window_seconds: int = Field(default=900, ge=60, le=86400)
+    # None means "auto": Secure cookies only when the request arrived over HTTPS.
+    cookie_secure: bool | None = None
 
     @property
     def is_development(self) -> bool:

@@ -1,7 +1,7 @@
 # GreenLit — Handover notes
 
 > Living document. It is completed after M10 as required by the specification; this version
-> reflects the repository as of M0 (foundation).
+> reflects the repository as of M1 (accounts).
 
 ## How to run
 
@@ -35,17 +35,24 @@ cd frontend && npm run lint && npm run format:check && npm run build && npm test
 ## Architecture (current)
 
 - `backend/app`: FastAPI (sync SQLAlchemy 2 + psycopg 3), typed settings, single error
-  envelope, health/readiness endpoints. Alembic migration `0001_initial` enables `pgcrypto`.
+  envelope, health/readiness endpoints, accounts. Migrations `0001_initial` (pgcrypto) and
+  `0002_accounts` (users, refresh_tokens, password_resets, audit_events).
+- Auth: Argon2id passwords, 15-minute access JWT cookie, rotating 14-day hashed refresh token
+  with family reuse detection, Redis login rate limit (fails open), RBAC and audit log.
+  Password reset is API-only (no email provider): development returns `debug_token`.
 - `backend/app/celery_app.py`: Celery wired to Redis; no tasks until M6.
 - `frontend/src`: React 19 + TypeScript + Vite, React Router, CSS custom-property tokens
-  (dark default/light theme), `Spinner`, `Button` (loading/slow label), `ProgressBar`.
+  (dark default/light theme), `Spinner`, `Button` (loading/slow label), `ProgressBar`,
+  auth provider/route guard, login and register pages.
 - `docker-compose.yml`: postgres, redis, api (migrates then serves), worker, web.
 
 ## Known limitations / next milestones
 
-- Accounts, providers, connectors, datasets, runs, judges, safety, regression and reports
-  are not built. They are visibly marked "Coming soon" in the UI and their milestones are
-  recorded in `DECISIONS.md` and the build prompt.
+- Providers, connectors, datasets, runs, judges, safety, regression and reports are not
+  built. They are visibly marked "Coming soon" in the UI and their milestones are recorded
+  in `DECISIONS.md` and the build prompt.
+- No email delivery, so password reset is only usable through the development `debug_token`.
+- No UI for password reset, user administration or the audit log yet; those endpoints exist.
 - Only containerised dev servers exist; no production build/deploy path yet.
 - Playwright end-to-end tests arrive in M10.
 

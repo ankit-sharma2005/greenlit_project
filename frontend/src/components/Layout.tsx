@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
+import { useAuth } from "../auth/authContext";
 import { Brand } from "./Brand";
+import { Button } from "./Button";
 
 type Theme = "dark" | "light";
 
@@ -23,7 +25,10 @@ function readStoredTheme(): Theme {
 }
 
 export function Layout() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [theme, setTheme] = useState<Theme>(readStoredTheme);
+  const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -35,6 +40,16 @@ export function Layout() {
   }, [theme]);
 
   const nextTheme: Theme = theme === "dark" ? "light" : "dark";
+
+  async function handleSignOut() {
+    setSigningOut(true);
+    try {
+      await logout();
+      navigate("/login", { replace: true });
+    } finally {
+      setSigningOut(false);
+    }
+  }
 
   return (
     <div className="app-shell">
@@ -90,9 +105,25 @@ export function Layout() {
             {theme === "dark" ? "Light theme" : "Dark theme"}
           </button>
 
-          <span className="health-badge" title="Accounts arrive in the next milestone.">
-            Guest
-          </span>
+          {user ? (
+            <span className="user-menu">
+              <span className="badge" title={`Signed in as ${user.role}`}>
+                {user.role}
+              </span>
+              <span className="user-menu__name">
+                <strong>{user.name}</strong>
+                <span className="user-menu__email">{user.email}</span>
+              </span>
+              <Button
+                variant="ghost"
+                onClick={handleSignOut}
+                loading={signingOut}
+                loadingLabel="Signing out"
+              >
+                Sign out
+              </Button>
+            </span>
+          ) : null}
         </header>
 
         <main className="page">

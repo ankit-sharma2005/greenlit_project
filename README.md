@@ -5,8 +5,8 @@ Pre-launch testing and evaluation for LLM-powered applications. GreenLit tests t
 safety and operational checks into one decision: **GO / REVIEW / NO-GO**, with evidence and
 suggested fixes.
 
-> Status: M0 (foundation) is complete. Accounts, providers, connectors, runs and reports
-> arrive in later milestones; anything not built yet is visibly marked "Coming soon".
+> Status: M1 (accounts) is complete. Providers, connectors, runs and reports arrive in later
+> milestones; anything not built yet is visibly marked "Coming soon".
 
 ## Quick start
 
@@ -32,6 +32,25 @@ each other on the internal ones. `WEB_ORIGIN` (CORS) and `VITE_API_BASE_URL` mus
 host ports if you change them.
 
 Health checks: `GET /healthz` (liveness) and `GET /readyz` (Postgres + Redis readiness).
+
+Open the app and create the first account: it becomes the **admin**. Later accounts are
+**members** unless an admin changes their role. Roles are `admin`, `member` and `reviewer`.
+
+## Accounts and sessions
+
+- Passwords are hashed with Argon2id. Sign-in is rate limited per email + IP address.
+- Sessions use an httpOnly, SameSite=Lax access token (15 minutes) plus a rotating refresh
+token (14 days). The refresh token is stored hashed in Postgres; replaying a rotated token
+revokes the whole token family. Cookies get `Secure` automatically over HTTPS.
+- Admins can list users, change roles and read the append-only audit log. The last admin
+cannot be demoted.
+- Password reset creates a hashed, single-use token. **No email provider is configured yet**, so
+in development the API returns `debug_token` from
+`POST /api/v1/auth/password-reset/request`; production needs an email integration.
+
+Auth endpoints: `POST /api/v1/auth/register`, `/login`, `/refresh`, `/logout`,
+`/password-reset/request`, `/password-reset/confirm`, and `GET /api/v1/auth/me`. Admin
+endpoints: `GET /api/v1/users`, `PATCH /api/v1/users/{id}/role`, `GET /api/v1/audit`.
 
 ## Repository layout
 

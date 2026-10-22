@@ -95,9 +95,70 @@ frontend outside Docker, start it with `npm run dev -- --port 5177` so the brows
 matches `WEB_ORIGIN`.
 
 ### D0.18 API base URL is available before the first API client
-`VITE_API_BASE_URL` is declared in `.env.example` and passed to the `web` service so M1's
-API client uses the host API port without touching the compose file. No UI code calls it
-yet; it is configuration, not a working feature.
+`VITE_API_BASE_URL` is declared in `.env.example` and passed to the `web` service so the M1
+API client uses the host API port without touching the compose file.
+
+## M1 — Accounts
+
+### D1.1 Password hashing
+Argon2id via `argon2-cffi` (default parameters). Verification never raises on malformed
+hashes; it returns False so login keeps a generic error.
+
+### D1.2 Session model
+A short-lived access JWT (HS256, 15 min) and an opaque 64-byte refresh token (14 days) are
+both set as httpOnly cookies. Refresh tokens are stored as SHA-256 hashes and rotate on every
+refresh inside a family. Presenting a revoked token is treated as theft: the entire family is
+revoked and the client gets 401. Only hashes are ever stored; access tokens are stateless so
+their JWT `jti` is not tracked.
+
+### D1.3 Cookie flags
+`HttpOnly`, `SameSite=Lax`, `Path=/`. `Secure` comes from `COOKIE_SECURE` when set, otherwise
+from the request scheme / `X-Forwarded-Proto`. Lax is enough because the UI and API share the
+`localhost` site even on different ports; there is no cross-site embedding.
+
+### D1.4 Login rate limiting
+Redis fixed-window counter keyed by lower-cased email + client IP: 5 attempts / 15 minutes by
+default. It fails open when Redis is unavailable — Argon2 verification remains the real gate,
+and a cache outage must not lock every user out. Tests inject an in-memory limiter.
+
+### D1.5 Password reset delivery
+There is no mail provider in this milestone, so a development environment returns the reset
+token as `debug_token` in the request response. Tokens are hashed, single-use and expire in 30
+minutes; requesting a new one invalidates earlier unused tokens, and a completed reset revokes
+all refresh tokens. Wiring email delivery (and removing `debug_token`) is required before
+production.
+
+### D1.6 RBAC and the last admin
+The first registered account becomes `admin`; later registrations are `member`. Roles are
+checked server-side by dependencies (`require_roles`). Admin user/audit endpoints return 403
+for other roles. Demoting the last admin returns 409 so a workspace cannot lock itself out.
+
+### D1.7 Test database
+Backend integration tests use an in-memory SQLite database with the real models and the real
+FastAPI app, with `get_db` and the rate limiter overridden. This keeps CI fast and hermetic;
+Postgres-specific behaviour is covered by the migrated Compose stack in verification.
+
+### D1.8 CORS with cookies
+`allow_credentials=True` with explicit origins (`http://localhost:5177` by default). No
+wildcard origins, because credentialed CORS forbids them. Tests assert allowed and rejected
+origins.
+
+### D1.9 Audit actions in M1
+`auth.register`, `auth.sign_in`, `auth.sign_in_failed`, `auth.sign_out`,
+`auth.refresh_reuse`, `auth.password_reset_requested`, `auth.password_reset_completed`,
+`user.role_changed`. The table is append-only from the application: there is no update or
+delete endpoint.
+
+### D1.10 Frontend auth UX
+The app shell is protected by `RequireAuth`, which shows the `xl` spinner while the session is
+checked and redirects to `/login` with the intended path. Login and register pages use the
+brand mark, labelled 44px inputs, `Button loading` and the API's plain-language errors. The
+API client sends `credentials: "include"` to the base URL from `VITE_API_BASE_URL`.
+
+### D1.11 Fast-refresh split
+The auth context object/hook live in `auth/authContext.ts`; `AuthProvider.tsx` exports only a
+component. Splitting keeps `react-refresh/only-export-components` clean (and Windows cannot
+host `AuthContext.ts` next to `authContext.ts`).
 
 ### D0.14 Frontend mounts are file-level
 `web` mounts `src`, `public`, `index.html`, `vite.config.ts` and `tsconfig.json` instead of

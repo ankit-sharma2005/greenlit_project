@@ -36,7 +36,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://greenlit:greenlit@postgres:5432/greenlit}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      APP_SECRET_KEY: ${APP_SECRET_KEY:-dev-insecure-key-change-me}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-dev-insecure-key-change-me-0123456789}
       APP_ENV: ${APP_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5177}
@@ -73,7 +73,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://greenlit:greenlit@postgres:5432/greenlit}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      APP_SECRET_KEY: ${APP_SECRET_KEY:-dev-insecure-key-change-me}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-dev-insecure-key-change-me-0123456789}
       APP_ENV: ${APP_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
@@ -105,7 +105,7 @@ services:
     depends_on:
       - api
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:5173/"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:5173/"]
       interval: 10s
       timeout: 5s
       retries: 12
