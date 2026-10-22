@@ -108,3 +108,32 @@ class AuditEvent(TimestampMixin, Base):
         "metadata", JSON, nullable=False, default=dict
     )
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class Provider(TimestampMixin, Base):
+    __tablename__ = "providers"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    base_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    api_key_encrypted: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    is_premium: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    timeout_seconds: Mapped[int] = mapped_column(nullable=False, default=30)
+    max_retries: Mapped[int] = mapped_column(nullable=False, default=3)
+    backoff_factor: Mapped[float] = mapped_column(nullable=False, default=2.0)
+    rate_limit_per_minute: Mapped[int | None] = mapped_column(nullable=True, default=None)
+    tokens_per_minute: Mapped[int | None] = mapped_column(nullable=True, default=None)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    provider_config: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSON, nullable=False, default=dict
+    )
+
+    @property
+    def is_free_tier(self) -> bool:
+        return self.kind in {"openai-compatible", "groq"} and not self.is_premium and self.is_active
+
+    @property
+    def display_name(self) -> str:
+        return f"{self.name} ({self.model_name})"

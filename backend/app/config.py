@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     # None means "auto": Secure cookies only when the request arrived over HTTPS.
     cookie_secure: bool | None = None
 
+    # --- Provider defaults (M2) ---
+    provider_timeout_seconds: int = Field(default=30, ge=1, le=300)
+    provider_max_retries: int = Field(default=3, ge=0, le=10)
+    provider_backoff_factor: float = Field(default=2.0, ge=1.0, le=10.0)
+
     @property
     def is_development(self) -> bool:
         return self.app_env.lower() in {"development", "dev", "local"}
