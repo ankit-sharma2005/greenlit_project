@@ -48,6 +48,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 app = create_app()
 
+
 @app.get("/", include_in_schema=False)
 def root() -> dict[str, str]:
     """Tiny landing response; the UI runs separately."""

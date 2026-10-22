@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
+import base64
 import os
 
 from cryptography.fernet import Fernet
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 
 def _get_fernet() -> Fernet:
-    """Get or create a Fernet instance from the app secret key."""
+    """Get a Fernet instance from the app secret key."""
     app_secret = os.environ.get("APP_SECRET_KEY", "dev-insecure-key-change-me-0123456789")
     key_material = app_secret.encode("utf-8")[:32]
-    from cryptography.hazmat.backends import default_backend
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,
@@ -22,7 +22,7 @@ def _get_fernet() -> Fernet:
         iterations=100000,
         backend=default_backend(),
     )
-    key = kdf.derive(key_material)
+    key = base64.urlsafe_b64encode(kdf.derive(key_material))
     return Fernet(key)
 
 

@@ -25,6 +25,13 @@ class ProviderBase(BaseModel):
     is_active: bool = Field(default=True)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+    # M3: connector type selection
+    connector: str = Field(
+        default="http_endpoint",
+        pattern="^(http_endpoint|prompt_app|upload_outputs|csv|json|http_endpoint)$",
+        description="Connector type for test configuration",
+    )
+
 
 class ProviderCreate(ProviderBase):
     pass
@@ -44,6 +51,8 @@ class ProviderUpdate(BaseModel):
     rate_limit_per_minute: int | None = None
     tokens_per_minute: int | None = None
     is_active: bool | None = None
+    metadata: dict[str, Any] | None = None
+    connector: str | None = None
 
 
 class ProviderRead(BaseModel):
@@ -54,7 +63,7 @@ class ProviderRead(BaseModel):
     kind: str
     model_name: str
     base_url: str | None = None
-    api_key: str | None = None
+    api_key: str | None = None  # Never returned - encrypted at rest
     timeout_seconds: int
     max_retries: int
     backoff_factor: float
@@ -63,6 +72,7 @@ class ProviderRead(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    connector: str | None = None  # M3: stored per-provider
 
 
 class ProviderTestConnection(BaseModel):
@@ -76,6 +86,7 @@ class ProviderTestResult(BaseModel):
     message: str
     latency_ms: int | None = None
     model: str | None = None
-    fields: dict[str, Any] | None = None
+    fields: dict[str, Any] | None = None  # M3: prompt/app fields or upload config
     is_free_tier: bool | None = None
     privacy_warning: str | None = None
+    connector: str | None = None  # M3: which connector was used

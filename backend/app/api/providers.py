@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -27,6 +29,13 @@ def _require_admin(user: object) -> object:
     return user
 
 
+def _require_user(user: object) -> object:
+    """Any authenticated user can access provider endpoints."""
+    if getattr(user, "role", "") not in ("admin", "member", "reviewer"):
+        raise HTTPException(status_code=403, detail="Authentication required")
+    return user
+
+
 @router.post("", response_model=ProviderRead, status_code=201)
 def create_provider(
     payload: ProviderCreate,
@@ -36,13 +45,11 @@ def create_provider(
 ) -> ProviderRead:
     """Create a new provider. Duplicate names are rejected."""
     from sqlalchemy import func
-    existing = db.scalar(
-        select(Provider).where(func.lower(Provider.name) == payload.name.lower())
-    )
+
+    existing = db.scalar(select(Provider).where(func.lower(Provider.name) == payload.name.lower()))
     if existing:
         raise HTTPException(
-            status_code=409,
-            detail=f"Provider '{payload.name}' already exists.",
+            status_code=409, detail="Provider '" + payload.name + "' already exists."
         )
     from app.security.keys import encrypt_key
 
@@ -60,6 +67,7 @@ def create_provider(
         tokens_per_minute=payload.tokens_per_minute,
         is_active=payload.is_active,
         provider_config=payload.metadata,
+        connector=payload.connector,
     )
     db.add(provider)
     db.commit()
@@ -79,7 +87,7 @@ def list_providers(
 
 @router.get("/{provider_id}", response_model=ProviderRead)
 def get_provider(
-    provider_id: int,
+    provider_id: uuid.UUID,
     db: Session = Depends(get_db),
     user: object = Depends(get_current_user),
 ) -> ProviderRead:
@@ -92,7 +100,7 @@ def get_provider(
 
 @router.patch("/{provider_id}", response_model=ProviderRead)
 def update_provider(
-    provider_id: int,
+    provider_id: uuid.UUID,
     payload: ProviderUpdate,
     request: Request,
     db: Session = Depends(get_db),
@@ -104,6 +112,7 @@ def update_provider(
         raise HTTPException(status_code=404, detail="Provider not found")
     if payload.name is not None and payload.name != provider.name:
         from sqlalchemy import func
+
         existing = db.scalar(
             select(Provider).where(
                 func.lower(Provider.name) == payload.name.lower(),
@@ -116,6 +125,7 @@ def update_provider(
             )
     if payload.api_key is not None:
         from app.security.keys import encrypt_key
+
         provider.api_key_encrypted = encrypt_key(payload.api_key)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(provider, field, value)
@@ -124,9 +134,9 @@ def update_provider(
     return ProviderRead.model_validate(provider)
 
 
-@router.delete("/{provider_id}", status_code=204)
+@router.delete("/{provider_id}", status_code=204, response_model=None)
 def delete_provider(
-    provider_id: int,
+    provider_id: uuid.UUID,
     request: Request,
     db: Session = Depends(get_db),
     user: object = Depends(_require_admin),
@@ -141,7 +151,7 @@ def delete_provider(
 
 @router.post("/{provider_id}/test", response_model=ProviderTestResult)
 def test_provider_connection_endpoint(
-    provider_id: int,
+    provider_id: uuid.UUID,
     request: Request,
     db: Session = Depends(get_db),
     user: object = Depends(get_current_user),

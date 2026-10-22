@@ -129,6 +129,7 @@ class Provider(TimestampMixin, Base):
     provider_config: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSON, nullable=False, default=dict
     )
+    connector: Mapped[str] = mapped_column(String(40), nullable=False, default="http_endpoint")
 
     @property
     def is_free_tier(self) -> bool:
