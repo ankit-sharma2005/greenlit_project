@@ -23,10 +23,10 @@ class Settings(BaseSettings):
     # Used later to encrypt provider/connector secrets at rest.
     app_secret_key: str = Field(default="dev-insecure-key-change-me", min_length=8)
 
-    database_url: str = "postgresql+psycopg://greenlit:greenlit@localhost:5432/greenlit"
-    redis_url: str = "redis://localhost:6379/0"
+    database_url: str = "postgresql+psycopg://greenlit:greenlit@localhost:5436/greenlit"
+    redis_url: str = "redis://localhost:6382/0"
 
-    web_origin: str = "http://localhost:5173"
+    web_origin: str = "http://localhost:5177"
 
     default_timeout_seconds: int = Field(default=60, ge=1, le=600)
     default_run_parallelism: int = Field(default=2, ge=1, le=16)

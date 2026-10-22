@@ -22,7 +22,7 @@ def test_defaults_are_development_friendly(monkeypatch: pytest.MonkeyPatch) -> N
     assert settings.is_development is True
     assert settings.default_timeout_seconds == 60
     assert settings.default_run_parallelism == 2
-    assert settings.cors_origins == ["http://localhost:5173"]
+    assert settings.cors_origins == ["http://localhost:5177"]
 
 
 def test_cors_origins_accepts_comma_separated_values() -> None:

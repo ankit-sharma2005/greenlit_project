@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-greenlit}
       POSTGRES_DB: ${POSTGRES_DB:-greenlit}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5436}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -20,7 +20,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6382}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -39,11 +39,11 @@ services:
       APP_SECRET_KEY: ${APP_SECRET_KEY:-dev-insecure-key-change-me}
       APP_ENV: ${APP_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5177}
       DEFAULT_TIMEOUT_SECONDS: ${DEFAULT_TIMEOUT_SECONDS:-60}
       DEFAULT_RUN_PARALLELISM: ${DEFAULT_RUN_PARALLELISM:-2}
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8003}:8000"
     volumes:
       - ./backend:/app
     depends_on:
@@ -90,8 +90,10 @@ services:
     build:
       context: ./frontend
     command: npm run dev -- --host 0.0.0.0
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8003}
     ports:
-      - "5173:5173"
+      - "${WEB_PORT:-5177}:5173"
     volumes:
       # Mount sources only. Never mount over /app/node_modules (it would hide the
       # dependencies installed by `npm ci` in the image).

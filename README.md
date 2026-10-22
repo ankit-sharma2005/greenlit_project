@@ -21,9 +21,15 @@ Then open:
 
 | Service  | URL                            |
 | -------- | ------------------------------ |
-| Web UI   | http://localhost:5173          |
-| API      | http://localhost:8000          |
-| API docs | http://localhost:8000/docs     |
+| Web UI   | http://localhost:5177          |
+| API      | http://localhost:8003          |
+| API docs | http://localhost:8003/docs     |
+
+Host ports are configurable through `.env` without editing the compose file:
+`WEB_PORT` (5177), `API_PORT` (8003), `POSTGRES_PORT` (5436), `REDIS_PORT` (6382).
+The ports inside the containers stay 5173, 8000, 5432 and 6379, so services keep talking to
+each other on the internal ones. `WEB_ORIGIN` (CORS) and `VITE_API_BASE_URL` must follow the
+host ports if you change them.
 
 Health checks: `GET /healthz` (liveness) and `GET /readyz` (Postgres + Redis readiness).
 
@@ -54,8 +60,11 @@ Frontend:
 ```bash
 cd frontend
 npm ci
-npm run dev
+npm run dev -- --port 5177
 ```
+
+Run the API outside Docker against the Compose datastores (host ports 5436 and 6382) with
+the defaults already in `app/config.py`, or point `DATABASE_URL`/`REDIS_URL` at them.
 
 ## Quality checks
 

@@ -75,10 +75,29 @@ cleanup explicitly. This keeps component test files import-explicit and avoids t
 "multiple elements found" failure caused by skipped cleanup.
 
 ### D0.13 Local port conflicts during verification
-Other Docker projects on this machine already publish 5173, 8000, 5432 and 6379. M0 was
-verified with a temporary compose override that published 5175/8002/5434/6381 and is not
-committed; the repository keeps the specified default ports. On a machine where those ports
-are taken, stop the conflicting containers or adjust the port mappings.
+Other Docker projects on this machine already published 5173, 8000, 5432 and 6379 during
+M0, so the first verification used a temporary override (5175/8002/5434/6381). That
+situation is resolved permanently in D0.16.
+
+### D0.16 Host ports are configurable and no longer clash
+Host-side ports default to web **5177**, API **8003**, Postgres **5436** and Redis **6382**,
+set from `WEB_PORT`, `API_PORT`, `POSTGRES_PORT` and `REDIS_PORT` with those defaults in
+`docker-compose.yml`. The ports **inside** the containers stay 5173/8000/5432/6379, so
+inter-service URLs (`postgres:5432`, `redis:6379`, healthchecks) are unchanged. CORS
+(`WEB_ORIGIN`, default `http://localhost:5177`), the app settings defaults, and the browser
+API base URL (`VITE_API_BASE_URL`, default `http://localhost:8003`) follow the host ports.
+Playwright does not exist yet (M10) and there are no URL-bearing test configs to update;
+the Vitest suite runs without host URLs. `HANDOVER.md` now records the ports for handover.
+
+### D0.17 Frontend keeps its own dev port
+Vite's in-container port stays 5173 and is published as `${WEB_PORT}`. When running the
+frontend outside Docker, start it with `npm run dev -- --port 5177` so the browser origin
+matches `WEB_ORIGIN`.
+
+### D0.18 API base URL is available before the first API client
+`VITE_API_BASE_URL` is declared in `.env.example` and passed to the `web` service so M1's
+API client uses the host API port without touching the compose file. No UI code calls it
+yet; it is configuration, not a working feature.
 
 ### D0.14 Frontend mounts are file-level
 `web` mounts `src`, `public`, `index.html`, `vite.config.ts` and `tsconfig.json` instead of
