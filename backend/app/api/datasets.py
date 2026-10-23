@@ -157,3 +157,15 @@ def upload_dataset_version(
         db.rollback()
         raise _dataset_error(exc) from exc
     return DatasetVersionRead.model_validate(version)
+
+
+@router.delete("/{dataset_id}", status_code=204, response_model=None)
+def delete_dataset(
+    dataset_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> None:
+    """Delete one of your datasets; its mapping, versions and items cascade away."""
+    dataset = _owned_dataset(db, dataset_id, user)
+    db.delete(dataset)
+    db.commit()

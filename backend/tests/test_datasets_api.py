@@ -236,3 +236,41 @@ def test_upload_version_empty_file_returns_400(client: TestClient) -> None:
     response = _upload_version(client, dataset_id, content=b"")
     assert response.status_code == 400
     assert "empty" in response.json()["error"]["message"]
+
+
+def test_delete_dataset_removes_it_and_its_children(client: TestClient) -> None:
+    _register(client)
+    dataset_id = _upload(client, name="Doomed").json()["id"]
+    assert _upload_version(client, dataset_id).status_code == 201
+
+    response = client.delete(f"/api/v1/datasets/{dataset_id}")
+    assert response.status_code == 204
+    assert response.content == b""
+
+    assert client.get(f"/api/v1/datasets/{dataset_id}").status_code == 404
+    assert client.get(f"/api/v1/datasets/{dataset_id}/versions").status_code == 404
+    page = client.get("/api/v1/datasets").json()
+    assert page["total"] == 0
+    assert page["items"] == []
+
+
+def test_delete_requires_auth(client: TestClient) -> None:
+    response = client.delete("/api/v1/datasets/00000000-0000-0000-0000-000000000000")
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthorized"
+
+
+def test_delete_foreign_and_missing_return_404(client: TestClient) -> None:
+    _register(client, "first@example.com")
+    dataset_id = _upload(client).json()["id"]
+
+    other = TestClient(client.app)
+    _register(other, "second@example.com")
+    assert other.delete(f"/api/v1/datasets/{dataset_id}").status_code == 404
+
+    # The foreign attempt must not have deleted anything.
+    assert client.get(f"/api/v1/datasets/{dataset_id}").status_code == 200
+
+    missing = client.delete("/api/v1/datasets/00000000-0000-0000-0000-000000000000")
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "not_found"
