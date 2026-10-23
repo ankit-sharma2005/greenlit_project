@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 from httpx import Response
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
+
+from app.models import AuditEvent
 
 CSV_BYTES = (
     b"id,question,answer,latency_ms\n"
@@ -274,3 +278,65 @@ def test_delete_foreign_and_missing_return_404(client: TestClient) -> None:
     missing = client.delete("/api/v1/datasets/00000000-0000-0000-0000-000000000000")
     assert missing.status_code == 404
     assert missing.json()["error"]["code"] == "not_found"
+
+
+def _audit_rows(session_factory: sessionmaker[Session], *actions: str) -> list[AuditEvent]:
+    session = session_factory()
+    try:
+        return list(
+            session.scalars(
+                select(AuditEvent)
+                .where(AuditEvent.action.in_(actions))
+                .order_by(AuditEvent.created_at)
+            ).all()
+        )
+    finally:
+        session.close()
+
+
+def test_upload_writes_audit_event(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    _register(client)
+    dataset_id = _upload(client).json()["id"]
+
+    rows = _audit_rows(session_factory, "dataset.upload")
+    assert len(rows) == 1
+    event = rows[0]
+    assert event.target_type == "dataset"
+    assert event.target_id == dataset_id
+    assert event.event_metadata["name"] == "Golden"
+    assert event.actor_id is not None
+
+
+def test_version_and_delete_write_audit_events(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    _register(client)
+    dataset_id = _upload(client).json()["id"]
+    assert _upload_version(client, dataset_id).status_code == 201
+    assert client.delete(f"/api/v1/datasets/{dataset_id}").status_code == 204
+
+    rows = _audit_rows(session_factory, "dataset.upload", "dataset.version_added", "dataset.delete")
+    assert [row.action for row in rows] == [
+        "dataset.upload",
+        "dataset.version_added",
+        "dataset.delete",
+    ]
+    assert rows[1].event_metadata["version_no"] == 2
+    assert rows[1].target_id == dataset_id
+    assert rows[2].event_metadata["name"] == "Golden"
+
+    # Audit events are append-only: the delete of the dataset keeps its trail.
+    assert _audit_rows(session_factory, "dataset.delete")[0].target_id == dataset_id
+
+
+def test_failed_upload_writes_no_audit_event(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    _register(client)
+    assert _upload(client).status_code == 201
+    assert _upload(client, name="Golden", filename="again.csv").status_code == 409
+
+    rows = _audit_rows(session_factory, "dataset.upload")
+    assert len(rows) == 1  # only the successful upload was recorded

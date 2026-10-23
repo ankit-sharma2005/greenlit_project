@@ -18,6 +18,7 @@ from app.schemas.datasets import (
     DatasetRead,
     DatasetVersionRead,
 )
+from app.services.audit import record
 from app.services.datasets import DatasetError, add_dataset_version, create_dataset
 
 router = APIRouter(prefix="/api/v1/datasets", tags=["datasets"])
@@ -78,6 +79,14 @@ def upload_dataset(
             source_filename=file.filename,
             raw_content=raw_content,
             column_overrides=overrides,
+        )
+        record(
+            db,
+            "dataset.upload",
+            actor_id=user.id,
+            target_type="dataset",
+            target_id=str(dataset.id),
+            metadata={"name": dataset.name, "file_format": dataset.file_format},
         )
         db.commit()
     except DatasetError as exc:
@@ -152,6 +161,14 @@ def upload_dataset_version(
         )
     try:
         version = add_dataset_version(db, dataset, raw_content)
+        record(
+            db,
+            "dataset.version_added",
+            actor_id=user.id,
+            target_type="dataset",
+            target_id=str(dataset.id),
+            metadata={"version_no": version.version_no, "row_count": version.row_count},
+        )
         db.commit()
     except DatasetError as exc:
         db.rollback()
@@ -167,5 +184,13 @@ def delete_dataset(
 ) -> None:
     """Delete one of your datasets; its mapping, versions and items cascade away."""
     dataset = _owned_dataset(db, dataset_id, user)
+    record(
+        db,
+        "dataset.delete",
+        actor_id=user.id,
+        target_type="dataset",
+        target_id=str(dataset.id),
+        metadata={"name": dataset.name},
+    )
     db.delete(dataset)
     db.commit()

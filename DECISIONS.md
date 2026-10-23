@@ -206,3 +206,9 @@ for admins; dataset administration, if ever needed, arrives with a spec that ask
 `DatasetError` maps to the single error envelope: `duplicate_name` -> 409, everything else
 -> 400, malformed `column_overrides` -> 422, files over 10 MB -> 413. `python-multipart` was
 added as a dependency for the upload form.
+
+### D4.7 Dataset lifecycle writes audit events
+The endpoints append `dataset.upload`, `dataset.version_added` and `dataset.delete` events
+through the existing audit helper, in the same transaction as the change (a failed upload
+records nothing). The spec only mandates auditing for dataset *approval* (M4b); recording
+the rest now is cheap and makes the append-only trail complete.
