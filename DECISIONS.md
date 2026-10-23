@@ -232,3 +232,13 @@ from the canonical case JSON; `GET .../versions/{no}/items` is the preview. Draf
 approved through the existing approve endpoint, so "preview then approve" needs no extra
 state. The model call is resolved through a `get_chat_fn` FastAPI dependency so tests
 (and later the demo path) can swap it; provider failures map to 502 `generation_failed`.
+
+### D4.10 LLMGateway (spec section 6)
+All model calls go through `app/services/llm_gateway.py`: `chat(provider, messages,
+temperature, max_tokens)` applies the provider's timeout, retries 429/5xx/timeouts with
+exponential backoff (`backoff_factor * 2**attempt`, capped at 30 s, `max_retries` tries),
+never retries 4xx, and enforces `rate_limit_per_minute` (default 30) through the existing
+Redis `RateLimiter`, which fails open. `tokens_per_minute` is stored for display but not
+enforced pre-call: a trustworthy limit needs a model-specific tokenizer before the request
+exists. Generation now uses the gateway; `get_chat_fn` builds it with the request's rate
+limiter, so tests still swap the chat call wholesale.

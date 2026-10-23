@@ -1,8 +1,9 @@
 """Auto-generate test cases with the LLM (M4b).
 
-The chat function is injectable: the API layer resolves it through
-:func:`get_chat_fn` so tests (and later the demo path) can swap the model
-call without touching the generation logic.
+The model call itself lives in :mod:`app.services.llm_gateway`; the chat
+function is injectable: the API layer resolves it through :func:`get_chat_fn`
+so tests (and later the demo path) can swap the model call without touching
+the generation logic.
 """
 
 from __future__ import annotations
@@ -12,12 +13,13 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-import httpx
+from fastapi import Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import Dataset, DatasetItem, DatasetVersion, Provider
-from app.security.keys import decrypt_key
+from app.security.rate_limit import RateLimiter, get_rate_limiter
+from app.services.llm_gateway import LLMGateway
 
 GENERATED_COLUMNS = ["question", "answer", "context", "category"]
 
@@ -42,68 +44,6 @@ class GenerationError(Exception):
 
 
 ChatFn = Callable[[Provider, list[dict[str, str]], float, int], str]
-
-
-def chat_completion(
-    provider: Provider,
-    messages: list[dict[str, str]],
-    temperature: float,
-    max_tokens: int,
-) -> str:
-    """One chat call against an OpenAI-compatible endpoint; returns the content."""
-    if not provider.base_url:
-        raise GenerationError(
-            "provider_unavailable",
-            f"Provider '{provider.name}' has no base URL configured.",
-        )
-    url = provider.base_url.rstrip("/") + "/chat/completions"
-    headers: dict[str, str] = {}
-    if provider.api_key_encrypted:
-        api_key = decrypt_key(provider.api_key_encrypted)
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-    payload = {
-        "model": provider.model_name,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-    try:
-        response = httpx.post(
-            url,
-            headers=headers,
-            json=payload,
-            timeout=float(provider.timeout_seconds),
-        )
-    except httpx.TimeoutException as exc:
-        raise GenerationError(
-            "provider_unavailable",
-            f"Provider '{provider.name}' timed out after {provider.timeout_seconds}s.",
-        ) from exc
-    except httpx.HTTPError as exc:
-        raise GenerationError(
-            "provider_unavailable",
-            f"Could not reach provider '{provider.name}': {str(exc)[:200]}",
-        ) from exc
-    if response.status_code != 200:
-        raise GenerationError(
-            "provider_unavailable",
-            f"Provider '{provider.name}' answered HTTP {response.status_code}: "
-            f"{response.text[:200]}",
-        )
-    try:
-        content = response.json()["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError) as exc:
-        raise GenerationError(
-            "invalid_response",
-            f"Provider '{provider.name}' returned an unexpected response shape.",
-        ) from exc
-    if not isinstance(content, str) or not content.strip():
-        raise GenerationError(
-            "invalid_response",
-            f"Provider '{provider.name}' returned an empty response.",
-        )
-    return content
 
 
 def _clean_text(value: Any) -> str | None:
@@ -157,9 +97,13 @@ def parse_cases(content: str, count: int) -> list[dict[str, Any]]:
     return cases
 
 
-def get_chat_fn() -> ChatFn:
-    """FastAPI dependency so tests can swap the model call."""
-    return chat_completion
+def get_chat_fn(rate_limiter: RateLimiter = Depends(get_rate_limiter)) -> ChatFn:
+    """FastAPI dependency so tests can swap the model call.
+
+    The real chat function is the shared LLM gateway, which applies the
+    provider's timeout, retries/backoff and request rate limit.
+    """
+    return LLMGateway(rate_limiter=rate_limiter).chat
 
 
 def generate_test_cases(

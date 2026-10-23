@@ -35,6 +35,7 @@ from app.services.generation import (
     generate_test_cases,
     get_chat_fn,
 )
+from app.services.llm_gateway import GatewayError
 
 router = APIRouter(prefix="/api/v1/datasets", tags=["datasets"])
 
@@ -277,9 +278,10 @@ def generate_version(
             metadata={"version_no": version.version_no, "count": version.row_count},
         )
         db.commit()
-    except GenerationError as exc:
+    except (GenerationError, GatewayError) as exc:
         db.rollback()
-        raise HTTPException(status_code=502, detail=exc.message) from exc
+        status = 429 if exc.code == "rate_limited" else 502
+        raise HTTPException(status_code=status, detail=exc.message) from exc
     return DatasetVersionRead.model_validate(version)
 
 
