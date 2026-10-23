@@ -166,3 +166,43 @@ the whole `frontend/` directory, so image-installed `node_modules` is never hidd
 
 ### D0.15 `.freebuff/` stays out of the repository
 `.freebuff/` holds workspace metadata (including the build prompt) and is git-ignored.
+
+## M4a — Datasets (upload, column detection, versioning)
+
+### D4.1 XLSX parsing uses openpyxl
+XLSX is a required upload format, so `openpyxl` (plus `types-openpyxl` for mypy) was added
+instead of hand-rolling the zip/XML format. pandas would be far heavier than the job needs.
+
+### D4.2 Services add to the caller's transaction
+Matching the audit helper: `create_dataset` / `add_dataset_version` flush but never commit;
+the API layer (M4b) or the test commits. This keeps one transaction per request.
+
+### D4.3 Column detection is two-pass with strict required roles
+Pass 1 matches exact column names case-insensitively per role (input, output, id,
+retrieved_context, latency_ms, tokens_in, tokens_out, in priority order); pass 2 accepts a
+substring match over columns no role claimed. `input` and `output` are required — otherwise
+the upload fails with `missing_columns` and the available columns are listed. Explicit user
+overrides are validated strictly (naming a column that does not exist is an error).
+
+### D4.4 Version 1 is created at upload; later versions must keep the mapped columns
+`create_dataset` parses the file, stores the bytes and SHA-256 hash, and writes the mapping,
+version 1 and the items in one transaction. `add_dataset_version` appends version N+1 with
+its own hash/row count/column snapshot and items, and bumps the dataset's stored bytes.
+A new version must contain the dataset's canonical required columns: the per-dataset mapping
+is single and is not re-detected or overridable per version (a re-upload with different
+columns belongs to a new dataset). Optional mapped columns absent from a new file are
+dropped quietly.
+
+### D4.5 `raw_content` never leaves the database
+Upload responses are `DatasetRead` schemas that omit the bytes entirely; the columns exist
+only for re-export and hashing.
+
+### D4.6 Dataset endpoints are owner-scoped
+`POST /api/v1/datasets` (multipart: file + name + optional JSON `column_overrides`),
+`GET /api/v1/datasets` (paginated, newest first), `GET /api/v1/datasets/{id}` and
+`GET /api/v1/datasets/{id}/versions`. Datasets are personal: every query filters by the
+signed-in user and a missing or foreign dataset returns 404 so existence never leaks (even
+for admins; dataset administration, if ever needed, arrives with a spec that asks for it).
+`DatasetError` maps to the single error envelope: `duplicate_name` -> 409, everything else
+-> 400, malformed `column_overrides` -> 422, files over 10 MB -> 413. `python-multipart` was
+added as a dependency for the upload form.

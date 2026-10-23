@@ -10,7 +10,17 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Uuid, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    LargeBinary,
+    String,
+    UniqueConstraint,
+    Uuid,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -138,3 +148,130 @@ class Provider(TimestampMixin, Base):
     @property
     def display_name(self) -> str:
         return f"{self.name} ({self.model_name})"
+
+
+class Dataset(TimestampMixin, Base):
+    __tablename__ = "datasets"
+    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_datasets_owner_name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    source_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_format: Mapped[str] = mapped_column(String(20), nullable=False)
+    raw_content: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    content_hash: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="",
+        server_default="",
+    )
+
+    columns: Mapped[DatasetColumnMapping] = relationship(
+        back_populates="dataset",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    versions: Mapped[list[DatasetVersion]] = relationship(
+        back_populates="dataset",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+
+class DatasetColumnMapping(TimestampMixin, Base):
+    __tablename__ = "dataset_column_mappings"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    dataset_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("datasets.id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+        nullable=False,
+    )
+    input_column: Mapped[str] = mapped_column(String(120), nullable=False)
+    output_column: Mapped[str] = mapped_column(String(120), nullable=False)
+    id_column: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    retrieved_context_column: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    latency_ms_column: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    tokens_in_column: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    tokens_out_column: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    detected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    dataset: Mapped[Dataset] = relationship(
+        back_populates="columns",
+    )
+
+
+class DatasetVersion(TimestampMixin, Base):
+    __tablename__ = "dataset_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    dataset_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("datasets.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    version_no: Mapped[int] = mapped_column(nullable=False)
+    content_hash: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="",
+        server_default="",
+    )
+    row_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    columns_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("dataset_id", "version_no", name="uq_dataset_versions_dataset_version_no"),
+    )
+
+    dataset: Mapped[Dataset] = relationship(
+        back_populates="versions",
+    )
+    items: Mapped[list[DatasetItem]] = relationship(
+        back_populates="version",
+        cascade="all, delete-orphan",
+    )
+
+
+class DatasetItem(TimestampMixin, Base):
+    __tablename__ = "dataset_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    dataset_version_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("dataset_versions.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    row_index: Mapped[int] = mapped_column(nullable=False)
+    data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+    __table_args__ = (
+        UniqueConstraint("dataset_version_id", "row_index", name="uq_dataset_items_version_row"),
+    )
+
+    version: Mapped[DatasetVersion] = relationship(
+        back_populates="items",
+    )
+
+
+__all__ = [
+    "AuditEvent",
+    "Dataset",
+    "DatasetColumnMapping",
+    "DatasetItem",
+    "DatasetVersion",
+    "PasswordReset",
+    "Provider",
+    "RefreshToken",
+    "User",
+]
