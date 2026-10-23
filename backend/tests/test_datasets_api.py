@@ -169,3 +169,70 @@ def test_detail_and_versions_are_owner_scoped(client: TestClient) -> None:
     missing = client.get("/api/v1/datasets/00000000-0000-0000-0000-000000000000")
     assert missing.status_code == 404
     assert missing.json()["error"]["code"] == "not_found"
+
+
+def _upload_version(
+    client: TestClient,
+    dataset_id: str,
+    content: bytes = b"question,answer\nNew question,New answer\n",
+    filename: str = "v2.csv",
+) -> Response:
+    return client.post(
+        f"/api/v1/datasets/{dataset_id}/versions",
+        files={"file": (filename, content, "text/csv")},
+    )
+
+
+def test_upload_version_appends_version_2(client: TestClient) -> None:
+    _register(client)
+    dataset_id = _upload(client).json()["id"]
+
+    response = _upload_version(client, dataset_id)
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["version_no"] == 2
+    assert body["row_count"] == 1
+    assert len(body["content_hash"]) == 64
+
+    versions = client.get(f"/api/v1/datasets/{dataset_id}/versions").json()
+    assert [v["version_no"] for v in versions] == [1, 2]
+    assert versions[0]["row_count"] == 2  # v1 untouched
+
+
+def test_upload_version_requires_auth(client: TestClient) -> None:
+    response = _upload_version(client, "00000000-0000-0000-0000-000000000000")
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthorized"
+
+
+def test_upload_version_foreign_dataset_returns_404(client: TestClient) -> None:
+    _register(client, "first@example.com")
+    dataset_id = _upload(client).json()["id"]
+
+    other = TestClient(client.app)
+    _register(other, "second@example.com")
+    assert _upload_version(other, dataset_id).status_code == 404
+    assert _upload_version(other, "00000000-0000-0000-0000-000000000000").status_code == 404
+
+
+def test_upload_version_missing_required_columns_returns_400(client: TestClient) -> None:
+    _register(client)
+    dataset_id = _upload(client).json()["id"]
+
+    response = _upload_version(client, dataset_id, content=b"foo,bar\n1,2\n")
+    assert response.status_code == 400
+    message = response.json()["error"]["message"]
+    assert "input" in message
+
+    # Optional columns may vanish from a later version.
+    ok = _upload_version(client, dataset_id, content=b"question,answer\nq,a\n")
+    assert ok.status_code == 201
+
+
+def test_upload_version_empty_file_returns_400(client: TestClient) -> None:
+    _register(client)
+    dataset_id = _upload(client).json()["id"]
+
+    response = _upload_version(client, dataset_id, content=b"")
+    assert response.status_code == 400
+    assert "empty" in response.json()["error"]["message"]

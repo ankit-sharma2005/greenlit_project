@@ -18,7 +18,7 @@ from app.schemas.datasets import (
     DatasetRead,
     DatasetVersionRead,
 )
-from app.services.datasets import DatasetError, create_dataset
+from app.services.datasets import DatasetError, add_dataset_version, create_dataset
 
 router = APIRouter(prefix="/api/v1/datasets", tags=["datasets"])
 
@@ -131,3 +131,29 @@ def list_dataset_versions(
         .order_by(DatasetVersion.version_no)
     ).all()
     return [DatasetVersionRead.model_validate(version) for version in versions]
+
+
+@router.post("/{dataset_id}/versions", response_model=DatasetVersionRead, status_code=201)
+def upload_dataset_version(
+    dataset_id: uuid.UUID,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> DatasetVersionRead:
+    """Append a new version by re-uploading the file (same required columns as v1)."""
+    dataset = _owned_dataset(db, dataset_id, user)
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file was attached.")
+    raw_content = file.file.read(MAX_UPLOAD_BYTES + 1)
+    if len(raw_content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="That file is larger than 10 MB. Trim it or split it into several datasets.",
+        )
+    try:
+        version = add_dataset_version(db, dataset, raw_content)
+        db.commit()
+    except DatasetError as exc:
+        db.rollback()
+        raise _dataset_error(exc) from exc
+    return DatasetVersionRead.model_validate(version)
