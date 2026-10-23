@@ -24,6 +24,7 @@ _CODE_BY_STATUS: dict[int, str] = {
     422: "validation_error",
     429: "rate_limited",
     501: "not_implemented",
+    502: "generation_failed",
     503: "service_unavailable",
 }
 

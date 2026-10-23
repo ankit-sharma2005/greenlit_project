@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
+
 from fastapi.testclient import TestClient
 from httpx import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.models import AuditEvent
+from app.models import AuditEvent, Provider
+from app.services.generation import GenerationError, get_chat_fn
 
 CSV_BYTES = (
     b"id,question,answer,latency_ms\n"
@@ -394,3 +397,133 @@ def test_approve_writes_audit_event(
     assert len(rows) == 1
     assert rows[0].target_id == dataset_id
     assert rows[0].event_metadata["version_no"] == 1
+
+
+GENERATED_CASES = [
+    {"question": "q1", "answer": "a1", "context": None, "category": "factual"},
+    {"question": "q2", "answer": "a2", "context": "ctx", "category": "edge_case"},
+]
+
+
+def _create_provider(session_factory: sessionmaker[Session]) -> str:
+    session = session_factory()
+    try:
+        provider = Provider(
+            name="gen-provider",
+            kind="openai-compatible",
+            model_name="test-model",
+            base_url="http://localhost:9/v1",
+            timeout_seconds=5,
+        )
+        session.add(provider)
+        session.commit()
+        return str(provider.id)
+    finally:
+        session.close()
+
+
+def _stub_chat(client: TestClient, reply: object) -> None:
+    """Swap the model call; pass a str (reply) or an Exception (failure).
+
+    The override must be a zero-arg dependency returning the callable:
+    installing the callable itself makes FastAPI analyze its ORM parameters.
+    """
+
+    def fake_chat(provider: Provider, messages: list[dict[str, str]], t: float, m: int) -> str:
+        if isinstance(reply, Exception):
+            raise reply
+        return str(reply)
+
+    client.app.dependency_overrides[get_chat_fn] = lambda: fake_chat
+
+
+def test_generate_creates_draft_version_and_preview_items(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    _register(client)
+    dataset_id = _upload(client).json()["id"]
+    provider_id = _create_provider(session_factory)
+    _stub_chat(client, json.dumps(GENERATED_CASES))
+    try:
+        response = client.post(
+            f"/api/v1/datasets/{dataset_id}/generate",
+            json={"provider_id": provider_id, "count": 2},
+        )
+    finally:
+        client.app.dependency_overrides.pop(get_chat_fn, None)
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["version_no"] == 2
+    assert body["generated"] is True
+    assert body["approved_at"] is None
+    assert body["row_count"] == 2
+
+    items = client.get(f"/api/v1/datasets/{dataset_id}/versions/2/items").json()
+    assert items["total"] == 2
+    assert [item["data"]["question"] for item in items["items"]] == ["q1", "q2"]
+
+    rows = _audit_rows(session_factory, "dataset.generated")
+    assert len(rows) == 1
+    assert rows[0].event_metadata["version_no"] == 2
+
+
+def test_generate_unknown_provider_returns_404(client: TestClient) -> None:
+    _register(client)
+    dataset_id = _upload(client).json()["id"]
+
+    response = client.post(
+        f"/api/v1/datasets/{dataset_id}/generate",
+        json={"provider_id": "00000000-0000-0000-0000-000000000000", "count": 2},
+    )
+    assert response.status_code == 404
+    assert response.json()["error"]["message"] == "Provider not found."
+
+
+def test_generate_provider_failure_returns_502(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    _register(client)
+    dataset_id = _upload(client).json()["id"]
+    provider_id = _create_provider(session_factory)
+    _stub_chat(
+        client,
+        GenerationError("provider_unavailable", "Provider 'gen-provider' timed out after 5s."),
+    )
+    try:
+        response = client.post(
+            f"/api/v1/datasets/{dataset_id}/generate",
+            json={"provider_id": provider_id, "count": 2},
+        )
+    finally:
+        client.app.dependency_overrides.pop(get_chat_fn, None)
+
+    assert response.status_code == 502
+    body = response.json()
+    assert body["error"]["code"] == "generation_failed"
+    assert "timed out" in body["error"]["message"]
+
+    # Nothing was persisted: only version 1 remains.
+    versions = client.get(f"/api/v1/datasets/{dataset_id}/versions").json()
+    assert [v["version_no"] for v in versions] == [1]
+
+
+def test_generate_requires_auth(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/datasets/00000000-0000-0000-0000-000000000000/generate",
+        json={"provider_id": "00000000-0000-0000-0000-000000000000"},
+    )
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthorized"
+
+
+def test_list_items_unknown_version_returns_404(client: TestClient) -> None:
+    _register(client)
+    dataset_id = _upload(client).json()["id"]
+
+    response = client.get(f"/api/v1/datasets/{dataset_id}/versions/9/items")
+    assert response.status_code == 404
+    assert "Version 9" in response.json()["error"]["message"]
+
+    missing = client.get("/api/v1/datasets/00000000-0000-0000-0000-000000000000/versions/1/items")
+    assert missing.status_code == 404

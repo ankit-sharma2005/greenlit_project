@@ -11,12 +11,15 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import get_current_user
-from app.models import Dataset, DatasetVersion, User
+from app.models import Dataset, DatasetItem, DatasetVersion, Provider, User
 from app.schemas.datasets import (
     ColumnOverrides,
+    DatasetItemListResponse,
+    DatasetItemRead,
     DatasetListResponse,
     DatasetRead,
     DatasetVersionRead,
+    GenerationRequest,
 )
 from app.services.audit import record
 from app.services.datasets import (
@@ -24,6 +27,13 @@ from app.services.datasets import (
     add_dataset_version,
     approve_dataset_version,
     create_dataset,
+)
+from app.services.generation import (
+    ChatFn,
+    GenerationError,
+    create_generated_version,
+    generate_test_cases,
+    get_chat_fn,
 )
 
 router = APIRouter(prefix="/api/v1/datasets", tags=["datasets"])
@@ -235,3 +245,77 @@ def delete_dataset(
     )
     db.delete(dataset)
     db.commit()
+
+
+@router.post("/{dataset_id}/generate", response_model=DatasetVersionRead, status_code=201)
+def generate_version(
+    dataset_id: uuid.UUID,
+    payload: GenerationRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    chat: ChatFn = Depends(get_chat_fn),
+) -> DatasetVersionRead:
+    """Generate N test cases into a new draft version; approve it to make it usable."""
+    dataset = _owned_dataset(db, dataset_id, user)
+    provider = db.get(Provider, payload.provider_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="Provider not found.")
+    try:
+        cases = generate_test_cases(
+            provider,
+            count=payload.count,
+            source_text=payload.source_text,
+            chat=chat,
+        )
+        version = create_generated_version(db, dataset, cases)
+        record(
+            db,
+            "dataset.generated",
+            actor_id=user.id,
+            target_type="dataset",
+            target_id=str(dataset.id),
+            metadata={"version_no": version.version_no, "count": version.row_count},
+        )
+        db.commit()
+    except GenerationError as exc:
+        db.rollback()
+        raise HTTPException(status_code=502, detail=exc.message) from exc
+    return DatasetVersionRead.model_validate(version)
+
+
+@router.get(
+    "/{dataset_id}/versions/{version_no}/items",
+    response_model=DatasetItemListResponse,
+)
+def list_version_items(
+    dataset_id: uuid.UUID,
+    version_no: int,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> DatasetItemListResponse:
+    """Preview a version's items (the generated-test preview, oldest row first)."""
+    dataset = _owned_dataset(db, dataset_id, user)
+    version = db.scalar(
+        select(DatasetVersion).where(
+            DatasetVersion.dataset_id == dataset.id,
+            DatasetVersion.version_no == version_no,
+        )
+    )
+    if version is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Version {version_no} does not exist for this dataset.",
+        )
+    owned = DatasetItem.dataset_version_id == version.id
+    total = db.scalar(select(func.count()).select_from(DatasetItem).where(owned)) or 0
+    items = db.scalars(
+        select(DatasetItem).where(owned).order_by(DatasetItem.row_index).limit(limit).offset(offset)
+    ).all()
+    return DatasetItemListResponse(
+        items=[DatasetItemRead.model_validate(item) for item in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )

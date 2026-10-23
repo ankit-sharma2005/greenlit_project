@@ -220,3 +220,15 @@ marks one version approved, once: re-approving is a 409 (`already_approved`), an
 version is a 404 (`version_not_found`). The dataset's owner approves — datasets are personal
 in this design, so there is no separate approver role yet. Approval is audited as
 `dataset.approved` (the event the spec requires). Runs (M6) may only use approved versions.
+
+### D4.9 Generated test cases and preview (M4b)
+Migration `0006_generated_flag` adds `generated` (bool, default false) to
+`dataset_versions` — a version-level flag rather than a per-item tag, since generated
+versions always contain only generated cases. `POST /api/v1/datasets/{id}/generate`
+(provider_id, count 1-100 default 20, optional source_text) asks the provider for a JSON
+array of `{question, answer, context, category}` cases (one retry on invalid JSON, per the
+spec's judge rules) and stores them as a new *draft* version whose SHA-256 hash is computed
+from the canonical case JSON; `GET .../versions/{no}/items` is the preview. Drafts are
+approved through the existing approve endpoint, so "preview then approve" needs no extra
+state. The model call is resolved through a `get_chat_fn` FastAPI dependency so tests
+(and later the demo path) can swap it; provider failures map to 502 `generation_failed`.

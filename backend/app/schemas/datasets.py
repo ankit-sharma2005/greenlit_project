@@ -34,6 +34,7 @@ class DatasetVersionRead(BaseModel):
     content_hash: str
     row_count: int
     columns_snapshot: dict[str, Any] | None = None
+    generated: bool = False
     approved_by: UUID | None = None
     approved_at: datetime | None = None
     created_at: datetime
@@ -84,3 +85,32 @@ class DatasetUploadRequest(BaseModel):
 
     name: str = Field(min_length=1, max_length=120)
     column_overrides: ColumnOverrides | None = None
+
+
+class GenerationRequest(BaseModel):
+    """Ask the LLM for N test cases against one of your providers."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider_id: UUID
+    count: int = Field(default=20, ge=1, le=100)
+    source_text: str | None = Field(default=None, max_length=50_000)
+
+
+class DatasetItemRead(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    id: UUID
+    dataset_version_id: UUID
+    row_index: int
+    data: dict[str, Any]
+    created_at: datetime
+
+
+class DatasetItemListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[DatasetItemRead]
+    total: int
+    limit: int
+    offset: int

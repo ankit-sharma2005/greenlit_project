@@ -228,6 +228,7 @@ class DatasetVersion(TimestampMixin, Base):
     )
     row_count: Mapped[int] = mapped_column(nullable=False, default=0)
     columns_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    generated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     approved_by: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
