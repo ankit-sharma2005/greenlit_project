@@ -212,3 +212,11 @@ The endpoints append `dataset.upload`, `dataset.version_added` and `dataset.dele
 through the existing audit helper, in the same transaction as the change (a failed upload
 records nothing). The spec only mandates auditing for dataset *approval* (M4b); recording
 the rest now is cheap and makes the append-only trail complete.
+
+### D4.8 Dataset approval (M4b)
+Migration `0005_dataset_approval` adds nullable `approved_by` (FK users, `SET NULL`) and
+`approved_at` to `dataset_versions`. `POST /api/v1/datasets/{id}/versions/{no}/approve`
+marks one version approved, once: re-approving is a 409 (`already_approved`), an unknown
+version is a 404 (`version_not_found`). The dataset's owner approves — datasets are personal
+in this design, so there is no separate approver role yet. Approval is audited as
+`dataset.approved` (the event the spec requires). Runs (M6) may only use approved versions.

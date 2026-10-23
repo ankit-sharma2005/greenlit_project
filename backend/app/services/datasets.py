@@ -21,7 +21,13 @@ from openpyxl import load_workbook
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Dataset, DatasetColumnMapping, DatasetItem, DatasetVersion
+from app.models import (
+    Dataset,
+    DatasetColumnMapping,
+    DatasetItem,
+    DatasetVersion,
+    utcnow,
+)
 
 FILE_FORMATS = ("csv", "json", "jsonl", "xlsx")
 
@@ -410,5 +416,38 @@ def add_dataset_version(
     )
     dataset.raw_content = raw_content
     dataset.content_hash = digest
+    db.flush()
+    return version
+
+
+def approve_dataset_version(
+    db: Session,
+    dataset: Dataset,
+    version_no: int,
+    approver_id: uuid.UUID,
+) -> DatasetVersion:
+    """Mark one of a dataset's versions approved; caller commits.
+
+    Approval is one-way: an already-approved version raises ``already_approved``
+    rather than silently moving the approver or timestamp.
+    """
+    version = db.scalar(
+        select(DatasetVersion).where(
+            DatasetVersion.dataset_id == dataset.id,
+            DatasetVersion.version_no == version_no,
+        )
+    )
+    if version is None:
+        raise DatasetError(
+            "version_not_found",
+            f"Version {version_no} does not exist for this dataset.",
+        )
+    if version.approved_at is not None:
+        raise DatasetError(
+            "already_approved",
+            f"Version {version_no} is already approved.",
+        )
+    version.approved_by = approver_id
+    version.approved_at = utcnow()
     db.flush()
     return version

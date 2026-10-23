@@ -19,15 +19,27 @@ from app.schemas.datasets import (
     DatasetVersionRead,
 )
 from app.services.audit import record
-from app.services.datasets import DatasetError, add_dataset_version, create_dataset
+from app.services.datasets import (
+    DatasetError,
+    add_dataset_version,
+    approve_dataset_version,
+    create_dataset,
+)
 
 router = APIRouter(prefix="/api/v1/datasets", tags=["datasets"])
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 
+_ERROR_STATUS_BY_CODE = {
+    "duplicate_name": 409,
+    "already_approved": 409,
+    "version_not_found": 404,
+}
+
+
 def _dataset_error(exc: DatasetError) -> HTTPException:
-    status = 409 if exc.code == "duplicate_name" else 400
+    status = _ERROR_STATUS_BY_CODE.get(exc.code, 400)
     return HTTPException(status_code=status, detail=exc.message)
 
 
@@ -168,6 +180,35 @@ def upload_dataset_version(
             target_type="dataset",
             target_id=str(dataset.id),
             metadata={"version_no": version.version_no, "row_count": version.row_count},
+        )
+        db.commit()
+    except DatasetError as exc:
+        db.rollback()
+        raise _dataset_error(exc) from exc
+    return DatasetVersionRead.model_validate(version)
+
+
+@router.post(
+    "/{dataset_id}/versions/{version_no}/approve",
+    response_model=DatasetVersionRead,
+)
+def approve_version(
+    dataset_id: uuid.UUID,
+    version_no: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> DatasetVersionRead:
+    """Approve a version (once); runs may only use approved versions."""
+    dataset = _owned_dataset(db, dataset_id, user)
+    try:
+        version = approve_dataset_version(db, dataset, version_no, approver_id=user.id)
+        record(
+            db,
+            "dataset.approved",
+            actor_id=user.id,
+            target_type="dataset",
+            target_id=str(dataset.id),
+            metadata={"version_no": version.version_no},
         )
         db.commit()
     except DatasetError as exc:

@@ -228,6 +228,12 @@ class DatasetVersion(TimestampMixin, Base):
     )
     row_count: Mapped[int] = mapped_column(nullable=False, default=0)
     columns_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("dataset_id", "version_no", name="uq_dataset_versions_dataset_version_no"),

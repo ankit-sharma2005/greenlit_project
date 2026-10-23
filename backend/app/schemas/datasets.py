@@ -34,6 +34,8 @@ class DatasetVersionRead(BaseModel):
     content_hash: str
     row_count: int
     columns_snapshot: dict[str, Any] | None = None
+    approved_by: UUID | None = None
+    approved_at: datetime | None = None
     created_at: datetime
 
 

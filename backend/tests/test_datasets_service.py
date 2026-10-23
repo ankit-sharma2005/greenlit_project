@@ -16,6 +16,7 @@ from app.schemas.datasets import DatasetRead
 from app.services.datasets import (
     DatasetError,
     add_dataset_version,
+    approve_dataset_version,
     content_hash,
     create_dataset,
     detect_columns,
@@ -327,3 +328,43 @@ def test_add_dataset_version_missing_required_columns_fails(
     with pytest.raises(DatasetError) as excinfo:
         add_dataset_version(session, dataset, b"foo,bar\n1,2\n")
     assert excinfo.value.code == "missing_columns"
+
+
+def test_approve_dataset_version(session_factory: sessionmaker[Session]) -> None:
+    session = session_factory()
+    user = _make_user(session)
+    dataset = create_dataset(
+        session,
+        owner_id=user.id,
+        name="Approvable",
+        source_filename="v1.csv",
+        raw_content=CSV_BYTES,
+    )
+    session.commit()
+
+    version = approve_dataset_version(session, dataset, 1, approver_id=user.id)
+    session.commit()
+    assert version.approved_by == user.id
+    assert version.approved_at is not None
+
+    # Approval is one-way.
+    with pytest.raises(DatasetError) as excinfo:
+        approve_dataset_version(session, dataset, 1, approver_id=user.id)
+    assert excinfo.value.code == "already_approved"
+
+
+def test_approve_unknown_version(session_factory: sessionmaker[Session]) -> None:
+    session = session_factory()
+    user = _make_user(session)
+    dataset = create_dataset(
+        session,
+        owner_id=user.id,
+        name="No such version",
+        source_filename="v1.csv",
+        raw_content=CSV_BYTES,
+    )
+    session.commit()
+
+    with pytest.raises(DatasetError) as excinfo:
+        approve_dataset_version(session, dataset, 7, approver_id=user.id)
+    assert excinfo.value.code == "version_not_found"

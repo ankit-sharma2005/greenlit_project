@@ -340,3 +340,57 @@ def test_failed_upload_writes_no_audit_event(
 
     rows = _audit_rows(session_factory, "dataset.upload")
     assert len(rows) == 1  # only the successful upload was recorded
+
+
+def test_approve_version_flow(client: TestClient) -> None:
+    _register(client)
+    dataset_id = _upload(client).json()["id"]
+
+    response = client.post(f"/api/v1/datasets/{dataset_id}/versions/1/approve")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["version_no"] == 1
+    assert body["approved_by"] is not None
+    assert body["approved_at"] is not None
+
+    again = client.post(f"/api/v1/datasets/{dataset_id}/versions/1/approve")
+    assert again.status_code == 409
+    assert "already approved" in again.json()["error"]["message"]
+
+
+def test_approve_unknown_version_returns_404(client: TestClient) -> None:
+    _register(client)
+    dataset_id = _upload(client).json()["id"]
+
+    response = client.post(f"/api/v1/datasets/{dataset_id}/versions/9/approve")
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "not_found"
+
+
+def test_approve_requires_auth_and_ownership(client: TestClient) -> None:
+    _register(client, "first@example.com")
+    dataset_id = _upload(client).json()["id"]
+
+    anon = TestClient(client.app)
+    assert anon.post(f"/api/v1/datasets/{dataset_id}/versions/1/approve").status_code == 401
+
+    other = TestClient(client.app)
+    _register(other, "second@example.com")
+    assert other.post(f"/api/v1/datasets/{dataset_id}/versions/1/approve").status_code == 404
+
+    # The foreign attempt must not have approved anything.
+    versions = client.get(f"/api/v1/datasets/{dataset_id}/versions").json()
+    assert versions[0]["approved_at"] is None
+
+
+def test_approve_writes_audit_event(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    _register(client)
+    dataset_id = _upload(client).json()["id"]
+    assert client.post(f"/api/v1/datasets/{dataset_id}/versions/1/approve").status_code == 200
+
+    rows = _audit_rows(session_factory, "dataset.approved")
+    assert len(rows) == 1
+    assert rows[0].target_id == dataset_id
+    assert rows[0].event_metadata["version_no"] == 1
