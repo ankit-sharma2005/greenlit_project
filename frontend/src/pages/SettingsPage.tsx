@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { ComingSoon } from "../components/ComingSoon";
 import { DatasetsPanel } from "../components/DatasetsPanel";
+import { ProvidersPanel } from "../components/ProvidersPanel";
 
 const SECTIONS = [
   { name: "Providers and models", detail: "Ollama by default, plus OpenAI-compatible providers." },
@@ -15,7 +16,7 @@ const SECTIONS = [
   { name: "Preferences", detail: "Theme, previews and defaults for new tests." },
 ];
 
-const AVAILABLE = new Set(["Datasets"]);
+const AVAILABLE = new Set(["Datasets", "Providers and models"]);
 
 export function SettingsPage() {
   const [active, setActive] = useState("Datasets");
@@ -64,6 +65,15 @@ export function SettingsPage() {
                 approve the versions runs will use.
               </p>
               <DatasetsPanel />
+            </>
+          ) : active === "Providers and models" ? (
+            <>
+              <h2>Providers and models</h2>
+              <p className="page__description" style={{ marginBottom: "var(--space-4)" }}>
+                Ollama by default, plus OpenAI-compatible providers. Test connections and track
+                health.
+              </p>
+              <ProvidersPanel />
             </>
           ) : (
             <section className="card" aria-labelledby="settings-current">
