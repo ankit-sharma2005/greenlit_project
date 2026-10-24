@@ -52,8 +52,8 @@ def templates(user: Any = Depends(get_current_user)) -> TemplatesResponse:
 
 @router.post("/preview", response_model=PreviewResponse)
 def preview(payload: PreviewRequest, user: Any = Depends(get_current_user)) -> PreviewResponse:
-    cases = _cases(payload)
     try:
+        cases = _cases(payload)
         result = evaluate_preview(
             profile_key=payload.profile,
             cases=cases,

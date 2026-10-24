@@ -183,6 +183,23 @@ def test_broken_demo_verdict_is_reproducible() -> None:
     assert first.decision.verdict == VERDICT_NO_GO
 
 
+def test_broken_demo_reason_names_score_threshold_and_weak_metrics() -> None:
+    preview = evaluate_preview("rag_chatbot", broken_cases())
+    reason = preview.decision.reason
+    assert re.search(r"Weighted score 0\.\d\d", reason), reason
+    assert "REVIEW threshold 0.60" in reason
+    assert "answer_match 0.00" in reason
+    assert "retrieval_context_recall 0.00" in reason
+    assert preview.decision.rule == 2
+
+
+def test_good_demo_verdict_is_go() -> None:
+    preview = evaluate_preview("rag_chatbot", good_cases())
+    assert preview.decision.verdict == VERDICT_GO
+    assert preview.decision.score is not None
+    assert preview.decision.score >= 0.95
+
+
 def test_uninstrumented_metrics_are_excluded_from_the_score() -> None:
     preview = evaluate_preview("rag_chatbot", good_cases())
     assert preview.metrics_by_name()["token_usage_present"].instrumented is True
@@ -254,6 +271,16 @@ def test_preview_rejects_an_unknown_profile(client: TestClient) -> None:
     )
     assert response.status_code == 400
     assert "Unknown criteria profile" in response.json()["error"]["message"]
+
+
+def test_preview_rejects_a_header_only_csv_with_400(client: TestClient) -> None:
+    register(client)
+    response = client.post(
+        "/api/v1/evaluations/preview",
+        json={"profile": "rag_chatbot", "csv": "input,expected_answer,output\n"},
+    )
+    assert response.status_code == 400
+    assert "no rows" in response.json()["error"]["message"]
 
 
 def test_preview_rejects_empty_input(client: TestClient) -> None:

@@ -82,6 +82,36 @@ test("register, login, see the real role, upload CSV in Settings -> Datasets", a
   });
 });
 
+test("results page scores outputs and explains the verdict", async ({ page }) => {
+  const email = `results${Date.now()}@example.com`;
+  await page.context().clearCookies();
+
+  await page.goto("http://localhost:5177/register");
+  await page.fill('#register-name, input[name="name"]', "Results User");
+  await page.fill('#register-email, input[type="email"], input[name="email"]', email);
+  await page.fill('#register-password, input[type="password"]', "password123456");
+  await page.click('button[type="submit"]');
+  await page.waitForURL((url) => !url.pathname.includes("/register"), { timeout: 15000 });
+
+  await page.goto("http://localhost:5177/results");
+  await page.waitForSelector('[data-testid="outputs-csv"]', { timeout: 20000 });
+
+  // The broken outputs must be a NO-GO whose reason names the threshold.
+  await page.click('button:has-text("Load broken example")');
+  await page.click('[data-testid="evaluate-button"]');
+  await expect(page.getByTestId("verdict-word")).toHaveText("No-Go", { timeout: 30000 });
+  await expect(page.getByTestId("verdict-reason")).toContainText("REVIEW threshold 0.60");
+  await expect(page.getByTestId("verdict-reason")).toContainText("answer_match 0.00");
+  await expect(page.getByTestId("metrics-table")).toContainText("answer match");
+  await expect(page.getByTestId("failed-cases")).toContainText("I am not sure about that.");
+
+  // The good outputs must be a GO.
+  await page.click('button:has-text("Load good example")');
+  await page.click('[data-testid="evaluate-button"]');
+  await expect(page.getByTestId("verdict-word")).toHaveText("Go", { timeout: 30000 });
+  await expect(page.getByTestId("verdict-reason")).toContainText("GO threshold 0.80");
+});
+
 test("new test page auto-detects question shape", async ({ page }) => {
   const port = await startQuestionApp();
   const email = `user2${Date.now()}@example.com`;
