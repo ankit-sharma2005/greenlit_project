@@ -6,7 +6,10 @@ import json
 
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
-from tests.test_datasets_service import CSV_BYTES, _make_user
+try:
+    from tests.test_datasets_service import CSV_BYTES, _make_user
+except ModuleNotFoundError:
+    from backend.tests.test_datasets_service import CSV_BYTES, _make_user
 
 from app.models import DatasetItem, Provider
 from app.services.datasets import DatasetError, create_dataset
