@@ -11,6 +11,7 @@ from app.api.audit import router as audit_router
 from app.api.auth import router as auth_router
 from app.api.connectors import router as connectors_router
 from app.api.datasets import router as datasets_router
+from app.api.evaluations import router as evaluations_router
 from app.api.health import router as health_router
 from app.api.providers import router as providers_router
 from app.api.users import router as users_router
@@ -44,6 +45,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(providers_router)
     app.include_router(datasets_router)
     app.include_router(connectors_router)
+    app.include_router(evaluations_router)
     app.include_router(audit_router)
 
     logger.info("GreenLit API created (env=%s)", resolved.app_env)
