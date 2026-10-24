@@ -1,11 +1,13 @@
 """ORM models.
 
-Only the M1 account tables live here; evaluation tables arrive with their milestones.
-All primary keys are UUIDs generated in Python so SQLite-based tests behave like Postgres.
+Accounts, providers, datasets and runs live here; the remaining evaluation tables arrive
+with their milestones. All primary keys are UUIDs generated in Python so SQLite-based
+tests behave like Postgres.
 """
 
 from __future__ import annotations
 
+import enum
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -17,6 +19,7 @@ from sqlalchemy import (
     ForeignKey,
     LargeBinary,
     String,
+    Text,
     UniqueConstraint,
     Uuid,
     func,
@@ -271,14 +274,141 @@ class DatasetItem(TimestampMixin, Base):
     )
 
 
+class RunState(enum.StrEnum):
+    """Run lifecycle states (spec 8.1); stored as their plain string values."""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    CANCELLING = "cancelling"
+    CANCELLED = "cancelled"
+    FAILED = "failed"
+    COMPLETED = "completed"
+
+
+class RunItemState(enum.StrEnum):
+    """Item lifecycle; a failing item never fails the whole run (spec 8.1)."""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class Run(TimestampMixin, Base):
+    """One test run: snapshotted settings, lifecycle state and the verdict."""
+
+    __tablename__ = "runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    dataset_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("datasets.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    dataset_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("dataset_versions.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    criteria_profile: Mapped[str] = mapped_column(
+        String(60), nullable=False, default="plain_chatbot"
+    )
+    settings_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    state: Mapped[str] = mapped_column(String(20), nullable=False, default=RunState.QUEUED.value)
+    verdict: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    score: Mapped[float | None] = mapped_column(nullable=True)
+    verdict_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_partial: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    items: Mapped[list[RunItem]] = relationship(back_populates="run")
+    metric_results: Mapped[list[MetricResultRow]] = relationship(back_populates="run")
+
+
+class RunItem(TimestampMixin, Base):
+    """One dataset case executed inside a run."""
+
+    __tablename__ = "run_items"
+    __table_args__ = (UniqueConstraint("run_id", "row_index", name="uq_run_items_run_row_index"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("runs.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    row_index: Mapped[int] = mapped_column(nullable=False)
+    input_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    state: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=RunItemState.QUEUED.value
+    )
+    output: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retrieved_context: Mapped[list[str] | str | None] = mapped_column(JSON, nullable=True)
+    trace: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(nullable=True)
+    tokens_in: Mapped[int | None] = mapped_column(nullable=True)
+    tokens_out: Mapped[int | None] = mapped_column(nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    run: Mapped[Run] = relationship(back_populates="items")
+
+
+class MetricResultRow(TimestampMixin, Base):
+    """One metric score: per run (``run_item_id`` is NULL) or per run item."""
+
+    __tablename__ = "metric_results"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("runs.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    run_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("run_items.id", ondelete="CASCADE"),
+        index=True,
+        nullable=True,
+    )
+    name: Mapped[str] = mapped_column(String(60), nullable=False)
+    score: Mapped[float] = mapped_column(nullable=False, default=0.0)
+    passed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    explanation: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    instrumented: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    weight: Mapped[float] = mapped_column(nullable=False, default=0.0)
+    threshold: Mapped[float] = mapped_column(nullable=False, default=0.0)
+    hard_gate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    details: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    run: Mapped[Run] = relationship(back_populates="metric_results")
+
+
 __all__ = [
     "AuditEvent",
     "Dataset",
     "DatasetColumnMapping",
     "DatasetItem",
     "DatasetVersion",
+    "MetricResultRow",
     "PasswordReset",
     "Provider",
     "RefreshToken",
+    "Run",
+    "RunItem",
+    "RunItemState",
+    "RunState",
     "User",
 ]

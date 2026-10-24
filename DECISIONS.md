@@ -242,3 +242,24 @@ Redis `RateLimiter`, which fails open. `tokens_per_minute` is stored for display
 enforced pre-call: a trustworthy limit needs a model-specific tokenizer before the request
 exists. Generation now uses the gateway; `get_chat_fn` builds it with the request's rate
 limiter, so tests still swap the chat call wholesale.
+
+## M6a — Runs: models, migration, repository
+
+### D6.1 Run tables and state storage
+Migration `0008_runs` adds `runs`, `run_items` and `metric_results`. States are stored
+as plain `String(20)` values with `RunState` / `RunItemState` str-enums as the single
+source of truth (`queued, running, cancelling, cancelled, failed, completed` for runs;
+items have no `cancelling`). `runs` carries the spec-8.1 fields: `settings_snapshot`
+(connector + judge + thresholds JSON), `verdict`, `score`, `verdict_reason` and
+`is_partial`, plus nullable `started_at` / `completed_at` and FKs to the dataset version
+the run was built from (both dataset FKs are `SET NULL` so deleting a dataset never
+deletes run history). `metric_results` is keyed by run and optionally by item (NULL =
+run-level aggregate) and stores `instrumented` so M5 metrics that were not measurable
+stay excluded from the score instead of reading as 0.
+
+### D6.2 Repository convention
+`app/services/run_repository.py` follows the dataset/audit convention: functions take an
+open session and flush only — the caller owns the transaction. Updates go through field
+whitelists and state validation, so a typo raises `RepositoryError` instead of silently
+setting an unknown attribute; transition legality (queued → running → completed) is left
+to the worker in M6b.
