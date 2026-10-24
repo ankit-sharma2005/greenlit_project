@@ -255,7 +255,7 @@ export function DatasetsPanel() {
             LLM once a provider is configured in Providers and models.
           </p>
         ) : (
-          <table className="datasets__table">
+          <table className="datasets__table" data-testid="datasets-table">
             <thead>
               <tr>
                 <th scope="col">Name</th>

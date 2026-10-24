@@ -107,7 +107,7 @@ export function Layout() {
 
           {user ? (
             <span className="user-menu">
-              <span className="badge" title={`Signed in as ${user.role}`}>
+              <span className="badge" data-testid="user-role" title={`Signed in as ${user.role}`}>
                 {user.role}
               </span>
               <span className="user-menu__name">

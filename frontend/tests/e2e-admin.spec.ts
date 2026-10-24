@@ -17,8 +17,8 @@ function startQuestionApp() {
               res.end(JSON.stringify({ answer: "hello" }));
               return;
             }
-          } catch (e) {
-            // ignore
+          } catch {
+            // not JSON: fall through to the 400 below
           }
           res.writeHead(400);
           res.end();
@@ -39,7 +39,7 @@ function startQuestionApp() {
   });
 }
 
-test("register, login, see admin role, upload CSV in Settings -> Datasets", async ({ page }) => {
+test("register, login, see the real role, upload CSV in Settings -> Datasets", async ({ page }) => {
   const email = `admin${Date.now()}@example.com`;
 
   // Register
@@ -47,12 +47,19 @@ test("register, login, see admin role, upload CSV in Settings -> Datasets", asyn
   await page.fill('#register-name, input[name="name"]', "Test Admin");
   await page.fill('#register-email, input[type="email"], input[name="email"]', email);
   await page.fill('#register-password, input[type="password"]', "password123456");
+  const registerResponse = page.waitForResponse(
+    (response) => response.url().includes("/api/v1/auth/register") && response.status() === 201,
+  );
   await page.click('button[type="submit"]');
+  const role = ((await (await registerResponse).json()) as { user: { role: string } }).user.role;
 
   await page.waitForURL(/http:\/\/localhost:5177\//);
 
-  // See admin role in header
-  await expect(page.locator("text=/admin/i")).toBeVisible();
+  // The header must show the role the API reports. On an empty database that is
+  // "admin" (first account); on a database that already has users it is "member".
+  // The first-user-is-admin rule itself is asserted in backend tests/test_auth.py.
+  expect(["admin", "member", "reviewer"]).toContain(role);
+  await expect(page.getByTestId("user-role")).toHaveText(role);
 
   // Go to Settings -> Datasets
   await page.click("text=Settings");
@@ -70,7 +77,9 @@ test("register, login, see admin role, upload CSV in Settings -> Datasets", asyn
   await page.click('button:has-text("Upload")');
 
   // See it in the list
-  await expect(page.locator("text=Test Dataset")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByTestId("datasets-table").getByText("Test Dataset")).toBeVisible({
+    timeout: 10000,
+  });
 });
 
 test("new test page auto-detects question shape", async ({ page }) => {
@@ -91,8 +100,7 @@ test("new test page auto-detects question shape", async ({ page }) => {
 
   await page.goto("http://localhost:5177/");
   await page.waitForTimeout(3000);
-  console.log('URL:', page.url());
-  if (page.url().includes('/login')) {
+  if (page.url().includes("/login")) {
     await page.goto("http://localhost:5177/login");
     await page.fill('input[type="email"]', email);
     await page.fill('input[type="password"]', "password123456");
@@ -106,18 +114,7 @@ test("new test page auto-detects question shape", async ({ page }) => {
   await page.fill('[data-testid="target-url"]', `http://127.0.0.1:${port}/test`);
   await page.check('#runs-on-my-computer');
   await page.click('[data-testid="start-test"]');
-  await page.waitForSelector('[data-testid="detect-result"]', { timeout: 60000 });
-  const pageContent = await page.content();
-  console.log('HAS_DETECT:', pageContent.includes('detect-result'));
-  const errorEl = page.locator('.form-error');
-  if (await errorEl.count() > 0) {
-    try {
-      const errorText = await errorEl.first().textContent();
-      console.log('ERROR:', errorText);
-    } catch (e) {
-      // ignore
-    }
-  }
+  await expect(page.locator('[data-testid="detect-result"]')).toBeVisible({ timeout: 60000 });
   await expect(page.locator('[data-testid="detected-request-shape"]')).toBeVisible();
   await expect(page.locator('[data-testid="detected-answer-path"]')).toBeVisible();
   await expect(page.locator('[data-testid="detected-context-path"]')).toBeVisible();
