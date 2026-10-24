@@ -1,0 +1,116 @@
+/* Datasets tab and shared status styles. */
+
+.datasets__upload {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.datasets__actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.datasets__table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: var(--space-3);
+  font-size: 0.95rem;
+}
+
+.datasets__table th,
+.datasets__table td {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: top;
+}
+
+.datasets__table thead th {
+  color: var(--color-text-muted);
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.datasets__row--selected {
+  background: var(--color-surface-hover);
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 0.78rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.badge--go {
+  color: var(--color-go);
+  background: var(--color-go-soft);
+}
+
+.badge--review {
+  color: var(--color-review);
+  background: var(--color-review-soft);
+}
+
+.badge--neutral {
+  color: var(--color-text-muted);
+  background: var(--color-surface-raised);
+  border-color: var(--color-border);
+}
+
+.notice {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  line-height: 1.5;
+}
+
+.settings__layout {
+  display: flex;
+  gap: var(--space-5);
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.settings__nav {
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.settings__nav button {
+  text-align: left;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  font: inherit;
+}
+
+.settings__nav button:hover {
+  background: var(--color-surface-hover);
+}
+
+.settings__nav button[aria-current="true"] {
+  border-color: var(--color-primary);
+  background: var(--color-surface-raised);
+}
+
+.settings__main {
+  flex: 1;
+  min-width: 320px;
+}

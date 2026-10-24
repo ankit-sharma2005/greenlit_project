@@ -30,6 +30,57 @@ interface RequestOptions {
   timeoutMs?: number;
 }
 
+/** Multipart upload (files travel as FormData; the browser sets the boundary). */
+export async function apiUpload<T>(
+  path: string,
+  formData: FormData,
+  timeoutMs = 120_000,
+): Promise<T> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      method: "POST",
+      credentials: "include",
+      body: formData,
+      signal: controller.signal,
+    });
+
+    const data: unknown = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      const envelope = (data ?? {}) as ErrorEnvelope;
+      throw new ApiError(
+        envelope.error?.message ?? `Upload failed (HTTP ${response.status}).`,
+        response.status,
+        envelope.error?.code ?? "error",
+        envelope.error?.fields ?? [],
+      );
+    }
+
+    return data as T;
+  } catch (error) {
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new ApiError(
+        "The upload took too long. Try a smaller file, then try again.",
+        0,
+        "timeout",
+      );
+    }
+    throw new ApiError(
+      "Cannot reach the GreenLit API. Check that it is running, then try again.",
+      0,
+      "network_error",
+    );
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 interface ErrorEnvelope {
   error?: {
     code?: string;

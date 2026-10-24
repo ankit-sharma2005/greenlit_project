@@ -1,4 +1,7 @@
+import { useState } from "react";
+
 import { ComingSoon } from "../components/ComingSoon";
+import { DatasetsPanel } from "../components/DatasetsPanel";
 
 const SECTIONS = [
   { name: "Providers and models", detail: "Ollama by default, plus OpenAI-compatible providers." },
@@ -12,7 +15,15 @@ const SECTIONS = [
   { name: "Preferences", detail: "Theme, previews and defaults for new tests." },
 ];
 
+const AVAILABLE = new Set(["Datasets"]);
+
 export function SettingsPage() {
+  const [active, setActive] = useState("Datasets");
+  const current = SECTIONS.find((section) => section.name === active) ?? {
+    name: active,
+    detail: "",
+  };
+
   return (
     <>
       <header className="page__header">
@@ -24,23 +35,49 @@ export function SettingsPage() {
         </div>
       </header>
 
-      <section className="card" aria-labelledby="settings-sections">
-        <div className="card__header">
-          <h2 id="settings-sections">Sections</h2>
-          <ComingSoon detail="Settings tabs arrive with their features, starting in M2." />
-        </div>
-        <ul className="plain-list">
+      <div className="settings__layout">
+        <nav className="settings__nav" aria-label="Settings sections">
           {SECTIONS.map((section) => (
-            <li key={section.name} className="plain-list__item">
-              <div>
-                <strong>{section.name}</strong>
-                <p className="card__hint">{section.detail}</p>
-              </div>
-              <ComingSoon />
-            </li>
+            <button
+              key={section.name}
+              type="button"
+              aria-current={active === section.name}
+              onClick={() => setActive(section.name)}
+            >
+              {section.name}
+              {!AVAILABLE.has(section.name) && (
+                <>
+                  {" "}
+                  <span className="badge badge--neutral">soon</span>
+                </>
+              )}
+            </button>
           ))}
-        </ul>
-      </section>
+        </nav>
+
+        <div className="settings__main">
+          {active === "Datasets" ? (
+            <>
+              <h2>Datasets</h2>
+              <p className="page__description" style={{ marginBottom: "var(--space-4)" }}>
+                Upload a file, check the detected columns, generate extra cases with the LLM and
+                approve the versions runs will use.
+              </p>
+              <DatasetsPanel />
+            </>
+          ) : (
+            <section className="card" aria-labelledby="settings-current">
+              <div className="card__header">
+                <h2 id="settings-current">{current.name}</h2>
+                <ComingSoon
+                  detail={`The ${current.name.toLowerCase()} tab ships with its milestone.`}
+                />
+              </div>
+              <p className="card__hint">{current.detail}</p>
+            </section>
+          )}
+        </div>
+      </div>
     </>
   );
 }
