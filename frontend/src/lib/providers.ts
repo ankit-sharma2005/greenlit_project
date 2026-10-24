@@ -37,7 +37,7 @@ export interface ProviderCreate {
   connector?: string | null;
 }
 
-export interface ProviderUpdate extends Partial<ProviderCreate> {}
+export type ProviderUpdate = Partial<ProviderCreate>;
 
 export interface ProviderTestResult {
   success: boolean;

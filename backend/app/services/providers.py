@@ -174,6 +174,7 @@ def _is_private_host(hostname: str) -> bool:
         return True
     try:
         import ipaddress
+
         ip = ipaddress.ip_address(hostname)
         if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast:
             return True
@@ -242,7 +243,6 @@ class RequestResult:
 
     def __bool__(self) -> bool:
         return self.success
-
 
 
 def make_request(
@@ -339,7 +339,6 @@ def make_request(
         message="Request failed with no error details",
         latency_ms=0,
     )
-
 
 
 def test_provider_connection(provider: Provider) -> dict[str, Any]:

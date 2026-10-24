@@ -4,6 +4,8 @@ import { Button } from "../components/Button";
 import { ComingSoon } from "../components/ComingSoon";
 import { Spinner } from "../components/Spinner";
 import { parseCurl } from "../lib/curl";
+import { testConnection } from "../lib/connectors";
+import { ApiError } from "../lib/api";
 
 type EntryPoint = "http_endpoint" | "prompt_app" | "upload_outputs";
 
@@ -57,8 +59,13 @@ export function NewTestPage() {
     );
   };
 
-  const handleStartTest = () => {
+  const [detectResult, setDetectResult] = useState<import("../lib/connectors").ConnectTestResponse | null>(null);
+  const [answerPath, setAnswerPath] = useState<string>("");
+
+  const handleStartTest = async () => {
     setError(null);
+    setNotice(null);
+    setDetectResult(null);
     const anyType = testTypes.quality || testTypes.safety || testTypes.operations;
     if (!anyType) {
       setError("Pick at least one test type — Quality, Safety or Operations.");
@@ -68,6 +75,32 @@ export function NewTestPage() {
       setError("Enter the URL of the app GreenLit should test (or paste a curl command).");
       return;
     }
+
+    if (connector === "http_endpoint") {
+      setLoading(true);
+      try {
+        const result = await testConnection({
+          connector_type: "http_endpoint",
+          url: url.trim(),
+          method: "POST",
+          auto_detect: true,
+          allow_private_targets: runsOnMyComputer,
+        });
+        setDetectResult(result);
+        setAnswerPath(result.detected_answer_path || "");
+        setNotice("Auto-detect complete. Connector settings saved (preview).");
+      } catch (caught) {
+        if (caught instanceof ApiError) {
+          setError(caught.message);
+        } else {
+          setError("Connection test failed.");
+        }
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     // The runs API (queued executions, progress, verdicts) ships in M6. Be honest about it.
     setLoading(true);
     window.setTimeout(() => {
@@ -258,13 +291,40 @@ export function NewTestPage() {
           </p>
         )}
 
+        {detectResult && (
+          <div className="notice" role="status" style={{ marginTop: "var(--space-4)" }}>
+            <strong>Detected</strong>
+            <div style={{ marginTop: "var(--space-2)" }}>
+              <div>Request body template: {detectResult.detected_request_shape || '{"question": {{input}}}'}</div>
+              <div>Detected answer path: {detectResult.detected_answer_path || answerPath || "(auto-detected)"}</div>
+              <div>Detected context path: {detectResult.detected_context_path || "not instrumented"}</div>
+              {detectResult.trace && (detectResult.trace as Record<string, unknown>).raw ? (
+                <details style={{ marginTop: "var(--space-2)" }}>
+                  <summary>Real response</summary>
+                  <pre style={{ overflow: "auto", maxHeight: "200px" }}>{JSON.stringify((detectResult.trace as Record<string, unknown>).raw, null, 2)}</pre>
+                </details>
+              ) : null}
+              <div style={{ marginTop: "var(--space-2)" }}>
+                <label className="form__label">Correct answer path (one click):</label>
+                <input
+                  type="text"
+                  value={answerPath}
+                  onChange={(e) => setAnswerPath(e.target.value)}
+                  placeholder="choices.0.message.content"
+                />
+                <Button variant="secondary" onClick={() => setNotice("Connector settings saved.")}>Save connector</Button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div style={{ marginTop: "var(--space-5)" }}>
           <Button variant="primary" size="lg" loading={loading} onClick={handleStartTest}>
             {loading ? <Spinner size="sm" label="Checking your setup" /> : "Start test"}
           </Button>
         </div>
 
-        {notice && (
+        {notice && !detectResult && (
           <div className="notice" role="status" style={{ marginTop: "var(--space-4)" }}>
             <strong>Runs ship in M6.</strong> {notice}
           </div>

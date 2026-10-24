@@ -32,6 +32,7 @@ class ConnectTestRequest(BaseModel):
     system_prompt: str | None = None
     model: str | None = None
     temperature: float | None = 0.2
+    auto_detect: bool = False
 
 
 class ConnectTestResponse(BaseModel):

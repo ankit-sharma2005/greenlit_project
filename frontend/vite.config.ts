@@ -17,5 +17,6 @@ export default defineConfig({
     setupFiles: "./src/test/setup.ts",
     css: true,
     restoreMocks: true,
+    exclude: ["**/node_modules/**", "**/dist/**", "tests/e2e-*.spec.ts", "**/*.spec.ts"],
   },
 });

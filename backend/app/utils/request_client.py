@@ -31,12 +31,19 @@ class SSLError(ValueError):
     pass
 
 
-class DisallowedHost(SSLError):
+class DisallowedHostError(SSLError):
     pass
 
 
-class BlockedPrivateURL(SSLError):
+# Keep old names for compatibility
+DisallowedHost = DisallowedHostError
+
+
+class BlockedPrivateURLError(SSLError):
     pass
+
+
+BlockedPrivateURL = BlockedPrivateURLError
 
 
 class RequestClient:
@@ -51,16 +58,20 @@ class RequestClient:
             return True
         try:
             ip = ipaddress.ip_address(hostname)
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+            if (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_multicast
+                or ip.is_reserved
+            ):
                 return True
         except ValueError:
             pass
         for pattern in _PRIVATE_RANGES:
             if ":" not in hostname and hostname.startswith(pattern):
                 return True
-        if hostname.startswith("169.254.") or hostname == "metadata.google.internal":
-            return True
-        return False
+        return bool(hostname.startswith("169.254.") or hostname == "metadata.google.internal")
 
     def _sanitize_url(self, url: str) -> str:
         parsed = urlparse(url)
@@ -79,7 +90,9 @@ class RequestClient:
     def request(self, method: str = "POST", url: str = "", **kwargs: Any) -> httpx.Response:
         safe_url = self._sanitize_url(url)
         timeout = kwargs.pop("timeout", 60)
-        with httpx.Client(timeout=timeout, follow_redirects=True, max_redirects=self.max_redirects) as client:
+        with httpx.Client(
+            timeout=timeout, follow_redirects=True, max_redirects=self.max_redirects
+        ) as client:
             response = client.request(method, safe_url, **kwargs)
         return response
 
@@ -138,7 +151,7 @@ def make_request(
         return RequestResult(success=False, error=str(e), message=str(e), latency_ms=0)
     last_error: httpx.HTTPError | None = None
     for attempt in range(max_retries):
-        attempt_delay = backoff_factor ** attempt
+        attempt_delay = backoff_factor**attempt
         try:
             with httpx.Client(timeout=timeout) as client:
                 response = client.get(safe_url, follow_redirects=True, **kwargs)

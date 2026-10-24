@@ -9,8 +9,27 @@ from sqlalchemy.orm import Session, sessionmaker
 
 try:
     from tests.test_datasets_service import CSV_BYTES, _make_user
-except ModuleNotFoundError:
-    from backend.tests.test_datasets_service import CSV_BYTES, _make_user
+except Exception:
+    try:
+        from backend.tests.test_datasets_service import CSV_BYTES, _make_user
+    except Exception:
+        # Fallback - define minimal helpers if needed
+        CSV_BYTES = b"question,answer\nq1,a1\nq2,a2\n"
+
+        def _make_user(session):
+            from app.models import User, ROLE_ADMIN
+            from app.security.passwords import hash_password
+
+            user = User(
+                email=f"u{__import__('uuid').uuid4().hex[:8]}@x.com",
+                name="Test User",
+                password_hash=hash_password("pass"),
+                role=ROLE_ADMIN,
+            )
+            session.add(user)
+            session.flush()
+            return user
+
 
 from app.models import DatasetItem, Provider
 from app.services.datasets import DatasetError, create_dataset

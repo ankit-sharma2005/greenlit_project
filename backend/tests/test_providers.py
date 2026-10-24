@@ -82,9 +82,7 @@ def test_provider_duplicate_name_409_case_insensitive() -> None:
         db.add(prov2)
 
         # Check that lowercase name matches the uppercase one
-        existing = db.scalar(
-            select(Provider).where(func.lower(Provider.name) == "duptest")
-        )
+        existing = db.scalar(select(Provider).where(func.lower(Provider.name) == "duptest"))
         # The second should find the first (case-insensitive match)
         assert existing is prov1
     finally:
@@ -100,9 +98,7 @@ def test_gateway_timeout() -> None:
     from app.services.providers import test_provider_connection
 
     # Create a provider with a very short timeout
-    test_engine = create_engine(
-        "sqlite+pysqlite://", connect_args={"check_same_thread": False}
-    )
+    test_engine = create_engine("sqlite+pysqlite://", connect_args={"check_same_thread": False})
     Base.metadata.drop_all(bind=test_engine)
     Base.metadata.create_all(bind=test_engine)
 
@@ -151,9 +147,7 @@ def test_gateway_rate_limit() -> None:
         tokens_per_minute=100,
         is_active=True,
     )
-    test_engine = create_engine(
-        "sqlite+pysqlite://", connect_args={"check_same_thread": False}
-    )
+    test_engine = create_engine("sqlite+pysqlite://", connect_args={"check_same_thread": False})
     Base.metadata.drop_all(bind=test_engine)
     Base.metadata.create_all(bind=test_engine)
 
@@ -198,7 +192,6 @@ def test_connection_endpoint_returns_200() -> None:
     # Create a test admin user
     db = session_local()
     try:
-
         user = User(
             email="test@example.com",
             name="Test User",
