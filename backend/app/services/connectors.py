@@ -366,13 +366,20 @@ class PromptAppConnector:
             elif self.llm is not None and hasattr(self.llm, "chat"):
                 # Try to be compatible with different signatures
                 try:
-                    result = self.llm.chat(messages=messages, model=model, params={"temperature": temperature})
+                    result = self.llm.chat(
+                        messages=messages, model=model, params={"temperature": temperature}
+                    )
                 except TypeError:
                     try:
                         result = self.llm.chat(messages=messages, model=model)
                     except Exception:
                         try:
-                            result = self.llm.chat(provider=None, messages=messages, temperature=temperature, model=model)
+                            result = self.llm.chat(
+                                provider=None,
+                                messages=messages,
+                                temperature=temperature,
+                                model=model,
+                            )
                         except Exception:
                             result = self.llm.chat(messages, model, {"temperature": temperature})
             else:

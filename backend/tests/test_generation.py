@@ -17,7 +17,7 @@ except Exception:
         CSV_BYTES = b"question,answer\nq1,a1\nq2,a2\n"
 
         def _make_user(session):
-            from app.models import User, ROLE_ADMIN
+            from app.models import ROLE_ADMIN, User
             from app.security.passwords import hash_password
 
             user = User(
