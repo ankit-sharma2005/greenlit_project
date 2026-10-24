@@ -7,6 +7,8 @@ import time
 from typing import Any
 from urllib.parse import urlparse
 
+import httpx
+
 _PRIVATE_RANGES = [
     "0.",
     "10.",
@@ -25,39 +27,76 @@ _PRIVATE_RANGES = [
 ]
 
 
-def _is_private_host(hostname: str) -> bool:
-    if hostname in ("localhost", "local", "home", "internal"):
-        return True
-    try:
-        ip = ipaddress.ip_address(hostname)
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast:
+class SSLError(ValueError):
+    pass
+
+
+class DisallowedHost(SSLError):
+    pass
+
+
+class BlockedPrivateURL(SSLError):
+    pass
+
+
+class RequestClient:
+    """SSRF-safe HTTP client for user-supplied URLs."""
+
+    def __init__(self, allow_private_targets: bool = False, max_redirects: int = 5):
+        self.allow_private_targets = allow_private_targets
+        self.max_redirects = max_redirects
+
+    def _is_private_host(self, hostname: str) -> bool:
+        if hostname in ("localhost", "local", "home", "internal"):
             return True
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+                return True
+        except ValueError:
+            pass
         for pattern in _PRIVATE_RANGES:
             if ":" not in hostname and hostname.startswith(pattern):
                 return True
-    except ValueError:
-        pass
-    return False
+        if hostname.startswith("169.254.") or hostname == "metadata.google.internal":
+            return True
+        return False
+
+    def _sanitize_url(self, url: str) -> str:
+        parsed = urlparse(url)
+        if not parsed.hostname:
+            raise DisallowedHost("URL must include a hostname")
+        if self._is_private_host(parsed.hostname) and not self.allow_private_targets:
+            raise BlockedPrivateURL(f"blocked private URL: {parsed.hostname}")
+        if not parsed.scheme:
+            url = "https://" + url
+            parsed = urlparse(url)
+        valid_schemes = {"http", "https"}
+        if parsed.scheme not in valid_schemes:
+            raise DisallowedHost(f"Unsupported scheme: {parsed.scheme}")
+        return url
+
+    def request(self, method: str = "POST", url: str = "", **kwargs: Any) -> httpx.Response:
+        safe_url = self._sanitize_url(url)
+        timeout = kwargs.pop("timeout", 60)
+        with httpx.Client(timeout=timeout, follow_redirects=True, max_redirects=self.max_redirects) as client:
+            response = client.request(method, safe_url, **kwargs)
+        return response
+
+
+def _is_private_host(hostname: str) -> bool:
+    client = RequestClient(allow_private_targets=False)
+    return client._is_private_host(hostname)
 
 
 def _sanitize_url(url: str) -> str:
-    parsed = urlparse(url)
-    if not parsed.hostname:
-        raise ValueError("URL must include a hostname")
-    if _is_private_host(parsed.hostname):
-        raise ValueError(f"Refusing to connect to private/internal host: {parsed.hostname}")
-    if not parsed.scheme:
-        url = "https://" + url
-        parsed = urlparse(url)
-    valid_schemes = {"http", "https"}
-    if parsed.scheme not in valid_schemes:
-        raise ValueError(f"Unsupported scheme: {parsed.scheme}")
-    return url
+    client = RequestClient(allow_private_targets=False)
+    return client._sanitize_url(url)
 
 
 def _quote_input(text: str) -> str:
     text = text.replace("{{", "{{{[{[[")
-    text = text.replace("}}", "]]}]}")
+    text = text.replace("}}", "]}}]}")
     text = text.replace("$", "\\$")
     text = text.replace("`", "\\`")
     text = text.replace("{", "\\{")
@@ -97,11 +136,9 @@ def make_request(
         safe_url = _sanitize_url(url)
     except ValueError as e:
         return RequestResult(success=False, error=str(e), message=str(e), latency_ms=0)
-    import httpx
-
     last_error: httpx.HTTPError | None = None
     for attempt in range(max_retries):
-        attempt_delay = backoff_factor**attempt
+        attempt_delay = backoff_factor ** attempt
         try:
             with httpx.Client(timeout=timeout) as client:
                 response = client.get(safe_url, follow_redirects=True, **kwargs)

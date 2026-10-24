@@ -1,0 +1,72 @@
+"""Connector endpoints (M3)."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from app.deps import get_current_user
+from app.schemas.connectors import (
+    ConnectTestRequest,
+    ConnectTestResponse,
+    CurlParseRequest,
+    CurlParseResponse,
+)
+from app.services.connectors import ConnectorError, HttpConnector
+from app.utils.curl import parse_curl
+
+router = APIRouter(prefix="/api/v1/connectors", tags=["connectors"])
+
+
+@router.post("/curl/parse", response_model=CurlParseResponse)
+def parse_curl_endpoint(payload: CurlParseRequest, user: Any = Depends(get_current_user)) -> CurlParseResponse:
+    parsed = parse_curl(payload.curl)
+    if not parsed:
+        raise HTTPException(status_code=400, detail="That does not look like a curl command with a URL.")
+    return CurlParseResponse(
+        method=parsed.method,
+        url=parsed.url,
+        headers=parsed.headers,
+        body_template=parsed.body_template,
+        header_count=parsed.header_count,
+    )
+
+
+@router.post("/test", response_model=ConnectTestResponse)
+def test_connection(payload: ConnectTestRequest, request: Request, user: Any = Depends(get_current_user)) -> ConnectTestResponse:
+    if payload.connector_type == "http_endpoint":
+        connector = HttpConnector(allow_private=payload.allow_private_targets)
+        try:
+            trace = connector.render_and_send(
+                url=str(payload.url) if payload.url else "",
+                body_template=payload.body_template or '{"question": {{input}}}',
+                input_text="Hello",
+                headers=payload.headers,
+                timeout_seconds=payload.timeout_seconds,
+                method=payload.method,
+                answer_path=payload.answer_path,
+            )
+            return ConnectTestResponse(
+                success=True,
+                message="Connection test successful",
+                trace=trace.to_dict(),
+                detected_answer_path=payload.answer_path,
+                detected_context_path=None,
+            )
+        except ConnectorError as e:
+            raise HTTPException(status_code=400, detail=e.message) from e
+    elif payload.connector_type == "prompt_app":
+        return ConnectTestResponse(
+            success=True,
+            message="Prompt app configuration is ready (test in M4+ runs).",
+            trace=None,
+        )
+    elif payload.connector_type == "upload_outputs":
+        return ConnectTestResponse(
+            success=True,
+            message="Upload outputs configuration is ready.",
+            trace=None,
+        )
+    else:
+        raise HTTPException(status_code=501, detail="This connector is coming soon.")
