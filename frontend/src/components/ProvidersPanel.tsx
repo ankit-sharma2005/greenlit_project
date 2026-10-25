@@ -134,7 +134,8 @@ export function ProvidersPanel() {
         <div className="card__header">
           <h3 id="providers-add">Add provider</h3>
           <p className="card__hint">
-            Defaults: Ollama at http://host.docker.internal:11434/v1 with model hermes3:8b (free, local). OpenAI-compatible providers need a base URL and API key.
+            Defaults: Ollama at http://host.docker.internal:11434/v1 with model hermes3:8b (free,
+            local). OpenAI-compatible providers need a base URL and API key.
           </p>
         </div>
         <div className="datasets__actions" style={{ marginBottom: "var(--space-3)" }}>
@@ -204,7 +205,9 @@ export function ProvidersPanel() {
                 placeholder="sk-..."
                 disabled={busy}
               />
-              <p className="card__hint">Keys are encrypted at rest and never returned by the API.</p>
+              <p className="card__hint">
+                Keys are encrypted at rest and never returned by the API.
+              </p>
             </>
           )}
           <div className="datasets__actions" style={{ marginTop: "var(--space-3)" }}>
@@ -226,14 +229,20 @@ export function ProvidersPanel() {
         </div>
       )}
 
-      <section className="card" aria-labelledby="providers-list" style={{ marginTop: "var(--space-5)" }}>
+      <section
+        className="card"
+        aria-labelledby="providers-list"
+        style={{ marginTop: "var(--space-5)" }}
+      >
         <div className="card__header">
           <h3 id="providers-list">Providers</h3>
         </div>
         {loading ? (
           <Spinner size="md" label="Loading providers" showLabel />
         ) : providers.length === 0 ? (
-          <p className="card__hint">No providers yet. Add Ollama or an OpenAI-compatible provider above.</p>
+          <p className="card__hint">
+            No providers yet. Add Ollama or an OpenAI-compatible provider above.
+          </p>
         ) : (
           <table className="datasets__table">
             <thead>

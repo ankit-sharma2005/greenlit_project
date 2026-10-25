@@ -59,7 +59,9 @@ export function NewTestPage() {
     );
   };
 
-  const [detectResult, setDetectResult] = useState<import("../lib/connectors").ConnectTestResponse | null>(null);
+  const [detectResult, setDetectResult] = useState<
+    import("../lib/connectors").ConnectTestResponse | null
+  >(null);
   const [answerPath, setAnswerPath] = useState<string>("");
 
   const handleStartTest = async () => {
@@ -294,16 +296,31 @@ export function NewTestPage() {
         )}
 
         {detectResult && (
-          <div className="notice" role="status" data-testid="detect-result" style={{ marginTop: "var(--space-4)" }}>
+          <div
+            className="notice"
+            role="status"
+            data-testid="detect-result"
+            style={{ marginTop: "var(--space-4)" }}
+          >
             <strong>Detected</strong>
             <div style={{ marginTop: "var(--space-2)" }}>
-              <div data-testid="detected-request-shape">Request body template: {detectResult.detected_request_shape || '{"question": {{input}}}'}</div>
-              <div data-testid="detected-answer-path">Detected answer path: {detectResult.detected_answer_path || answerPath || "(auto-detected)"}</div>
-              <div data-testid="detected-context-path">Detected context path: {detectResult.detected_context_path || "not instrumented"}</div>
+              <div data-testid="detected-request-shape">
+                Request body template:{" "}
+                {detectResult.detected_request_shape || '{"question": {{input}}}'}
+              </div>
+              <div data-testid="detected-answer-path">
+                Detected answer path:{" "}
+                {detectResult.detected_answer_path || answerPath || "(auto-detected)"}
+              </div>
+              <div data-testid="detected-context-path">
+                Detected context path: {detectResult.detected_context_path || "not instrumented"}
+              </div>
               {detectResult.trace && (detectResult.trace as Record<string, unknown>).raw ? (
                 <details style={{ marginTop: "var(--space-2)" }}>
                   <summary>Real response</summary>
-                  <pre style={{ overflow: "auto", maxHeight: "200px" }}>{JSON.stringify((detectResult.trace as Record<string, unknown>).raw, null, 2)}</pre>
+                  <pre style={{ overflow: "auto", maxHeight: "200px" }}>
+                    {JSON.stringify((detectResult.trace as Record<string, unknown>).raw, null, 2)}
+                  </pre>
                 </details>
               ) : null}
               <div style={{ marginTop: "var(--space-2)" }}>
@@ -314,14 +331,22 @@ export function NewTestPage() {
                   onChange={(e) => setAnswerPath(e.target.value)}
                   placeholder="choices.0.message.content"
                 />
-                <Button variant="secondary" onClick={() => setNotice("Connector settings saved.")}>Save connector</Button>
+                <Button variant="secondary" onClick={() => setNotice("Connector settings saved.")}>
+                  Save connector
+                </Button>
               </div>
             </div>
           </div>
         )}
 
         <div style={{ marginTop: "var(--space-5)" }}>
-          <Button variant="primary" size="lg" loading={loading} onClick={handleStartTest} data-testid="start-test">
+          <Button
+            variant="primary"
+            size="lg"
+            loading={loading}
+            onClick={handleStartTest}
+            data-testid="start-test"
+          >
             {loading ? <Spinner size="sm" label="Checking your setup" /> : "Start test"}
           </Button>
         </div>

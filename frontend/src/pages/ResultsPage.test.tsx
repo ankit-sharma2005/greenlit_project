@@ -27,9 +27,7 @@ const TEMPLATES = {
       description: "Answers backed by retrieved context.",
       review_threshold: 0.6,
       go_threshold: 0.8,
-      criteria: [
-        { metric: "answer_match", weight: 0.3, threshold: 0.6, hard_gate: false },
-      ],
+      criteria: [{ metric: "answer_match", weight: 0.3, threshold: 0.6, hard_gate: false }],
     },
     {
       key: "plain_chatbot",
@@ -37,9 +35,7 @@ const TEMPLATES = {
       description: "No retrieval.",
       review_threshold: 0.6,
       go_threshold: 0.8,
-      criteria: [
-        { metric: "answer_match", weight: 0.4, threshold: 0.6, hard_gate: false },
-      ],
+      criteria: [{ metric: "answer_match", weight: 0.4, threshold: 0.6, hard_gate: false }],
     },
   ],
   default: "rag_chatbot",
@@ -163,9 +159,7 @@ describe("ResultsPage", () => {
     await userEvent.click(screen.getByTestId("evaluate-button"));
 
     await waitFor(() => expect(mocks.previewEvaluation).toHaveBeenCalledTimes(1));
-    const [argument] = mocks.previewEvaluation.mock.calls[0] as [
-      { profile: string; csv: string },
-    ];
+    const [argument] = mocks.previewEvaluation.mock.calls[0] as [{ profile: string; csv: string }];
     expect(argument.profile).toBe("plain_chatbot");
     expect(argument.csv).toContain("input,expected_answer,output");
   });

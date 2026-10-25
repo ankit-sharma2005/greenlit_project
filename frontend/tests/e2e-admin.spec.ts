@@ -125,7 +125,7 @@ test("new test page auto-detects question shape", async ({ page }) => {
   await page.fill('#register-password, input[type="password"]', "password123456");
   await page.click('button[type="submit"]');
 
-  await page.waitForURL((url) => !url.pathname.includes('/register'), { timeout: 15000 });
+  await page.waitForURL((url) => !url.pathname.includes("/register"), { timeout: 15000 });
   await page.waitForTimeout(2000);
 
   await page.goto("http://localhost:5177/");
@@ -135,14 +135,14 @@ test("new test page auto-detects question shape", async ({ page }) => {
     await page.fill('input[type="email"]', email);
     await page.fill('input[type="password"]', "password123456");
     await page.click('button[type="submit"]');
-    await page.waitForURL((url) => !url.pathname.includes('/login'), { timeout: 15000 });
+    await page.waitForURL((url) => !url.pathname.includes("/login"), { timeout: 15000 });
     await page.goto("http://localhost:5177/");
     await page.waitForTimeout(3000);
   }
   await page.waitForSelector('[data-testid="connector-select"]', { timeout: 30000 });
   await page.selectOption('[data-testid="connector-select"]', "http_endpoint");
   await page.fill('[data-testid="target-url"]', `http://127.0.0.1:${port}/test`);
-  await page.check('#runs-on-my-computer');
+  await page.check("#runs-on-my-computer");
   await page.click('[data-testid="start-test"]');
   await expect(page.locator('[data-testid="detect-result"]')).toBeVisible({ timeout: 60000 });
   await expect(page.locator('[data-testid="detected-request-shape"]')).toBeVisible();
