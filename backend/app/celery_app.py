@@ -1,6 +1,7 @@
 """Celery application for background work.
 
-M0 only wires the broker so the ``worker`` service starts; run tasks arrive in M6.
+Run tasks live in :mod:`app.tasks`; autodiscovery imports that module when the
+worker starts so ``celery -A app.celery_app.celery worker`` picks them up.
 """
 
 from __future__ import annotations
@@ -20,3 +21,4 @@ celery.conf.update(
     task_acks_late=True,
     worker_prefetch_multiplier=1,
 )
+celery.autodiscover_tasks(["app"], related_name="tasks")
