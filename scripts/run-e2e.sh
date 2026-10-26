@@ -30,8 +30,23 @@ export E2E_BASE_URL="http://localhost:${WEB_PORT}"
 export E2E_API_URL="http://localhost:${API_PORT}"
 export E2E_TARGET_HOST="${E2E_TARGET_HOST:-127.0.0.1}"
 
-PY="$ROOT/backend/.venv/Scripts/python"
-[ -x "$PY" ] || PY="$ROOT/backend/.venv/bin/python"
+# Use whichever local backend virtualenv actually has the dependencies.
+PY=""
+for candidate in \
+  "$ROOT/backend/runner/Scripts/python.exe" \
+  "$ROOT/backend/runner/bin/python" \
+  "$ROOT/backend/.venv/Scripts/python.exe" \
+  "$ROOT/backend/.venv/bin/python"; do
+  if [ -x "$candidate" ] && "$candidate" -c "import uvicorn, alembic, celery" >/dev/null 2>&1; then
+    PY="$candidate"
+    break
+  fi
+done
+if [ -z "$PY" ]; then
+  echo "No backend virtualenv with uvicorn, alembic and celery was found." >&2
+  exit 1
+fi
+echo "==> Using backend interpreter: $PY"
 
 PIDS=()
 cleanup() {

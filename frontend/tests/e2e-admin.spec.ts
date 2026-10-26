@@ -161,7 +161,8 @@ async function detectTarget(page: Page, app: FakeApp): Promise<void> {
 test("register, login, see the admin role, upload CSV in Settings -> Datasets", async ({
   page,
 }) => {
-  const email = `admin${Date.now()}@example.com`;
+  // Fixed address: later specs sign in as this admin to seed admin-only data.
+  const email = "admin@example.com";
 
   // First account on the fresh e2e database: the API must assign "admin".
   const role = await register(page, "Test Admin", email);

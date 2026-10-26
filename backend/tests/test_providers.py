@@ -6,6 +6,7 @@ M3 additions: HTTP endpoint, prompt_app, and upload_outputs connectors.
 from __future__ import annotations
 
 import sqlalchemy
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -267,3 +268,38 @@ def test_connection_endpoint_returns_200() -> None:
             app.dependency_overrides[get_db] = original_get_db
         else:
             app.dependency_overrides.clear()
+
+
+def test_create_provider_endpoint_reads_the_provider_body(client: TestClient) -> None:
+    """POST /providers takes the provider as its body.
+
+    The admin guard is a dependency, so its ``user`` argument must stay out of
+    the request body; otherwise the endpoint demands ``{"user": ..., "body": ...}``
+    and no client can create a provider at all.
+    """
+    registered = client.post(
+        "/api/v1/auth/register",
+        json={
+            "name": "Provider Admin",
+            "email": "providers@example.com",
+            "password": "password123456",
+        },
+    )
+    assert registered.status_code == 201, registered.text
+    assert registered.json()["user"]["role"] == "admin"
+
+    created = client.post(
+        "/api/v1/providers",
+        json={
+            "name": "Fake Prompt App Provider",
+            "kind": "openai-compatible",
+            "model_name": "fake-connector-model",
+            "base_url": "http://127.0.0.1:9999/v1",
+            "connector": "prompt_app",
+            "timeout_seconds": 30,
+            "is_active": True,
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["name"] == "Fake Prompt App Provider"
+

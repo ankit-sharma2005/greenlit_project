@@ -2,12 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "../components/Button";
 import { ComingSoon } from "../components/ComingSoon";
+import { PromptAppPanel } from "../components/PromptAppPanel";
 import { RunProgressPanel } from "../components/RunProgressPanel";
 import { Spinner } from "../components/Spinner";
 import { parseCurl } from "../lib/curl";
 import { testConnection } from "../lib/connectors";
 import { ApiError } from "../lib/api";
 import { listDatasets } from "../lib/datasets";
+import { listProviders } from "../lib/providers";
 import {
   cancelRun,
   getRun,
@@ -30,6 +32,12 @@ interface TestTypes {
 interface DatasetOption {
   value: string;
   label: string;
+}
+
+interface ProviderOption {
+  id: string;
+  name: string;
+  modelName: string;
 }
 
 const POLL_INTERVAL_MS = 1500;
@@ -66,6 +74,11 @@ export function NewTestPage() {
   const [startingRun, setStartingRun] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [providerOptions, setProviderOptions] = useState<ProviderOption[]>([]);
+  const [selectedProviderId, setSelectedProviderId] = useState("");
+  const [systemPrompt, setSystemPrompt] = useState("");
+  const [promptAppModel, setPromptAppModel] = useState("");
+  const [promptDatasetId, setPromptDatasetId] = useState("");
 
   const [detectResult, setDetectResult] = useState<
     import("../lib/connectors").ConnectTestResponse | null
@@ -89,6 +102,27 @@ export function NewTestPage() {
         setDatasetOptions(options);
       })
       .catch(() => setDatasetOptions([]));
+  }, []);
+
+  // Active providers are the only ones a prompt-app run may use.
+  useEffect(() => {
+    listProviders()
+      .then((providers) => {
+        const active = providers.filter((provider) => provider.is_active);
+        setProviderOptions(
+          active.map((provider) => ({
+            id: provider.id,
+            name: provider.name,
+            modelName: provider.model_name,
+          })),
+        );
+        const first = active[0];
+        if (first) {
+          setSelectedProviderId((current) => current || first.id);
+          setPromptAppModel((current) => current || first.model_name);
+        }
+      })
+      .catch(() => setProviderOptions([]));
   }, []);
 
   // Poll the worker's counters until the run reaches a terminal state.
@@ -139,6 +173,12 @@ export function NewTestPage() {
     );
   };
 
+  const handlePromptAppProviderChange = (providerId: string) => {
+    setSelectedProviderId(providerId);
+    const picked = providerOptions.find((option) => option.id === providerId);
+    setPromptAppModel(picked ? picked.modelName : "");
+  };
+
   const handleStartTest = async () => {
     setError(null);
     setNotice(null);
@@ -179,9 +219,67 @@ export function NewTestPage() {
       return;
     }
 
+    if (connector === "prompt_app") {
+      if (providerOptions.length === 0) {
+        setError("Add a model provider in Settings → Providers, then start the test again.");
+        return;
+      }
+      if (!selectedProviderId) {
+        setError("Pick the provider this prompt app should answer with.");
+        return;
+      }
+      const target = systemPrompt.trim();
+      if (!target) {
+        setError("Enter a system prompt so the model knows how to answer.");
+        return;
+      }
+      setStartingRun(true);
+      setActiveRun(null);
+      try {
+        if (promptDatasetId) {
+          setActiveRun(
+            await startRun({
+              entry_point: "prompt_app",
+              target,
+              test_types: chosenTestTypes(testTypes),
+              provider_id: selectedProviderId,
+              model: promptAppModel.trim() || undefined,
+              system_prompt: target,
+              timeout_seconds: 60,
+              allow_private_targets: runsOnMyComputer,
+              dataset_version_id: promptDatasetId,
+            }),
+          );
+          setNotice("Run queued. A worker executes the cases, this page polls its progress.");
+        } else {
+          const result = await quickTest({
+            entry_point: "prompt_app",
+            target,
+            tests: chosenTestTypes(testTypes),
+            provider_id: selectedProviderId,
+            model: promptAppModel.trim() || undefined,
+            timeout_seconds: 60,
+            allow_private_targets: runsOnMyComputer,
+            generate: GENERATED_CASES,
+          });
+          setActiveRun(result.run);
+          setNotice(
+            `GreenLit generated ${GENERATED_CASES} test cases, approved them and queued the run.`,
+          );
+        }
+      } catch (caught) {
+        setRunError(
+          caught instanceof ApiError ? caught.message : "Could not start the test. Try again.",
+        );
+      } finally {
+        setStartingRun(false);
+      }
+      return;
+    }
+
     setNotice(
-      "Prompt-app and uploaded-output runs already work through the API; this page gets " +
-        "their fields in the next step. Datasets can be managed in Settings → Datasets.",
+      "Uploaded-output runs already work through the API; this page gets their fields " +
+        "in the next step. Datasets can be managed in Settings → Datasets.",
     );
   };
 
@@ -344,16 +442,20 @@ export function NewTestPage() {
         )}
 
         {connector === "prompt_app" && (
-          <div style={{ marginTop: "var(--space-5)" }}>
-            <label className="form__label">System prompt:</label>
-            <textarea placeholder="Enter your system prompt..." rows={3} disabled={loading} />
-            <label className="form__label">Model:</label>
-            <input type="text" placeholder="e.g. hermes3:8b, gpt-4o" disabled={loading} />
-            <p className="form__hint">
-              Prompt-app runs already work through the API (pick a provider in Settings →
-              Providers); this form is wired in the next step.
-            </p>
-          </div>
+          <PromptAppPanel
+            providerOptions={providerOptions}
+            selectedProviderId={selectedProviderId}
+            systemPrompt={systemPrompt}
+            model={promptAppModel}
+            datasetOptions={datasetOptions}
+            datasetVersionId={promptDatasetId}
+            generatedCases={GENERATED_CASES}
+            disabled={startingRun}
+            onProviderChange={handlePromptAppProviderChange}
+            onSystemPromptChange={setSystemPrompt}
+            onModelChange={setPromptAppModel}
+            onDatasetChange={setPromptDatasetId}
+          />
         )}
 
         {connector === "upload_outputs" && (

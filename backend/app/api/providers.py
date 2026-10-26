@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import get_current_user
-from app.models import Provider
+from app.models import Provider, User
 from app.schemas.providers import (
     ProviderCreate,
     ProviderRead,
@@ -22,14 +22,14 @@ from app.services.providers import test_provider_connection
 router = APIRouter(prefix="/api/v1/providers", tags=["providers"])
 
 
-def _require_admin(user: object) -> object:
+def _require_admin(user: User = Depends(get_current_user)) -> User:
     """Only admin can manage providers."""
     if getattr(user, "role", "") != "admin":
         raise HTTPException(status_code=403, detail="Admin required")
     return user
 
 
-def _require_user(user: object) -> object:
+def _require_user(user: User = Depends(get_current_user)) -> User:
     """Any authenticated user can access provider endpoints."""
     if getattr(user, "role", "") not in ("admin", "member", "reviewer"):
         raise HTTPException(status_code=403, detail="Authentication required")
