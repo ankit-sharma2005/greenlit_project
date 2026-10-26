@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "../components/Button";
+import { RunHistory } from "../components/RunHistory";
 import { Spinner } from "../components/Spinner";
 import { ApiError } from "../lib/api";
 import {
@@ -75,13 +76,15 @@ export function ResultsPage() {
         <div>
           <h1>Results</h1>
           <p className="page__description">
-            Score a set of outputs with the rule metrics and see the verdict, the evidence and the
-            cases that failed.
+            Every run's verdict with its evidence, compare two runs side by side, or score a set of
+            outputs directly.
           </p>
         </div>
       </header>
 
-      <section className="card" aria-labelledby="evaluate-heading">
+      <RunHistory />
+
+      <section className="card" aria-labelledby="evaluate-heading" style={{ marginTop: "var(--space-5)" }}>
         <div className="card__header">
           <h2 id="evaluate-heading">Evaluate outputs</h2>
         </div>

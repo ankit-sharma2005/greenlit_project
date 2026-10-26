@@ -271,6 +271,54 @@ test("new test page runs a test to a GO verdict", async ({ page }) => {
   }
 });
 
+test("results page lists runs, opens a verdict and compares two runs", async ({ page }) => {
+  const app = await startGoldenApp();
+  try {
+    const email = `history${Date.now()}@example.com`;
+    await register(page, "History User", email);
+    const datasetName = `History ${Date.now()}`;
+    await uploadApprovedDataset(page, datasetName, GOLDEN_CSV);
+
+    // Two completed runs from the same account, through the normal UI flow.
+    await openNewTestPage(page);
+    await detectTarget(page, app);
+    await page.selectOption('[data-testid="run-dataset"]', {
+      label: `${datasetName} · v1 (2 cases)`,
+    });
+    await page.click('[data-testid="run-test"]');
+    await expect(page.getByTestId("run-verdict-word")).toHaveText("Go", { timeout: 60_000 });
+
+    await page.click('[data-testid="run-test"]');
+    await expect(page.getByTestId("run-verdict-word")).toHaveText("Go", { timeout: 60_000 });
+
+    // Both runs are in the history with their stored verdict.
+    await page.goto(`${WEB}/results`);
+    await expect(page.getByTestId("run-history")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("run-history-row")).toHaveCount(2);
+    await expect(page.getByTestId("run-history-verdict").first()).toHaveText("Go");
+    await expect(page.getByTestId("run-history-score").first()).toHaveText("1.00");
+
+    // Opening a run shows its verdict card, the same component the New Test page uses.
+    await page.getByTestId("run-history-open").first().click();
+    await expect(page.getByTestId("run-verdict")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("run-verdict-score")).toHaveText("1.00");
+
+    // Compare the two runs side by side.
+    const selects = page.getByTestId("run-history-select");
+    await selects.nth(0).check();
+    await selects.nth(1).check();
+    await page.click('[data-testid="run-history-compare"]');
+
+    await expect(page.getByTestId("run-compare")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("compare-baseline-verdict")).toHaveText("Go");
+    await expect(page.getByTestId("compare-candidate-verdict")).toHaveText("Go");
+    await expect(page.getByTestId("compare-score-delta")).toHaveText("+0.00");
+    await expect(page.getByTestId("run-compare-row").first()).toContainText("answer match");
+  } finally {
+    await app.close();
+  }
+});
+
 test("cancel stops a running test and keeps partial results", async ({ page }) => {
   const app = await startGoldenApp(2500);
   try {

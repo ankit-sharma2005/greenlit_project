@@ -104,6 +104,21 @@ export function getRun(id: string): Promise<Run> {
   return apiRequest(`/api/v1/runs/${id}`);
 }
 
+export interface RunListResponse {
+  items: Run[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export function listRuns(
+  options: { limit?: number; offset?: number } = {},
+): Promise<RunListResponse> {
+  const limit = options.limit ?? 20;
+  const offset = options.offset ?? 0;
+  return apiRequest(`/api/v1/runs?limit=${limit}&offset=${offset}`);
+}
+
 export function getRunProgress(id: string): Promise<RunProgress> {
   return apiRequest(`/api/v1/runs/${id}/progress`);
 }

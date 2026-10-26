@@ -8,7 +8,16 @@ import { ResultsPage } from "./ResultsPage";
 const mocks = vi.hoisted(() => ({
   listTemplates: vi.fn(),
   previewEvaluation: vi.fn(),
+  listRuns: vi.fn(),
 }));
+
+vi.mock("../lib/runs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/runs")>();
+  return {
+    ...actual,
+    listRuns: mocks.listRuns,
+  };
+});
 
 vi.mock("../lib/evaluations", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/evaluations")>();
@@ -118,6 +127,9 @@ describe("ResultsPage", () => {
   beforeEach(() => {
     mocks.listTemplates.mockReset().mockResolvedValue(TEMPLATES);
     mocks.previewEvaluation.mockReset().mockResolvedValue(BROKEN);
+    mocks.listRuns
+      .mockReset()
+      .mockResolvedValue({ items: [], total: 0, limit: 50, offset: 0 });
   });
 
   it("loads the criteria templates into the profile select", async () => {
