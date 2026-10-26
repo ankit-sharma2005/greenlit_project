@@ -98,6 +98,29 @@ cd backend && ruff check . && ruff format --check . && mypy && pytest
 cd frontend && npm run lint && npm run format:check && npm run typecheck && npm test && npm run build
 ```
 
+### End-to-end tests
+
+```bash
+bash scripts/run-e2e.sh
+```
+
+The script creates a **disposable** stack and drops it afterwards, so it never restarts or
+rebuilds the docker stack you use in the browser:
+
+- Postgres + Redis run in their own compose project (`greenlit-e2e`) on ports 5536/6482 with
+  a fresh volume — the e2e database is empty every run, so the first registered user is
+  asserted to be `admin` on that clean database;
+- the API (8103), Celery worker and Vite dev server (5277) start as local processes and are
+  killed on exit;
+- Playwright runs `frontend/tests/e2e-admin.spec.ts` against `http://localhost:5277`
+  (`E2E_BASE_URL`), then the script tears the project down with `docker compose down -v`.
+
+To run the suite against an already-running dev stack instead:
+
+```bash
+cd frontend && npm run e2e   # defaults to http://localhost:5177
+```
+
 CI runs the same commands on every push (see `.github/workflows/ci.yml`).
 
 ## Brand assets

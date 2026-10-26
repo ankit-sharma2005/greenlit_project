@@ -1,8 +1,20 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { createServer } from "http";
+import type { AddressInfo } from "net";
 
-function startQuestionApp() {
-  return new Promise<number>((resolve) => {
+const WEB = process.env.E2E_BASE_URL ?? "http://localhost:5177";
+/** Host the API uses to reach the fake app this file starts (docker: host.docker.internal). */
+const TARGET_HOST = process.env.E2E_TARGET_HOST ?? "127.0.0.1";
+const PASSWORD = "password123456";
+
+interface QuestionApp {
+  port: number;
+  close: () => Promise<void>;
+}
+
+/** Tiny app that only answers the {"question": ...} shape, so auto-detect has a real target. */
+function startQuestionApp(): Promise<QuestionApp> {
+  return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
       if (req.method === "POST") {
         let body = "";
@@ -28,38 +40,60 @@ function startQuestionApp() {
       res.writeHead(200);
       res.end("ok");
     });
-    server.listen(0, "127.0.0.1", () => {
-      const addr = server.address();
-      if (addr && typeof addr === "object") {
-        resolve(addr.port);
-      } else {
-        resolve(0);
-      }
+    server.on("error", reject);
+    // Bound on all interfaces so an API running in Docker can reach it too.
+    server.listen(0, "0.0.0.0", () => {
+      const addr = server.address() as AddressInfo;
+      resolve({
+        port: addr.port,
+        close: () => new Promise<void>((done) => server.close(() => done())),
+      });
     });
   });
 }
 
-test("register, login, see the real role, upload CSV in Settings -> Datasets", async ({ page }) => {
-  const email = `admin${Date.now()}@example.com`;
-
-  // Register
-  await page.goto("http://localhost:5177/register");
-  await page.fill('#register-name, input[name="name"]', "Test Admin");
+/** Register a fresh account and return the role the API assigned it. */
+async function register(page: Page, name: string, email: string): Promise<string> {
+  await page.goto(`${WEB}/register`);
+  await page.fill('#register-name, input[name="name"]', name);
   await page.fill('#register-email, input[type="email"], input[name="email"]', email);
-  await page.fill('#register-password, input[type="password"]', "password123456");
-  const registerResponse = page.waitForResponse(
+  await page.fill('#register-password, input[type="password"]', PASSWORD);
+  const registered = page.waitForResponse(
     (response) => response.url().includes("/api/v1/auth/register") && response.status() === 201,
   );
   await page.click('button[type="submit"]');
-  const role = ((await (await registerResponse).json()) as { user: { role: string } }).user.role;
+  const body = (await (await registered).json()) as { user: { role: string } };
+  await page.waitForURL((url) => !url.pathname.includes("/register"), { timeout: 15_000 });
+  return body.user.role;
+}
 
-  await page.waitForURL(/http:\/\/localhost:5177\//);
+/** Land on the New Test page, signing in first if the session did not survive navigation. */
+async function openNewTestPage(page: Page): Promise<void> {
+  await page.goto(`${WEB}/`);
+  const outcome = await Promise.race([
+    page
+      .waitForSelector('[data-testid="connector-select"]', { timeout: 20_000 })
+      .then(() => "ready" as const),
+    page
+      .waitForSelector('input[type="password"]', { timeout: 20_000 })
+      .then(() => "login" as const),
+  ]);
+  if (outcome === "login") {
+    throw new Error(`Redirected to the login page at ${page.url()} while ${WEB}/ was expected.`);
+  }
+}
 
-  // The header must show the role the API reports. On an empty database that is
-  // "admin" (first account); on a database that already has users it is "member".
-  // The first-user-is-admin rule itself is asserted in backend tests/test_auth.py.
-  expect(["admin", "member", "reviewer"]).toContain(role);
-  await expect(page.getByTestId("user-role")).toHaveText(role);
+test("register, login, see the admin role, upload CSV in Settings -> Datasets", async ({
+  page,
+}) => {
+  const email = `admin${Date.now()}@example.com`;
+
+  // First account on the fresh e2e database: the API must assign "admin".
+  const role = await register(page, "Test Admin", email);
+  expect(role).toBe("admin");
+
+  // The header must show the role the API reports.
+  await expect(page.getByTestId("user-role")).toHaveText("admin");
 
   // Go to Settings -> Datasets
   await page.click("text=Settings");
@@ -78,28 +112,21 @@ test("register, login, see the real role, upload CSV in Settings -> Datasets", a
 
   // See it in the list
   await expect(page.getByTestId("datasets-table").getByText("Test Dataset")).toBeVisible({
-    timeout: 10000,
+    timeout: 10_000,
   });
 });
 
 test("results page scores outputs and explains the verdict", async ({ page }) => {
   const email = `results${Date.now()}@example.com`;
-  await page.context().clearCookies();
+  await register(page, "Results User", email);
 
-  await page.goto("http://localhost:5177/register");
-  await page.fill('#register-name, input[name="name"]', "Results User");
-  await page.fill('#register-email, input[type="email"], input[name="email"]', email);
-  await page.fill('#register-password, input[type="password"]', "password123456");
-  await page.click('button[type="submit"]');
-  await page.waitForURL((url) => !url.pathname.includes("/register"), { timeout: 15000 });
-
-  await page.goto("http://localhost:5177/results");
-  await page.waitForSelector('[data-testid="outputs-csv"]', { timeout: 20000 });
+  await page.goto(`${WEB}/results`);
+  await page.waitForSelector('[data-testid="outputs-csv"]', { timeout: 20_000 });
 
   // The broken outputs must be a NO-GO whose reason names the threshold.
   await page.click('button:has-text("Load broken example")');
   await page.click('[data-testid="evaluate-button"]');
-  await expect(page.getByTestId("verdict-word")).toHaveText("No-Go", { timeout: 30000 });
+  await expect(page.getByTestId("verdict-word")).toHaveText("No-Go", { timeout: 30_000 });
   await expect(page.getByTestId("verdict-reason")).toContainText("REVIEW threshold 0.60");
   await expect(page.getByTestId("verdict-reason")).toContainText("answer_match 0.00");
   await expect(page.getByTestId("metrics-table")).toContainText("answer match");
@@ -108,44 +135,30 @@ test("results page scores outputs and explains the verdict", async ({ page }) =>
   // The good outputs must be a GO.
   await page.click('button:has-text("Load good example")');
   await page.click('[data-testid="evaluate-button"]');
-  await expect(page.getByTestId("verdict-word")).toHaveText("Go", { timeout: 30000 });
+  await expect(page.getByTestId("verdict-word")).toHaveText("Go", { timeout: 30_000 });
   await expect(page.getByTestId("verdict-reason")).toContainText("GO threshold 0.80");
 });
 
-test("new test page auto-detects question shape", async ({ page }) => {
-  const port = await startQuestionApp();
-  const email = `user2${Date.now()}@example.com`;
+test("new test page auto-detects the question shape", async ({ page }) => {
+  const app = await startQuestionApp();
+  try {
+    const email = `detect${Date.now()}@example.com`;
+    await register(page, "Detect User", email);
 
-  // Clear cookies/storage
-  await page.context().clearCookies();
+    await openNewTestPage(page);
+    await page.selectOption('[data-testid="connector-select"]', "http_endpoint");
+    await page.fill('[data-testid="target-url"]', `http://${TARGET_HOST}:${app.port}/test`);
+    await page.check("#runs-on-my-computer");
+    await page.click('[data-testid="start-test"]');
 
-  await page.goto("http://localhost:5177/register");
-  await page.fill('#register-name, input[name="name"]', "Test User2");
-  await page.fill('#register-email, input[type="email"], input[name="email"]', email);
-  await page.fill('#register-password, input[type="password"]', "password123456");
-  await page.click('button[type="submit"]');
-
-  await page.waitForURL((url) => !url.pathname.includes("/register"), { timeout: 15000 });
-  await page.waitForTimeout(2000);
-
-  await page.goto("http://localhost:5177/");
-  await page.waitForTimeout(3000);
-  if (page.url().includes("/login")) {
-    await page.goto("http://localhost:5177/login");
-    await page.fill('input[type="email"]', email);
-    await page.fill('input[type="password"]', "password123456");
-    await page.click('button[type="submit"]');
-    await page.waitForURL((url) => !url.pathname.includes("/login"), { timeout: 15000 });
-    await page.goto("http://localhost:5177/");
-    await page.waitForTimeout(3000);
+    // What auto-detect found, from the real request/response pair:
+    await expect(page.getByTestId("detect-result")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId("detected-request-shape")).toContainText("question");
+    await expect(page.getByTestId("detected-answer-path")).toContainText("answer");
+    await expect(page.getByTestId("detected-context-path")).toBeVisible();
+    // The real response body is shown so the user can verify what came back.
+    await expect(page.getByTestId("detect-result")).toContainText("Real response");
+  } finally {
+    await app.close();
   }
-  await page.waitForSelector('[data-testid="connector-select"]', { timeout: 30000 });
-  await page.selectOption('[data-testid="connector-select"]', "http_endpoint");
-  await page.fill('[data-testid="target-url"]', `http://127.0.0.1:${port}/test`);
-  await page.check("#runs-on-my-computer");
-  await page.click('[data-testid="start-test"]');
-  await expect(page.locator('[data-testid="detect-result"]')).toBeVisible({ timeout: 60000 });
-  await expect(page.locator('[data-testid="detected-request-shape"]')).toBeVisible();
-  await expect(page.locator('[data-testid="detected-answer-path"]')).toBeVisible();
-  await expect(page.locator('[data-testid="detected-context-path"]')).toBeVisible();
 });

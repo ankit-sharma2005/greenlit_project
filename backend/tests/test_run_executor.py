@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 import uuid
@@ -541,3 +542,49 @@ def test_celery_task_registered() -> None:
 
     assert app.tasks.run_test is not None
     assert "app.tasks.run_test" in celery.tasks
+
+
+# ---- right reason --------------------------------------------------------
+
+
+def test_broken_run_gets_no_go_and_the_reason_names_the_real_engine(
+    session_factory: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    """The stored verdict reason must explain itself: score, threshold, weak metrics.
+
+    The broken demo answers wrong on every case, so the run must come out NO_GO
+    (rule 2) with the weighted score and the REVIEW threshold spelled out, the
+    weak metrics named, and metrics the app never reported excluded from the
+    score instead of counted as zero.
+    """
+    run_id = seed_run(session_factory, owner, criteria="rag_chatbot")
+    sender = FakeSender(answers={row["question"]: "I am not sure about that." for row in ROWS})
+    report, _ = run_it(run_id, session_factory, sender)
+
+    assert report["status"] == "completed", report
+    assert report["verdict"] == "NO_GO"
+
+    with session_factory() as session:
+        run = session.get(Run, run_id)
+        assert run is not None
+        assert run.state == "completed"
+        reason = run.verdict_reason or ""
+
+        # The explanation, in plain words, must be usable on its own.
+        assert re.search(r"Weighted score 0\.\d\d", reason), reason
+        assert "below the REVIEW threshold 0.60" in reason
+        assert "Weakest metrics:" in reason
+        assert "answer_match 0.00" in reason
+        assert "Suggested fixes:" in reason
+
+        # Not-instrumented metrics are excluded from the weighted score, not
+        # counted as zero: with recall (0.25) and tokens (0.05) excluded the
+        # score is 0.40/0.70, not the 0.26 a naive average would give.
+        assert run.score is not None
+        assert run.score == pytest.approx(0.40 / 0.70, abs=0.01), run.score
+
+        metrics = {row.name: row for row in get_metric_results(session, run_id)}
+        assert metrics["answer_match"].score == 0.0
+        assert metrics["answer_match"].passed is False
+        assert metrics["retrieval_context_recall"].instrumented is False
+        assert metrics["token_usage_present"].instrumented is False

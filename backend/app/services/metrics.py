@@ -203,13 +203,24 @@ def answer_match(output: str | None, expected: str | None, threshold: float = 0.
     )
 
 
+# Connectors report "no retrieval data" as this literal string, not as None.
+NOT_INSTRUMENTED_SENTINEL = "not instrumented"
+
+
+def _is_sentinel(value: str) -> bool:
+    """True for the connectors' literal "not instrumented" marker."""
+    return value.strip().lower() == NOT_INSTRUMENTED_SENTINEL
+
+
 def retrieval_context_recall(
     retrieved_context: Sequence[str] | str | None,
     reference_context: Sequence[str] | str | None,
     threshold: float = 0.6,
 ) -> MetricResult:
     """Share of reference-context content words found in the retrieved context."""
-    if retrieved_context is None:
+    if retrieved_context is None or (
+        isinstance(retrieved_context, str) and _is_sentinel(retrieved_context)
+    ):
         return not_instrumented(
             "retrieval_context_recall", "the app did not return retrieved context"
         )
