@@ -263,3 +263,47 @@ open session and flush only — the caller owns the transaction. Updates go thro
 whitelists and state validation, so a typo raises `RepositoryError` instead of silently
 setting an unknown attribute; transition legality (queued → running → completed) is left
 to the worker in M6b.
+
+## M6c — Runs: API, quick test and the browser flow
+
+### D6.3 The API queues, it never executes
+`POST /api/v1/runs` validates the connector settings, stores the settings snapshot and
+creates the run in `queued`, then hands the id to Celery (`app.tasks.run_test`) and returns
+202 with the run. Nothing runs in the request: the tests assert the queue seam was called
+once and that the run has no items yet. The queue is a FastAPI dependency
+(`get_enqueue`), so tests inject a list instead of a broker, and progress is read through
+`get_progress_reader` (Redis in production, an injected dict in tests). Unknown or
+not-yet-approved datasets, a missing URL, an unknown criteria profile and an empty test
+list are rejected before queueing with a message that names the next action.
+
+### D6.4 Cancel semantics
+Cancel is a state flip, not a process kill. A `queued` run is moved straight to
+`cancelled` (is_partial, reason "cancelled before it started") and the worker task that
+arrives later skips it. A `running` run goes to `cancelling`: the executor checks that
+state before taking each new case, keeps the finished items, stores the verdict it can
+compute and labels the run partial. `cancelling` is idempotent; a finished run returns 409
+rather than pretending to cancel.
+
+### D6.5 One quick test for CI
+`POST /api/v1/quick-test` takes `{entry_point, target, tests}` plus an optional `csv`,
+`dataset_id` or `generate` count. It creates the dataset (from the CSV, or by asking the
+provider for cases and tagging the version `generated`), approves version 1, snapshots the
+connector shape auto-detect found (`body_template`, `answer_path`, `context_path` — never a
+hard-coded body) and starts the run. Without a provider and without a CSV it answers 400
+with the two ways forward, instead of generating silently or faking cases.
+
+### D6.6 The New Test page
+Start test runs auto-detect and shows the detected request shape, answer path, context
+path and the real response (unchanged from M3). A second step, *Run test*, picks an
+approved dataset version or falls back to generating cases, then polls
+`GET /api/v1/runs/{id}` every 1.5 s until the run is terminal. The verdict panel shows the
+engine's own reason plus the metric table and failed cases; Cancel posts to
+`/runs/{id}/cancel`. Prompt-app and upload-outputs runs are available through the API but
+their form fields on this page are still marked as coming in the next step.
+
+### D6.7 E2e worker pool
+`scripts/run-e2e.sh` starts the host Celery worker with `--pool=solo`. The default prefork
+pool cannot take tasks in this Windows environment (billiard semaphores fail with
+`PermissionError`), so no run ever left `queued`. The Docker stack (Linux) keeps prefork.
+This is a runner concern only: the executor itself is unchanged and is exercised by the
+same tests either way.

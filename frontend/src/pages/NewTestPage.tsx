@@ -1,11 +1,23 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "../components/Button";
 import { ComingSoon } from "../components/ComingSoon";
+import { RunProgressPanel } from "../components/RunProgressPanel";
 import { Spinner } from "../components/Spinner";
 import { parseCurl } from "../lib/curl";
 import { testConnection } from "../lib/connectors";
 import { ApiError } from "../lib/api";
+import { listDatasets } from "../lib/datasets";
+import {
+  cancelRun,
+  getRun,
+  isTerminal,
+  quickTest,
+  startRun,
+  type Run,
+  type RunCreateRequest,
+  type TestType,
+} from "../lib/runs";
 
 type EntryPoint = "http_endpoint" | "prompt_app" | "upload_outputs";
 
@@ -13,6 +25,23 @@ interface TestTypes {
   quality: boolean;
   safety: boolean;
   operations: boolean;
+}
+
+interface DatasetOption {
+  value: string;
+  label: string;
+}
+
+const POLL_INTERVAL_MS = 1500;
+const GENERATED_CASES = 10;
+
+/** The checked test types, in a stable order. */
+function chosenTestTypes(types: TestTypes): TestType[] {
+  const chosen: TestType[] = [];
+  if (types.quality) chosen.push("quality");
+  if (types.safety) chosen.push("safety");
+  if (types.operations) chosen.push("operations");
+  return chosen;
 }
 
 /** Home: one page where a first-time user points GreenLit at an app and gets a verdict. */
@@ -31,6 +60,57 @@ export function NewTestPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [datasetOptions, setDatasetOptions] = useState<DatasetOption[]>([]);
+  const [datasetVersionId, setDatasetVersionId] = useState("");
+  const [activeRun, setActiveRun] = useState<Run | null>(null);
+  const [startingRun, setStartingRun] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+
+  const [detectResult, setDetectResult] = useState<
+    import("../lib/connectors").ConnectTestResponse | null
+  >(null);
+  const [answerPath, setAnswerPath] = useState<string>("");
+
+  // Approved dataset versions are the only thing a run may execute.
+  useEffect(() => {
+    listDatasets()
+      .then((response) => {
+        const options: DatasetOption[] = [];
+        for (const dataset of response.items) {
+          for (const version of dataset.versions) {
+            if (!version.approved_at) continue;
+            options.push({
+              value: version.id,
+              label: `${dataset.name} · v${version.version_no} (${version.row_count} cases)`,
+            });
+          }
+        }
+        setDatasetOptions(options);
+      })
+      .catch(() => setDatasetOptions([]));
+  }, []);
+
+  // Poll the worker's counters until the run reaches a terminal state.
+  const runId = activeRun?.id;
+  const runState = activeRun?.state;
+  useEffect(() => {
+    if (!runId || !runState || isTerminal(runState)) return;
+    let stopped = false;
+    const timer = window.setInterval(() => {
+      getRun(runId)
+        .then((fresh) => {
+          if (!stopped) setActiveRun(fresh);
+        })
+        .catch(() => {
+          // Keep the last known state; the next tick tries again.
+        });
+    }, POLL_INTERVAL_MS);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [runId, runState]);
 
   const handleConnectorChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setConnector(e.target.value as EntryPoint);
@@ -59,14 +139,10 @@ export function NewTestPage() {
     );
   };
 
-  const [detectResult, setDetectResult] = useState<
-    import("../lib/connectors").ConnectTestResponse | null
-  >(null);
-  const [answerPath, setAnswerPath] = useState<string>("");
-
   const handleStartTest = async () => {
     setError(null);
     setNotice(null);
+    setRunError(null);
     setDetectResult(null);
     const anyType = testTypes.quality || testTypes.safety || testTypes.operations;
     if (!anyType) {
@@ -90,7 +166,7 @@ export function NewTestPage() {
         });
         setDetectResult(result);
         setAnswerPath(result.detected_answer_path || "");
-        setNotice("Auto-detect complete. Connector settings saved (preview).");
+        setNotice("Auto-detect complete. These settings are used when the test runs.");
       } catch (caught) {
         if (caught instanceof ApiError) {
           setError(caught.message);
@@ -103,17 +179,63 @@ export function NewTestPage() {
       return;
     }
 
-    // The runs API (queued executions, progress, verdicts) ships in M6. Be honest about it.
-    setLoading(true);
-    window.setTimeout(() => {
-      setLoading(false);
-      setNotice(
-        "Everything up to the run is ready — but actually executing tests needs the " +
-          "worker that ships in M6. What you can do today: manage providers and build " +
-          "datasets (upload, auto-detected columns, LLM generation with preview, approve) " +
-          "in Settings → Datasets.",
+    setNotice(
+      "Prompt-app and uploaded-output runs already work through the API; this page gets " +
+        "their fields in the next step. Datasets can be managed in Settings → Datasets.",
+    );
+  };
+
+  const handleRunTest = useCallback(async () => {
+    if (!detectResult) return;
+    setRunError(null);
+    setActiveRun(null);
+    setStartingRun(true);
+    const target = url.trim();
+    const common: RunCreateRequest = {
+      entry_point: "http_endpoint",
+      target,
+      test_types: chosenTestTypes(testTypes),
+      method: "POST",
+      body_template: detectResult.detected_request_shape || '{"question": {{input}}}',
+      answer_path: answerPath || detectResult.detected_answer_path || undefined,
+      context_path: detectResult.detected_context_path || undefined,
+      timeout_seconds: 60,
+      allow_private_targets: runsOnMyComputer,
+    };
+    try {
+      if (datasetVersionId) {
+        setActiveRun(await startRun({ ...common, dataset_version_id: datasetVersionId }));
+        setNotice("Run queued. A worker executes the cases, this page polls its progress.");
+      } else {
+        // No dataset chosen: GreenLit writes the cases with the model first.
+        const result = await quickTest({ ...common, target, generate: GENERATED_CASES });
+        setActiveRun(result.run);
+        setNotice(
+          `GreenLit generated ${GENERATED_CASES} test cases, approved them and queued the run.`,
+        );
+      }
+    } catch (caught) {
+      setRunError(
+        caught instanceof ApiError ? caught.message : "Could not start the test. Try again.",
       );
-    }, 400);
+    } finally {
+      setStartingRun(false);
+    }
+  }, [answerPath, datasetVersionId, detectResult, runsOnMyComputer, testTypes, url]);
+
+  const handleCancelRun = async () => {
+    if (!activeRun) return;
+    setCancelling(true);
+    setRunError(null);
+    try {
+      setActiveRun(await cancelRun(activeRun.id));
+    } catch (caught) {
+      setRunError(
+        caught instanceof ApiError ? caught.message : "Could not cancel this run. Try again.",
+      );
+    } finally {
+      setCancelling(false);
+    }
   };
 
   return (
@@ -227,6 +349,10 @@ export function NewTestPage() {
             <textarea placeholder="Enter your system prompt..." rows={3} disabled={loading} />
             <label className="form__label">Model:</label>
             <input type="text" placeholder="e.g. hermes3:8b, gpt-4o" disabled={loading} />
+            <p className="form__hint">
+              Prompt-app runs already work through the API (pick a provider in Settings →
+              Providers); this form is wired in the next step.
+            </p>
           </div>
         )}
 
@@ -272,6 +398,11 @@ export function NewTestPage() {
               Operations (latency, errors, tokens)
             </label>
           </div>
+          {testTypes.safety ? (
+            <p className="form__hint">
+              Safety scoring is recorded for the run; the built-in attack set arrives with M8.
+            </p>
+          ) : null}
         </fieldset>
 
         <div className="form__run-on-computer" style={{ marginTop: "var(--space-5)" }}>
@@ -324,15 +455,56 @@ export function NewTestPage() {
                 </details>
               ) : null}
               <div style={{ marginTop: "var(--space-2)" }}>
-                <label className="form__label">Correct answer path (one click):</label>
+                <label className="form__label" htmlFor="answer-path">
+                  Correct answer path (one click):
+                </label>
                 <input
+                  id="answer-path"
                   type="text"
+                  data-testid="answer-path"
                   value={answerPath}
                   onChange={(e) => setAnswerPath(e.target.value)}
                   placeholder="choices.0.message.content"
                 />
-                <Button variant="secondary" onClick={() => setNotice("Connector settings saved.")}>
-                  Save connector
+              </div>
+
+              <div style={{ marginTop: "var(--space-4)" }}>
+                <label className="form__label" htmlFor="run-dataset">
+                  Test cases:
+                </label>
+                <select
+                  id="run-dataset"
+                  data-testid="run-dataset"
+                  value={datasetVersionId}
+                  onChange={(e) => setDatasetVersionId(e.target.value)}
+                  disabled={startingRun}
+                >
+                  <option value="">
+                    Generate {GENERATED_CASES} questions with your model provider
+                  </option>
+                  {datasetOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                {datasetOptions.length === 0 ? (
+                  <p className="form__hint">
+                    No approved dataset yet. GreenLit writes the questions with your provider
+                    (Settings → Providers), or upload a dataset in Settings → Datasets.
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="datasets__actions" style={{ marginTop: "var(--space-3)" }}>
+                <Button
+                  variant="primary"
+                  loading={startingRun}
+                  onClick={() => void handleRunTest()}
+                  disabled={startingRun}
+                  data-testid="run-test"
+                >
+                  {startingRun ? <Spinner size="sm" label="Starting your test" /> : "Run test"}
                 </Button>
               </div>
             </div>
@@ -353,9 +525,23 @@ export function NewTestPage() {
 
         {notice && !detectResult && (
           <div className="notice" role="status" style={{ marginTop: "var(--space-4)" }}>
-            <strong>Runs ship in M6.</strong> {notice}
+            {notice}
           </div>
         )}
+
+        {runError && (
+          <p className="form-error" role="alert" style={{ marginTop: "var(--space-4)" }}>
+            {runError}
+          </p>
+        )}
+
+        {activeRun ? (
+          <RunProgressPanel
+            run={activeRun}
+            onCancel={() => void handleCancelRun()}
+            cancelling={cancelling}
+          />
+        ) : null}
       </section>
 
       <section

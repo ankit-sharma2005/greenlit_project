@@ -27,6 +27,7 @@ export APP_SECRET_KEY="e2e-insecure-key-not-for-production"
 # The fake app the auto-detect test starts lives on the host; a host-local API
 # reaches it on 127.0.0.1. Override if you point E2E at a containerized API.
 export E2E_BASE_URL="http://localhost:${WEB_PORT}"
+export E2E_API_URL="http://localhost:${API_PORT}"
 export E2E_TARGET_HOST="${E2E_TARGET_HOST:-127.0.0.1}"
 
 PY="$ROOT/backend/.venv/Scripts/python"
@@ -57,7 +58,10 @@ echo "==> Starting API on :${API_PORT}"
 PIDS+=($!)
 
 echo "==> Starting Celery worker"
-(cd backend && exec "$PY" -m celery -A app.celery_app.celery worker --loglevel=INFO) \
+# The solo pool is the reliable one for a host worker on Windows; the Docker
+# stack (Linux) keeps the default prefork pool. One task at a time is plenty
+# for the suite, and the run executor parallelises the cases itself.
+(cd backend && exec "$PY" -m celery -A app.celery_app.celery worker --loglevel=INFO --pool=solo) \
   >"$ROOT/e2e-worker.log" 2>&1 &
 PIDS+=($!)
 

@@ -3,17 +3,40 @@ import { createServer } from "http";
 import type { AddressInfo } from "net";
 
 const WEB = process.env.E2E_BASE_URL ?? "http://localhost:5177";
+const API = process.env.E2E_API_URL ?? "http://localhost:8003";
 /** Host the API uses to reach the fake app this file starts (docker: host.docker.internal). */
 const TARGET_HOST = process.env.E2E_TARGET_HOST ?? "127.0.0.1";
 const PASSWORD = "password123456";
 
-interface QuestionApp {
+const GOLDEN_ANSWERS: Record<string, string> = {
+  "What is GreenLit?": "GreenLit tests LLM apps before launch.",
+  "Is it fast?": "Yes, it runs in a worker.",
+};
+
+const GOLDEN_CSV = [
+  "question,answer",
+  "What is GreenLit?,GreenLit tests LLM apps before launch.",
+  "Is it fast?,Yes, it runs in a worker.",
+].join("\n");
+
+/** Six cases against the slow app, so there is time to cancel mid-run. */
+const SLOW_CSV = [
+  "question,answer",
+  ...Array.from({ length: 3 }, () => [
+    "What is GreenLit?,GreenLit tests LLM apps before launch.",
+    "Is it fast?,Yes, it runs in a worker.",
+  ]).flat(),
+].join("\n");
+
+interface FakeApp {
   port: number;
   close: () => Promise<void>;
 }
 
-/** Tiny app that only answers the {"question": ...} shape, so auto-detect has a real target. */
-function startQuestionApp(): Promise<QuestionApp> {
+type Reply = Record<string, unknown> | null;
+
+/** Tiny JSON app: the handler decides the reply, a null reply means HTTP 400. */
+function startApp(reply: (data: Record<string, unknown>) => Reply, delayMs = 0): Promise<FakeApp> {
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
       if (req.method === "POST") {
@@ -22,18 +45,26 @@ function startQuestionApp(): Promise<QuestionApp> {
           body += chunk;
         });
         req.on("end", () => {
+          let payload: Reply = null;
           try {
-            const data = JSON.parse(body);
-            if ("question" in data) {
-              res.writeHead(200, { "Content-Type": "application/json" });
-              res.end(JSON.stringify({ answer: "hello" }));
-              return;
-            }
+            payload = reply(JSON.parse(body) as Record<string, unknown>);
           } catch {
-            // not JSON: fall through to the 400 below
+            payload = null;
           }
-          res.writeHead(400);
-          res.end();
+          if (payload === null) {
+            res.writeHead(400);
+            res.end();
+            return;
+          }
+          const answer = () => {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(payload));
+          };
+          if (delayMs > 0) {
+            setTimeout(answer, delayMs);
+          } else {
+            answer();
+          }
         });
         return;
       }
@@ -52,6 +83,25 @@ function startQuestionApp(): Promise<QuestionApp> {
   });
 }
 
+/** Only answers the {"question": ...} shape, so auto-detect has a real target. */
+function startQuestionApp(): Promise<FakeApp> {
+  return startApp((data) => ("question" in data ? { answer: "hello" } : null));
+}
+
+/** A healthy helpdesk app: correct answers plus a context passage.
+ *
+ * The probe question auto-detect sends is not one of the golden questions, so
+ * unknown inputs get a plain fallback rather than an error: detection must see
+ * a real 2xx response, and the dataset cases still get their exact answers.
+ */
+function startGoldenApp(delayMs = 0): Promise<FakeApp> {
+  return startApp((data) => {
+    const question = typeof data.question === "string" ? data.question : "";
+    const answer = GOLDEN_ANSWERS[question] ?? "I am not sure about that.";
+    return { answer, context: `${answer} (helpdesk handbook)` };
+  }, delayMs);
+}
+
 /** Register a fresh account and return the role the API assigned it. */
 async function register(page: Page, name: string, email: string): Promise<string> {
   await page.goto(`${WEB}/register`);
@@ -65,6 +115,22 @@ async function register(page: Page, name: string, email: string): Promise<string
   const body = (await (await registered).json()) as { user: { role: string } };
   await page.waitForURL((url) => !url.pathname.includes("/register"), { timeout: 15_000 });
   return body.user.role;
+}
+
+/** Upload a CSV and approve version 1, using the signed-in session's cookies. */
+async function uploadApprovedDataset(page: Page, name: string, csv: string): Promise<void> {
+  const created = await page.request.post(`${API}/api/v1/datasets`, {
+    multipart: {
+      name,
+      file: { name: "golden.csv", mimeType: "text/csv", buffer: Buffer.from(csv) },
+    },
+  });
+  expect(created.status(), await created.text()).toBe(201);
+  const dataset = (await created.json()) as { id: string };
+  const approved = await page.request.post(
+    `${API}/api/v1/datasets/${dataset.id}/versions/1/approve`,
+  );
+  expect(approved.status(), await approved.text()).toBe(200);
 }
 
 /** Land on the New Test page, signing in first if the session did not survive navigation. */
@@ -81,6 +147,15 @@ async function openNewTestPage(page: Page): Promise<void> {
   if (outcome === "login") {
     throw new Error(`Redirected to the login page at ${page.url()} while ${WEB}/ was expected.`);
   }
+}
+
+/** Fill the one-box flow and press Start test until the detected panel appears. */
+async function detectTarget(page: Page, app: FakeApp): Promise<void> {
+  await page.selectOption('[data-testid="connector-select"]', "http_endpoint");
+  await page.fill('[data-testid="target-url"]', `http://${TARGET_HOST}:${app.port}/chat`);
+  await page.check("#runs-on-my-computer");
+  await page.click('[data-testid="start-test"]');
+  await expect(page.getByTestId("detect-result")).toBeVisible({ timeout: 60_000 });
 }
 
 test("register, login, see the admin role, upload CSV in Settings -> Datasets", async ({
@@ -158,6 +233,66 @@ test("new test page auto-detects the question shape", async ({ page }) => {
     await expect(page.getByTestId("detected-context-path")).toBeVisible();
     // The real response body is shown so the user can verify what came back.
     await expect(page.getByTestId("detect-result")).toContainText("Real response");
+  } finally {
+    await app.close();
+  }
+});
+
+test("new test page runs a test to a GO verdict", async ({ page }) => {
+  const app = await startGoldenApp();
+  try {
+    const email = `run${Date.now()}@example.com`;
+    await register(page, "Run User", email);
+    const datasetName = `Golden ${Date.now()}`;
+    await uploadApprovedDataset(page, datasetName, GOLDEN_CSV);
+
+    await openNewTestPage(page);
+    await detectTarget(page, app);
+
+    await page.selectOption('[data-testid="run-dataset"]', {
+      label: `${datasetName} · v1 (2 cases)`,
+    });
+    await page.click('[data-testid="run-test"]');
+
+    // Live progress comes from the worker, polled by the page.
+    await expect(page.getByTestId("run-progress")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("run-counters")).toContainText("cases done");
+
+    // Then the stored verdict, with the engine's own explanation.
+    await expect(page.getByTestId("run-verdict")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId("run-verdict-word")).toHaveText("Go");
+    await expect(page.getByTestId("run-verdict-score")).toHaveText("1.00");
+    await expect(page.getByTestId("run-verdict-reason")).toContainText("GO threshold 0.80");
+    await expect(page.getByTestId("run-metrics")).toContainText("answer match");
+    await expect(page.getByTestId("run-state")).toHaveText("Completed");
+  } finally {
+    await app.close();
+  }
+});
+
+test("cancel stops a running test and keeps partial results", async ({ page }) => {
+  const app = await startGoldenApp(2500);
+  try {
+    const email = `cancel${Date.now()}@example.com`;
+    await register(page, "Cancel User", email);
+    const datasetName = `Slow ${Date.now()}`;
+    await uploadApprovedDataset(page, datasetName, SLOW_CSV);
+
+    await openNewTestPage(page);
+    await detectTarget(page, app);
+    await page.selectOption('[data-testid="run-dataset"]', {
+      label: `${datasetName} · v1 (6 cases)`,
+    });
+    await page.click('[data-testid="run-test"]');
+
+    await expect(page.getByTestId("run-progress")).toBeVisible({ timeout: 15_000 });
+    await page.click('[data-testid="cancel-run"]');
+
+    await expect(page.getByTestId("run-state")).toContainText("partial results", {
+      timeout: 60_000,
+    });
+    await expect(page.getByTestId("run-verdict-reason")).toContainText("cancelled");
+    await expect(page.getByTestId("cancel-run")).not.toBeVisible();
   } finally {
     await app.close();
   }

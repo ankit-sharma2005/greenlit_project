@@ -169,7 +169,7 @@ export function ResultsPage() {
           <h2>No verdict yet</h2>
           <p>
             Load an example or paste your own outputs, then press Evaluate. Runs started from the
-            New Test page appear here once the worker ships in M6.
+            New Test page show their verdict there, scored by the same engine.
           </p>
         </section>
       ) : null}

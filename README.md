@@ -5,8 +5,10 @@ Pre-launch testing and evaluation for LLM-powered applications. GreenLit tests t
 safety and operational checks into one decision: **GO / REVIEW / NO-GO**, with evidence and
 suggested fixes.
 
-> Status: M1 (accounts) is complete. Providers, connectors, runs and reports arrive in later
-> milestones; anything not built yet is visibly marked "Coming soon".
+> Status: M6 (runs) is complete: accounts, providers, the three connectors, datasets,
+> metrics/decision engine and worker-executed runs with live progress and cancel. Judge,
+> safety sets, regression and reports arrive in later milestones; anything not built yet is
+> visibly marked "Coming soon".
 
 ## Quick start
 
@@ -122,6 +124,37 @@ cd frontend && npm run e2e   # defaults to http://localhost:5177
 ```
 
 CI runs the same commands on every push (see `.github/workflows/ci.yml`).
+
+## Run GreenLit in CI
+
+Everything works through the API alone. `POST /api/v1/quick-test` creates what a test needs
+(connector settings, dataset, approved version and the run) and returns the run id at once;
+the Celery worker executes the cases and `GET /api/v1/runs/{id}` returns the stored verdict.
+
+```bash
+API=http://localhost:8003
+JAR=$(mktemp)
+
+# 1. Sign in (register first on a fresh database).
+curl -sS -c "$JAR" -H 'Content-Type: application/json' \
+  -d '{"email":"ci@example.com","password":"correct horse battery"}' \
+  "$API/api/v1/auth/login"
+
+# 2. Start a test. Send `csv` (question,answer columns) or `dataset_id` to skip generation.
+RUN=$(curl -sS -b "$JAR" -H 'Content-Type: application/json' \
+  -d '{"entry_point":"http_endpoint","target":"http://localhost:9000/chat","tests":["quality","operations"],"csv":"question,answer\nHow do I reset my password?,Use the reset link on the sign-in page.\n"}' \
+  "$API/api/v1/quick-test" | python -c 'import json,sys; print(json.load(sys.stdin)["run"]["id"])')
+
+# 3. Poll until the worker finishes (live counters: /api/v1/runs/$RUN/progress).
+for _ in $(seq 1 120); do
+  curl -sS -b "$JAR" "$API/api/v1/runs/$RUN" > /tmp/greenlit-run.json
+  grep -qE '"state":"(completed|cancelled|failed)"' /tmp/greenlit-run.json && break
+  sleep 1
+done
+
+# 4. Fail the pipeline on anything but GO.
+python -c 'import json,sys; run=json.load(open("/tmp/greenlit-run.json")); print(run["verdict"], run["score"], run["verdict_reason"]); sys.exit(0 if run["verdict"] == "GO" else 1)'
+```
 
 ## Brand assets
 
