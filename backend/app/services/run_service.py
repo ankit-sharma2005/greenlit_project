@@ -171,6 +171,21 @@ def build_snapshot(
                 "temperature": payload.temperature,
             }
         )
+    elif entry_point == "upload_outputs":
+        if not payload.body_template or not payload.body_template.strip():
+            raise RunServiceError(
+                "Upload-output runs need the CSV or JSON file. Paste it in the Upload outputs "
+                "panel on the New Test page, then start the test again."
+            )
+        snapshot.update(
+            {
+                "csv": payload.body_template,
+                "dataset_version_id": str(dataset_version_id),
+                "column_overrides": (
+                    dict(payload.column_overrides) if payload.column_overrides else None
+                ),
+            }
+        )
     return snapshot
 
 
@@ -307,9 +322,15 @@ def create_quick_test(
             session, user, dataset_id=payload.dataset_id, dataset_version_id=None
         )
     elif payload.entry_point == "upload_outputs":
-        raise RunServiceError(
-            "Uploading outputs needs the CSV itself. Send `csv` with the quick test."
+        if not payload.csv or not payload.csv.strip():
+            raise RunServiceError(
+                "Upload-output quick tests need the CSV or JSON file. "
+                "Send `csv` with the quick test."
+            )
+        dataset = _dataset_from_csv(
+            session, user, payload.name or _default_name(payload.entry_point), payload.csv.encode()
         )
+        version = _approve_first_version(session, dataset, user)
     else:
         provider = _provider_for(session, user, payload.provider_id)
         try:
@@ -342,7 +363,9 @@ def create_quick_test(
         provider_id=payload.provider_id,
         model=payload.model,
         method=payload.method,
-        body_template=payload.body_template,
+        body_template=(
+            payload.csv if payload.entry_point == "upload_outputs" else payload.body_template
+        ),
         headers=payload.headers,
         answer_path=payload.answer_path,
         context_path=payload.context_path,

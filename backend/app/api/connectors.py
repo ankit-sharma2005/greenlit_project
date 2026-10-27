@@ -102,9 +102,12 @@ def test_connection(
             from app.services.connectors import UploadOutputsConnector
 
             up_connector = UploadOutputsConnector()
-            # Use body_template as csv content if provided
             csv_content = payload.body_template or ""
-            trace = up_connector.render_and_send(csv_content=csv_content, input_text="Hello")
+            trace = up_connector.render_and_send(
+                csv_content=csv_content,
+                input_text="Hello",
+                overrides=payload.column_overrides,
+            )
             return ConnectTestResponse(
                 success=True,
                 message="Connection test successful",

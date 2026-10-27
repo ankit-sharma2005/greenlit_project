@@ -6,11 +6,13 @@ import re
 import threading
 import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 from redis.exceptions import RedisError
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import (
@@ -76,7 +78,7 @@ class FakeSender:
         self._lock = threading.Lock()
 
     def factory(
-        self, snapshot: dict[str, object], session_factory: object
+        self, snapshot: Mapping[str, Any], session_factory: Callable[[], Session]
     ) -> Callable[[str], Trace]:
         self.snapshots.append(dict(snapshot))
 
@@ -196,7 +198,7 @@ def run_it(
     session_factory: sessionmaker[Session],
     sender: FakeSender | None = None,
     *,
-    sender_factory: Callable[..., Callable[[str], Trace]] | None = None,
+    sender_factory: Callable[[Mapping[str, Any], Callable[[], Session]], Callable[[str], Trace]] | None = None,
     parallelism: int = 1,
 ) -> tuple[dict[str, object], MemoryProgress]:
     progress = MemoryProgress()
@@ -477,7 +479,23 @@ def test_upload_outputs_scores_the_file_without_calling_the_app(
         }
         for row in ROWS
     ]
-    run_id = seed_run(session_factory, owner, rows=rows, entry="upload_outputs")
+    # The uploaded CSV carries the app's outputs; the dataset items carry only
+    # the inputs. The executor matches rows to items by input text.
+    csv_content = "\n".join(
+        [
+            "question,output",
+            f"{ROWS[0]['question']},{ROWS[0]['answer']}",
+            f"{ROWS[1]['question']},{ROWS[1]['answer']}",
+            f"{ROWS[2]['question']},{ROWS[2]['answer']}",
+        ]
+    )
+    run_id = seed_run(
+        session_factory,
+        owner,
+        rows=rows,
+        entry="upload_outputs",
+        settings_extra={"csv": csv_content},
+    )
 
     def forbidden_factory(snapshot: object, session_factory_arg: object) -> Callable[[str], Trace]:
         raise AssertionError("upload_outputs runs must not build a sender")
@@ -489,13 +507,217 @@ def test_upload_outputs_scores_the_file_without_calling_the_app(
     with session_factory() as session:
         items = list_run_items(session, run_id)
         assert [item.state for item in items] == ["completed"] * 3
-        assert items[0].output == rows[0]["answer"]
+        assert items[0].output == ROWS[0]["answer"]
         assert items[0].trace is not None
         assert items[0].trace["connector"] == "upload_outputs"
         answer_match = [
             row for row in get_metric_results(session, run_id) if row.name == "answer_match"
         ]
         assert answer_match and answer_match[0].passed is True
+
+
+# ---- upload_outputs: missing optional columns ----------------------------
+
+
+def test_upload_outputs_with_missing_optional_columns_is_scored_on_what_is_present(
+    session_factory: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    """A CSV that only has input + output still scores; absent fields are
+    not instrumented, not counted as zero."""
+    rows = [
+        {
+            "question": row["question"],
+            "answer": row["answer"],
+            "context": row["context"],
+        }
+        for row in ROWS
+    ]
+    csv_content = "\n".join(
+        [
+            "question,output",
+            f"{ROWS[0]['question']},{ROWS[0]['answer']}",
+            f"{ROWS[1]['question']},{ROWS[1]['answer']}",
+            f"{ROWS[2]['question']},{ROWS[2]['answer']}",
+        ]
+    )
+    run_id = seed_run(
+        session_factory,
+        owner,
+        rows=rows,
+        entry="upload_outputs",
+        settings_extra={"csv": csv_content},
+        criteria="rag_chatbot",
+    )
+
+    def forbidden_factory(snapshot: object, session_factory_arg: object) -> Callable[[str], Trace]:
+        raise AssertionError("upload_outputs runs must not build a sender")
+
+    report, _ = run_it(run_id, session_factory, sender_factory=forbidden_factory)
+
+    assert report["status"] == "completed", report
+    assert report["verdict"] == "GO"
+    with session_factory() as session:
+        metrics = {row.name: row for row in get_metric_results(session, run_id)}
+        # retrieval_context_recall is not instrumented: the uploaded file has no
+        # retrieved_context column, so the app never reported what it retrieved.
+        assert metrics["retrieval_context_recall"].instrumented is False
+        # token_usage_present is not instrumented: the uploaded file has no token
+        # columns, so the app never reported token usage.
+        assert metrics["token_usage_present"].instrumented is False
+        # answer_match is still measured because both expected and actual are present.
+        assert metrics["answer_match"].instrumented is True
+        assert metrics["answer_match"].passed is True
+
+
+# ---- upload_outputs: missing outputs --------------------------------------
+
+
+def test_upload_outputs_missing_rows_fail_with_a_clear_reason(
+    session_factory: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    """Dataset items with no matching row in the uploaded file are failed
+    with a reason that names the row."""
+    rows = [
+        {"question": ROWS[0]["question"], "answer": ROWS[0]["answer"]},
+        {"question": ROWS[1]["question"], "answer": ROWS[1]["answer"]},
+        {"question": ROWS[2]["question"], "answer": ROWS[2]["answer"]},
+    ]
+    # Only two rows in the CSV; the third dataset item has no match.
+    csv_content = "\n".join(
+        [
+            "question,output",
+            f"{ROWS[0]['question']},{ROWS[0]['answer']}",
+            f"{ROWS[1]['question']},{ROWS[1]['answer']}",
+        ]
+    )
+    run_id = seed_run(
+        session_factory,
+        owner,
+        rows=rows,
+        entry="upload_outputs",
+        settings_extra={"csv": csv_content},
+    )
+
+    def forbidden_factory(snapshot: object, session_factory_arg: object) -> Callable[[str], Trace]:
+        raise AssertionError("upload_outputs runs must not build a sender")
+
+    report, _ = run_it(run_id, session_factory, sender_factory=forbidden_factory)
+
+    assert report["status"] == "completed", report
+    with session_factory() as session:
+        items = list_run_items(session, run_id)
+        assert [item.state for item in items] == ["completed", "completed", "failed"]
+        failed = [item for item in items if item.state == "failed"]
+        assert len(failed) == 1
+        assert failed[0].error is not None
+        assert "No matching output" in failed[0].error
+        assert failed[0].row_index == 3
+
+
+def test_upload_outputs_with_an_id_column_matches_by_id_first(
+    session_factory: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    """When both the dataset item and the CSV row carry an id, matching
+    uses the id before falling back to input text."""
+    rows = [
+        {"id": "a", "question": ROWS[0]["question"], "answer": ROWS[0]["answer"]},
+        {"id": "b", "question": ROWS[1]["question"], "answer": ROWS[1]["answer"]},
+    ]
+    # The CSV has the answers under a different input spelling but the same ids.
+    csv_content = "\n".join(
+        [
+            "id,output",
+            "a,matched-by-id",
+            "b,also-matched-by-id",
+        ]
+    )
+    run_id = seed_run(
+        session_factory,
+        owner,
+        rows=rows,
+        entry="upload_outputs",
+        settings_extra={
+            "csv": csv_content,
+            "body_template": "",
+        },
+    )
+    # Re-map the dataset column mapping so the id column is recognised.
+    with session_factory() as session:
+        version = session.scalar(
+            select(DatasetVersion).order_by(DatasetVersion.version_no.desc())
+        )
+        assert version is not None
+        version.dataset.columns.id_column = "id"
+        session.commit()
+
+    def forbidden_factory(snapshot: object, session_factory_arg: object) -> Callable[[str], Trace]:
+        raise AssertionError("upload_outputs runs must not build a sender")
+
+    report, _ = run_it(run_id, session_factory, sender_factory=forbidden_factory)
+
+    assert report["status"] == "completed", report
+    with session_factory() as session:
+        items = list_run_items(session, run_id)
+        assert items[0].output == "matched-by-id"
+        assert items[1].output == "also-matched-by-id"
+
+
+# ---- upload_outputs: broken outputs -> NO_GO -----------------------------
+
+
+def test_broken_upload_outputs_gives_no_go_and_names_the_weak_metrics(
+    session_factory: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    """Wrong answers in the uploaded file produce NO_GO with the weighted
+    score, the REVIEW threshold and the weakest metrics named."""
+    rows = [
+        {
+            "question": row["question"],
+            "answer": row["answer"],
+            "context": row["context"],
+        }
+        for row in ROWS
+    ]
+    # The uploaded file has wrong answers for every case.
+    csv_content = "\n".join(
+        [
+            "question,output",
+            f"{ROWS[0]['question']},I am not sure about that.",
+            f"{ROWS[1]['question']},I do not know.",
+            f"{ROWS[2]['question']},Maybe.",
+        ]
+    )
+    run_id = seed_run(
+        session_factory,
+        owner,
+        rows=rows,
+        entry="upload_outputs",
+        settings_extra={"csv": csv_content},
+        criteria="rag_chatbot",
+    )
+
+    def forbidden_factory(snapshot: object, session_factory_arg: object) -> Callable[[str], Trace]:
+        raise AssertionError("upload_outputs runs must not build a sender")
+
+    report, _ = run_it(run_id, session_factory, sender_factory=forbidden_factory)
+
+    assert report["status"] == "completed", report
+    assert report["verdict"] == "NO_GO"
+    with session_factory() as session:
+        run = session.get(Run, run_id)
+        assert run is not None
+        assert run.state == "completed"
+        reason = run.verdict_reason or ""
+        assert "Weighted score" in reason
+        assert "below the REVIEW threshold" in reason
+        assert "Weakest metrics:" in reason
+        assert "answer_match" in reason
+        assert "Suggested fixes:" in reason
+        # Not-instrumented metrics are excluded from the weighted score.
+        metrics = {row.name: row for row in get_metric_results(session, run_id)}
+        assert metrics["answer_match"].score == pytest.approx(0.0, abs=0.01)
+        assert metrics["retrieval_context_recall"].instrumented is False
+        assert metrics["token_usage_present"].instrumented is False
 
 
 # ---- progress -------------------------------------------------------------

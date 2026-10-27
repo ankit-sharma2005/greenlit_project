@@ -33,6 +33,7 @@ class ConnectTestRequest(BaseModel):
     model: str | None = None
     temperature: float | None = 0.2
     auto_detect: bool = False
+    column_overrides: dict[str, str] | None = None
 
 
 class ConnectTestResponse(BaseModel):

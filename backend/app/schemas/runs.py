@@ -16,6 +16,23 @@ EntryPoint = Literal["http_endpoint", "prompt_app", "upload_outputs"]
 ALL_TEST_TYPES: list[TestType] = ["quality", "safety", "operations"]
 
 
+class UploadOutputsColumnOverrides(BaseModel):
+    """User-supplied column mapping for uploaded outputs.
+
+    Omitted fields fall back to auto-detection from the CSV header row.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    input_column: str | None = Field(default=None, max_length=120)
+    output_column: str | None = Field(default=None, max_length=120)
+    id_column: str | None = Field(default=None, max_length=120)
+    retrieved_context_column: str | None = Field(default=None, max_length=120)
+    latency_ms_column: str | None = Field(default=None, max_length=120)
+    tokens_in_column: str | None = Field(default=None, max_length=120)
+    tokens_out_column: str | None = Field(default=None, max_length=120)
+
+
 class RunCreateRequest(BaseModel):
     """Start a run from saved settings: connector + approved dataset + criteria."""
 
@@ -44,6 +61,9 @@ class RunCreateRequest(BaseModel):
     model: str | None = Field(default=None, max_length=120)
     system_prompt: str | None = Field(default=None, max_length=20_000)
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+
+    # Upload outputs connector settings.
+    column_overrides: UploadOutputsColumnOverrides | None = None
 
 
 class QuickTestRequest(BaseModel):

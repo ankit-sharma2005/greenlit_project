@@ -397,7 +397,11 @@ def test_prompt_app_with_fake_gateway():
 def test_upload_outputs_csv_missing_optional_columns():
     from app.services.connectors import UploadOutputsConnector
 
-    csv_content = "answer\nhello world\n"
+    # Only input + output: optional columns (context, latency, tokens) are absent.
+    csv_content = "question,output\nhello world,greeting received\n"
     connector = UploadOutputsConnector()
     trace = connector.render_and_send(csv_content=csv_content)
-    assert trace.output == "hello world"
+    assert trace.output == "greeting received"
+    assert trace.retrieved_context == "not instrumented"
+    assert trace.tokens_in is None
+    assert trace.tokens_out is None

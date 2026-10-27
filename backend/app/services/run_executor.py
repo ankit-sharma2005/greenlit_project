@@ -67,7 +67,7 @@ class RunExecutionError(Exception):
         self.message = message
 
 
-@dataclass(frozen=True)
+@dataclass
 class _Case:
     """One dataset row prepared for execution (plain values, safe across threads)."""
 
@@ -81,6 +81,7 @@ class _Case:
     latency_ms: int | None = None
     tokens_in: int | None = None
     tokens_out: int | None = None
+    error: str | None = None
 
 
 def entry_point(snapshot: Mapping[str, Any]) -> str:
@@ -271,7 +272,9 @@ def _resolve_version(session: Session, run: Run) -> DatasetVersion:
     return version
 
 
-def _load_cases(session: Session, run: Run, entry: str) -> list[_Case]:
+def _load_cases(
+    session: Session, run: Run, entry: str
+) -> tuple[list[_Case], list[tuple[int, str, dict[str, str]]]]:
     """Approved dataset rows -> execution cases, using the saved column mapping."""
     version = _resolve_version(session, run)
     mapping = version.dataset.columns
@@ -287,55 +290,49 @@ def _load_cases(session: Session, run: Run, entry: str) -> list[_Case]:
         if mapping.retrieved_context_column
         else None
     )
-    latency_column = (
+    _latency_column = (
         mapping.latency_ms_column.strip().lower() if mapping.latency_ms_column else None
     )
-    tokens_in_column = (
+    _tokens_in_column = (
         mapping.tokens_in_column.strip().lower() if mapping.tokens_in_column else None
     )
-    tokens_out_column = (
+    _tokens_out_column = (
         mapping.tokens_out_column.strip().lower() if mapping.tokens_out_column else None
     )
 
-    cases: list[_Case] = []
+    # Collect (row_index, input_text, item_data) tuples. For upload_outputs
+    # the outputs come from the uploaded file, matched to these items later;
+    # for every other entry point the dataset item's own columns are used.
+    item_tuples: list[tuple[int, str, dict[str, str]]] = []
     for row in rows:
-        data = {str(key).strip().lower(): value for key, value in (row.data or {}).items()}
+        data = {
+            str(key).strip().lower(): str(value).strip()
+            for key, value in (row.data or {}).items()
+        }
         input_text = _text(data.get(input_column))
         if input_text is None:
             continue
-        if entry == "upload_outputs":
-            # The file already contains the app's answers; nothing to call.
-            cases.append(
-                _Case(
-                    row_index=len(cases) + 1,
-                    input_text=input_text,
-                    expected_answer=_expected_from_row(data, output_column),
-                    reference_context=_text_list(_first_present(data, _REFERENCE_CONTEXT_KEYS)),
-                    output=_text(data.get(output_column)) or "",
-                    retrieved_context=(
-                        _text_list(data.get(context_column)) if context_column else None
-                    ),
-                    latency_ms=_int(data.get(latency_column)) if latency_column else None,
-                    tokens_in=(_int(data.get(tokens_in_column)) if tokens_in_column else None),
-                    tokens_out=(_int(data.get(tokens_out_column)) if tokens_out_column else None),
-                )
+        item_tuples.append((row.row_index, input_text, data))
+
+    cases: list[_Case] = []
+    for _row_index, input_text, data in item_tuples:
+        # The dataset item carries the input, the expected (golden) answer and
+        # optionally the reference context the app should have retrieved.
+        # For upload_outputs the actual outputs come from the uploaded file,
+        # matched to these cases later in execute_run.
+        cases.append(
+            _Case(
+                row_index=len(cases) + 1,
+                input_text=input_text,
+                expected_answer=_text(data.get(output_column)),
+                reference_context=(
+                    _text_list(data.get(context_column)) if context_column else None
+                ),
             )
-        else:
-            # Golden dataset: the answer column is the expectation, and the
-            # context column is the reference context the app should retrieve.
-            cases.append(
-                _Case(
-                    row_index=len(cases) + 1,
-                    input_text=input_text,
-                    expected_answer=_text(data.get(output_column)),
-                    reference_context=(
-                        _text_list(data.get(context_column)) if context_column else None
-                    ),
-                )
-            )
+        )
     if not cases:
         raise RunExecutionError("The approved dataset version has no rows with an input.")
-    return cases
+    return cases, item_tuples
 
 
 def _precomputed_trace(case: _Case) -> Trace:
@@ -349,7 +346,7 @@ def _precomputed_trace(case: _Case) -> Trace:
         latency_ms=int(case.latency_ms or 0),
         tokens_in=case.tokens_in,
         tokens_out=case.tokens_out,
-        error=None,
+        error=case.error,
         raw={"source": "upload_outputs"},
     )
 
@@ -413,10 +410,47 @@ def execute_run(
                 raise RunExecutionError(
                     "This run has no target URL. Start the test again from the New Test page."
                 )
-            cases = _load_cases(session, run, entry)
+            cases, item_tuples = _load_cases(session, run, entry)
             if entry != "upload_outputs":
                 choose_sender: SenderFactory = sender_factory or build_sender
                 sender = choose_sender(snapshot, factory)
+            else:
+                # Match uploaded rows to dataset items by id, then by input text.
+                csv_content = str(snapshot.get("csv") or "").strip()
+                if not csv_content:
+                    raise RunExecutionError(
+                        "This upload-outputs run has no file content. Start the test again."
+                    )
+                from app.services.connectors import (
+                    UploadOutputsConnector,
+                    match_uploaded_rows,
+                )
+
+                overrides = snapshot.get("column_overrides") or None
+                _file_format, uploaded_rows, columns = (
+                    UploadOutputsConnector.parse_file(csv_content, overrides)
+                )
+                matched = match_uploaded_rows(item_tuples, uploaded_rows, columns)
+                unmatched_count = 0
+                for case in cases:
+                    fields = matched.get(case.row_index)
+                    if fields is None:
+                        case.error = (
+                            f"No matching output in the uploaded file for row {case.row_index}."
+                        )
+                        unmatched_count += 1
+                        continue
+                    case.output = fields["output"] or ""
+                    case.retrieved_context = fields["retrieved_context"]
+                    case.latency_ms = fields["latency_ms"]
+                    case.tokens_in = fields["tokens_in"]
+                    case.tokens_out = fields["tokens_out"]
+                if unmatched_count:
+                    message = (
+                        f"Run {rid}: {unmatched_count} of {len(cases)} "
+                        "dataset items had no matching output in the uploaded file."
+                    )
+                    logger.info(message)
             update_run(session, run, state=RunState.RUNNING, started_at=utcnow())
             started_at = run.started_at.isoformat() if run.started_at else None
             existing = {item.row_index: item for item in list_run_items(session, rid)}

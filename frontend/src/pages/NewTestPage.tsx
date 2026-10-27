@@ -4,6 +4,10 @@ import { Button } from "../components/Button";
 import { DemoPanel } from "../components/DemoPanel";
 import { PromptAppPanel } from "../components/PromptAppPanel";
 import { RunProgressPanel } from "../components/RunProgressPanel";
+import {
+  type UploadOutputsColumnOption,
+  UploadOutputsPanel,
+} from "../components/UploadOutputsPanel";
 import { Spinner } from "../components/Spinner";
 import { parseCurl } from "../lib/curl";
 import { testConnection } from "../lib/connectors";
@@ -42,6 +46,23 @@ interface ProviderOption {
 
 const POLL_INTERVAL_MS = 1500;
 const GENERATED_CASES = 10;
+const UPLOAD_COLUMN_KNOWN: Readonly<Record<string, string>> = {
+  id: "id",
+  input: "input",
+  output: "output",
+  answer: "output",
+  response: "output",
+  retrieved_context: "retrieved_context",
+  context: "retrieved_context",
+  retrieval_context: "retrieved_context",
+  latency_ms: "latency_ms",
+  latency: "latency_ms",
+  tokens_in: "tokens_in",
+  prompt_tokens: "tokens_in",
+  tokens_out: "tokens_out",
+  completion_tokens: "tokens_out",
+  response_tokens: "tokens_out",
+};
 
 /** The checked test types, in a stable order. */
 function chosenTestTypes(types: TestTypes): TestType[] {
@@ -80,10 +101,24 @@ export function NewTestPage() {
   const [promptAppModel, setPromptAppModel] = useState("");
   const [promptDatasetId, setPromptDatasetId] = useState("");
 
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadFileName, setUploadFileName] = useState("");
+  const [uploadColumns, setUploadColumns] = useState<UploadOutputsColumnOption[]>([]);
+  const [uploadInputColumn, setUploadInputColumn] = useState("");
+  const [uploadOutputColumn, setUploadOutputColumn] = useState("");
+  const [uploadIdColumn, setUploadIdColumn] = useState("");
+  const [uploadContextColumn, setUploadContextColumn] = useState("");
+  const [uploadLatencyColumn, setUploadLatencyColumn] = useState("");
+  const [uploadTokensInColumn, setUploadTokensInColumn] = useState("");
+  const [uploadTokensOutColumn, setUploadTokensOutColumn] = useState("");
+  const [uploadDatasetVersionId, setUploadDatasetVersionId] = useState("");
+  const [uploadConnectorStatus, setUploadConnectorStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
+  const [uploadConnectorMessage, setUploadConnectorMessage] = useState("");
+
   const [detectResult, setDetectResult] = useState<
     import("../lib/connectors").ConnectTestResponse | null
   >(null);
-  const [answerPath, setAnswerPath] = useState<string>("");
+  const [answerPath, setAnswerPath] = useState("");
 
   // Approved dataset versions are the only thing a run may execute.
   useEffect(() => {
@@ -124,6 +159,69 @@ export function NewTestPage() {
       })
       .catch(() => setProviderOptions([]));
   }, []);
+
+  // When the user drops a file, read its headers and auto-detect column names.
+  useEffect(() => {
+    if (!uploadFile) {
+      setUploadColumns([]);
+      return;
+    }
+    let cancelled = false;
+    let reader: FileReader | null = null;
+    try {
+      reader = new FileReader();
+      reader.onload = () => {
+        if (cancelled) return;
+        const text = reader?.result ?? "";
+        const raw = typeof text === "string" ? text : "";
+        const first = raw.split("\n").find((line) => line.trim().length > 0);
+        let headers: string[] = [];
+        if (first?.trim().startsWith("{") || first?.trim().startsWith("[")) {
+          try {
+            const parsed = JSON.parse(raw);
+            const items =
+              Array.isArray(parsed)
+                ? parsed
+                : parsed.data ??
+                  parsed.items ??
+                  parsed.rows ??
+                  [];
+            if (items.length > 0) {
+              const sample = items[0];
+              if (sample && typeof sample === "object" && !Array.isArray(sample)) {
+                headers = Object.keys(sample);
+              }
+            }
+          } catch {
+            headers = [];
+          }
+        } else if (first) {
+          headers = first.split(",").map((h) => h.trim());
+        }
+        const detect = (key: keyof typeof UPLOAD_COLUMN_KNOWN): string | null => {
+          const target = UPLOAD_COLUMN_KNOWN[key];
+          if (!target) return null;
+          const lowered = headers.map((h) => h.trim().toLowerCase());
+          const idx = lowered.findIndex((h) => h === target.toLowerCase());
+          if (idx !== -1) return headers[idx] ?? null;
+          return null;
+        };
+        const cols: UploadOutputsColumnOption[] = [];
+        for (const key of ["input", "output", "id", "retrieved_context", "latency_ms", "tokens_in", "tokens_out"] as const) {
+          const found = detect(key);
+          if (found) cols.push({ label: found, value: found });
+        }
+        if (!cancelled) setUploadColumns(cols);
+      };
+      reader.readAsText(uploadFile, "utf-8");
+    } catch {
+      if (!cancelled) setUploadColumns([]);
+    }
+    return () => {
+      cancelled = true;
+      reader?.abort();
+    };
+  }, [uploadFile]);
 
   // Poll the worker's counters until the run reaches a terminal state.
   const runId = activeRun?.id;
@@ -273,6 +371,56 @@ export function NewTestPage() {
         );
       } finally {
         setStartingRun(false);
+      }
+      return;
+    }
+
+    if (connector === "upload_outputs") {
+      if (!uploadFile) {
+        setError("Upload a CSV or JSON file of outputs first.");
+        return;
+      }
+      if (!uploadInputColumn || !uploadOutputColumn) {
+        setError("Map the input and output columns from your file first.");
+        return;
+      }
+      if (!uploadDatasetVersionId) {
+        setError("Pick the golden dataset this run should score against.");
+        return;
+      }
+      setLoading(true);
+      setUploadConnectorStatus("loading");
+      setUploadConnectorMessage("");
+      try {
+        const text = await uploadFile.text();
+        const result = await testConnection({
+          connector_type: "upload_outputs",
+          body_template: text,
+        });
+        setUploadConnectorStatus(result.success ? "ok" : "error");
+        setUploadConnectorMessage(result.message);
+        if (!result.success) {
+          setLoading(false);
+          return;
+        }
+        setStartingRun(true);
+        setActiveRun(null);
+        const run = await startRun({
+          entry_point: "upload_outputs",
+          test_types: chosenTestTypes(testTypes),
+          dataset_version_id: uploadDatasetVersionId,
+          timeout_seconds: 60,
+          allow_private_targets: runsOnMyComputer,
+          body_template: text,
+        });
+        setActiveRun(run);
+        setNotice("Run queued. A worker scores the uploaded outputs against the golden dataset.");
+      } catch (caught) {
+        setUploadConnectorStatus("error");
+        setUploadConnectorMessage(
+          caught instanceof ApiError ? caught.message : "Connection test failed.",
+        );
+        setLoading(false);
       }
       return;
     }
@@ -459,14 +607,68 @@ export function NewTestPage() {
         )}
 
         {connector === "upload_outputs" && (
-          <div style={{ marginTop: "var(--space-5)" }}>
-            <label className="form__label">Upload file:</label>
-            <input type="file" disabled={loading} />
-            <p className="form__hint">
-              CSV or JSON file with columns id, input, output (input and output required; the rest
-              is auto-detected). This connects to the Datasets tab in Settings.
-            </p>
-          </div>
+          <UploadOutputsPanel
+            file={uploadFile}
+            fileName={uploadFileName}
+            detectedColumns={uploadColumns}
+            inputColumn={uploadInputColumn}
+            outputColumn={uploadOutputColumn}
+            idColumn={uploadIdColumn}
+            contextColumn={uploadContextColumn}
+            latencyColumn={uploadLatencyColumn}
+            tokensInColumn={uploadTokensInColumn}
+            tokensOutColumn={uploadTokensOutColumn}
+            datasetOptions={datasetOptions.map((opt) => ({
+              value: opt.value,
+              label: opt.label,
+            }))}
+            selectedDatasetVersionId={uploadDatasetVersionId}
+            datasetRowCount={datasetOptions.find((opt) => opt.value === uploadDatasetVersionId)?.label.match(/\(([0-9]+) cases\)/)?.[1] ? Number(datasetOptions.find((opt) => opt.value === uploadDatasetVersionId)!.label.match(/\(([0-9]+) cases\)/)![1]) : 0}
+            connectorTestStatus={uploadConnectorStatus}
+            connectorTestMessage={uploadConnectorMessage}
+            disabled={loading || startingRun}
+            onFileChange={(file) => {
+              setUploadFile(file);
+              setUploadFileName(file?.name ?? "");
+              setUploadColumns([]);
+              setUploadInputColumn("");
+              setUploadOutputColumn("");
+              setUploadIdColumn("");
+              setUploadContextColumn("");
+              setUploadLatencyColumn("");
+              setUploadTokensInColumn("");
+              setUploadTokensOutColumn("");
+              setUploadConnectorStatus("idle");
+              setUploadConnectorMessage("");
+              setUploadDatasetVersionId("");
+            }}
+            onColumnChange={(key, value) => {
+              switch (key) {
+                case "input":
+                  setUploadInputColumn(value);
+                  break;
+                case "output":
+                  setUploadOutputColumn(value);
+                  break;
+                case "id":
+                  setUploadIdColumn(value);
+                  break;
+                case "context":
+                  setUploadContextColumn(value);
+                  break;
+                case "latency":
+                  setUploadLatencyColumn(value);
+                  break;
+                case "tokens_in":
+                  setUploadTokensInColumn(value);
+                  break;
+                case "tokens_out":
+                  setUploadTokensOutColumn(value);
+                  break;
+              }
+            }}
+            onDatasetChange={setUploadDatasetVersionId}
+          />
         )}
 
         <fieldset style={{ marginTop: "var(--space-5)" }}>
