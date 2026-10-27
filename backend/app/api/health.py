@@ -27,7 +27,11 @@ def check_database() -> None:
 
 def check_redis() -> None:
     """Raise when Redis cannot answer PING."""
-    client = redis.Redis.from_url(
+    # redis-py 5.x annotates Redis.from_url as returning None even though it
+    # returns a client, so the value is typed Any here — the same convention the
+    # rate limiter and the progress reporter use. Without it mypy strict rejects
+    # the .ping() below with "None has no attribute ping".
+    client: Any = redis.Redis.from_url(
         get_settings().redis_url, socket_timeout=2, socket_connect_timeout=2
     )
     try:
