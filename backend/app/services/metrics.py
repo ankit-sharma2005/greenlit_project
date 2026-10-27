@@ -488,8 +488,13 @@ def evaluate_items(
     items: Sequence[ItemTrace],
     thresholds: Mapping[str, float] | None = None,
     latency_limit_ms: int = DEFAULT_LATENCY_LIMIT_MS,
+    extra: Mapping[str, MetricResult] | None = None,
 ) -> dict[str, MetricResult]:
-    """Average the per-item metrics and add the run-level operations metrics."""
+    """Average the per-item metrics and add the run-level operations metrics.
+
+    ``extra`` carries metrics measured elsewhere (the built-in safety probes),
+    merged last so a run scores quality, operations and safety in one place.
+    """
     limits = thresholds or {}
     per_item = [evaluate_item(item, limits) for item in items]
     results: dict[str, MetricResult] = {}
@@ -538,6 +543,8 @@ def evaluate_items(
         [(item.tokens_in, item.tokens_out) for item in items],
         limits.get("token_usage_present", DEFAULT_TOKEN_COVERAGE),
     )
+    if extra:
+        results.update(extra)
     return results
 
 

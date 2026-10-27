@@ -36,10 +36,13 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.config import get_settings
 from app.db import SessionLocal
 from app.models import DatasetVersion, Provider, Run, RunItem, RunItemState, RunState, utcnow
+from app.safety.metrics import not_instrumented_safety
+from app.safety.runner import probe_safety
 from app.security.rate_limit import get_rate_limiter
 from app.services.connectors import ConnectorError, HttpConnector, PromptAppConnector, Trace
 from app.services.evaluation import CaseData, EvaluationError, evaluate_preview
 from app.services.llm_gateway import LLMGateway
+from app.services.metrics import MetricResult
 from app.services.run_progress import ProgressReporter, RunProgress, get_progress
 from app.services.run_repository import (
     add_metric_result,
@@ -306,8 +309,7 @@ def _load_cases(
     item_tuples: list[tuple[int, str, dict[str, str]]] = []
     for row in rows:
         data = {
-            str(key).strip().lower(): str(value).strip()
-            for key, value in (row.data or {}).items()
+            str(key).strip().lower(): str(value).strip() for key, value in (row.data or {}).items()
         }
         input_text = _text(data.get(input_column))
         if input_text is None:
@@ -384,6 +386,7 @@ def execute_run(
     work: list[tuple[uuid.UUID, _Case]] = []
     entry = "http_endpoint"
     started_at: str | None = None
+    snapshot: dict[str, Any] = {}
 
     # ---- phase 1: claim the run and prepare the work ---------------------
     try:
@@ -427,8 +430,8 @@ def execute_run(
                 )
 
                 overrides = snapshot.get("column_overrides") or None
-                _file_format, uploaded_rows, columns = (
-                    UploadOutputsConnector.parse_file(csv_content, overrides)
+                _file_format, uploaded_rows, columns = UploadOutputsConnector.parse_file(
+                    csv_content, overrides
                 )
                 matched = match_uploaded_rows(item_tuples, uploaded_rows, columns)
                 unmatched_count = 0
@@ -589,6 +592,23 @@ def execute_run(
         )
         raise
 
+    # ---- phase 2b: built-in safety probes (spec 8.3) ---------------------
+    # Only when the Safety test type is on, and only for connectors that really
+    # call the app: an upload-outputs run has nothing to attack.
+    include_safety = "safety" in [str(value) for value in (snapshot.get("test_types") or [])]
+    extra_metrics: dict[str, MetricResult] = {}
+    if include_safety:
+        if sender is None:
+            extra_metrics = not_instrumented_safety(
+                "this run scores uploaded answers, so the app was never asked"
+            )
+        elif is_stopping():
+            extra_metrics = not_instrumented_safety(
+                "the run was cancelled before the safety probes ran"
+            )
+        else:
+            extra_metrics = probe_safety(sender, workers=workers)
+
     # ---- phase 3: score the finished items and store the verdict ---------
     report: dict[str, Any]
     final_payload: RunProgress
@@ -659,7 +679,11 @@ def execute_run(
                     )
                 try:
                     preview = evaluate_preview(
-                        run.criteria_profile, scored, latency_limit_ms=_LATENCY_LIMIT_MS
+                        run.criteria_profile,
+                        scored,
+                        latency_limit_ms=_LATENCY_LIMIT_MS,
+                        include_safety=include_safety,
+                        extra_metrics=extra_metrics,
                     )
                 except EvaluationError as exc:
                     update_run(

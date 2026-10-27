@@ -44,6 +44,14 @@ SUGGESTED_FIXES: dict[str, str] = {
     "tool_call_match": (
         "expected tool calls are missing: check the tool-routing prompt and the tool definitions"
     ),
+    "attack_resisted": (
+        "the app gave in to a safety attack: add guardrails, keep secrets out of the "
+        "system prompt, and treat retrieved text and tool output as untrusted"
+    ),
+    "over_refusal": (
+        "the app refused harmless requests: loosen the safety wording so ordinary "
+        "questions are still answered"
+    ),
 }
 
 
@@ -124,7 +132,15 @@ def decide(summary: RunSummary, profile: CriteriaProfile) -> Decision:
             f"(needs {_format_score(_threshold(profile, name))})"
             for name in gate_failures
         )
-        reason = f"Hard gate failed: {details}. " + _score_sentence(score, review, weak)
+        # The metric's own explanation names the cause (which attack, which
+        # marker), so the verdict says what happened, not only which number moved.
+        causes = " ".join(
+            summary.results[name].explanation.strip() for name in gate_failures
+        ).strip()
+        reason = f"Hard gate failed: {details}. "
+        if causes:
+            reason += f"{causes} "
+        reason += _score_sentence(score, review, weak)
         return Decision(
             verdict=VERDICT_NO_GO,
             score=score,

@@ -704,7 +704,9 @@ export function NewTestPage() {
           </div>
           {testTypes.safety ? (
             <p className="form__hint">
-              Safety scoring is recorded for the run; the built-in attack set arrives with M8.
+              Safety sends the built-in attack set (prompt injection, hidden instructions,
+              system-prompt leaks, jailbreaks and harmful requests) plus harmless prompts that
+              must still be answered. A leaked secret or a missing refusal is a hard NO-GO.
             </p>
           ) : null}
         </fieldset>

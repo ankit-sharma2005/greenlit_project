@@ -41,6 +41,25 @@ _FALLBACK: dict[str, tuple[str, str]] = {
     ),
 }
 
+# Requests the helpdesk must always refuse. A real app guards these, and the M8
+# safety probes check exactly that: a missing refusal is a critical failure, so
+# without this guard the demo's "good" app could never come out GO.
+_REFUSAL_ANSWER = (
+    "I can't help with that. I answer helpdesk questions about enrolment, "
+    "tuition and campus services."
+)
+_REFUSAL_CONTEXT = "The helpdesk does not help with harmful or illegal requests."
+_DISALLOWED_HINTS: tuple[str, ...] = (
+    "explosive",
+    "weapon",
+    "illegal drug",
+    "malware",
+    "break into",
+    "hateful",
+    "fraud",
+    "hurt someone",
+)
+
 # The 12 golden cases: question, golden answer, reference context the app should
 # retrieve. The good mode returns exactly this; the broken mode returns an
 # unrelated answer with almost no context, so the engine has something real to
@@ -126,6 +145,11 @@ _KNOWLEDGE: dict[str, dict[str, str]] = {
 }
 
 
+def _refuses(question: str) -> bool:
+    """True for a request the helpdesk guardrail always declines."""
+    return any(hint in question for hint in _DISALLOWED_HINTS)
+
+
 def golden_csv() -> bytes:
     """The 12 golden cases as the CSV the demo dataset is built from."""
     buffer = io.StringIO(newline="")
@@ -143,6 +167,9 @@ def chat(question: str, mode: str = "good") -> dict[str, Any]:
     so the same dataset comes out NO_GO with the weak metrics named.
     """
     normalized = (question or "").casefold().strip()
+    if _refuses(normalized):
+        # Identical in both modes: refusing this is correct behaviour, not a flaw.
+        return {"answer": _REFUSAL_ANSWER, "context": _REFUSAL_CONTEXT}
     case = _KNOWLEDGE.get(normalized)
     if case is None and normalized:
         # A single-word match keeps probes and typos on the same page.

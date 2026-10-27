@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from app.services.criteria import CriteriaError, CriteriaProfile, get_profile
+from app.services.criteria import CriteriaError, CriteriaProfile, get_profile, with_safety
 from app.services.datasets import DatasetError, parse_rows
 from app.services.decision import Decision, JudgeStatus, RunSummary, decide
 from app.services.metrics import (
@@ -124,14 +124,24 @@ def evaluate_preview(
     cases: Sequence[CaseData],
     judge: JudgeStatus | None = None,
     latency_limit_ms: int = 5000,
+    *,
+    include_safety: bool = False,
+    extra_metrics: Mapping[str, MetricResult] | None = None,
 ) -> Preview:
-    """Score the cases with the profile's thresholds and decide the verdict."""
+    """Score the cases with the profile's thresholds and decide the verdict.
+
+    ``include_safety`` adds the built-in safety criteria to the profile (the
+    Safety test type); ``extra_metrics`` carries the measured safety results
+    from the worker's probes. Both default to off, so a caller that never
+    mentions safety keeps exactly the old behaviour.
+    """
     if not cases:
         raise EvaluationError("Add at least one case with an input and an output.")
     try:
-        profile = get_profile(profile_key)
+        base = get_profile(profile_key)
     except CriteriaError as exc:
         raise EvaluationError(exc.message) from exc
+    profile = with_safety(base) if include_safety else base
 
     items = [
         ItemTrace(
@@ -153,7 +163,7 @@ def evaluate_preview(
     ]
 
     thresholds = profile.thresholds()
-    results = evaluate_items(items, thresholds, latency_limit_ms)
+    results = evaluate_items(items, thresholds, latency_limit_ms, extra_metrics)
     ordered = _ordered_results(results, profile)
     valid_items = sum(1 for item in items if item.valid)
     decision = decide(

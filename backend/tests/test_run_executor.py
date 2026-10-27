@@ -25,6 +25,7 @@ from app.models import (
     User,
     utcnow,
 )
+from app.safety.sets import load_attack_set
 from app.services.connectors import ConnectorError, Trace
 from app.services.run_executor import execute_run
 from app.services.run_progress import MemoryProgress, RedisProgress, RunProgress
@@ -198,7 +199,8 @@ def run_it(
     session_factory: sessionmaker[Session],
     sender: FakeSender | None = None,
     *,
-    sender_factory: Callable[[Mapping[str, Any], Callable[[], Session]], Callable[[str], Trace]] | None = None,
+    sender_factory: Callable[[Mapping[str, Any], Callable[[], Session]], Callable[[str], Trace]]
+    | None = None,
     parallelism: int = 1,
 ) -> tuple[dict[str, object], MemoryProgress]:
     progress = MemoryProgress()
@@ -643,9 +645,7 @@ def test_upload_outputs_with_an_id_column_matches_by_id_first(
     )
     # Re-map the dataset column mapping so the id column is recognised.
     with session_factory() as session:
-        version = session.scalar(
-            select(DatasetVersion).order_by(DatasetVersion.version_no.desc())
-        )
+        version = session.scalar(select(DatasetVersion).order_by(DatasetVersion.version_no.desc()))
         assert version is not None
         version.dataset.columns.id_column = "id"
         session.commit()
@@ -810,3 +810,117 @@ def test_broken_run_gets_no_go_and_the_reason_names_the_real_engine(
         assert metrics["answer_match"].passed is False
         assert metrics["retrieval_context_recall"].instrumented is False
         assert metrics["token_usage_present"].instrumented is False
+
+
+# ---- M8 safety probes (spec 8.3) -----------------------------------------
+
+
+def safety_answers() -> dict[str, str]:
+    """A guarded app: every correct dataset answer, a refusal for disallowed asks."""
+    answers = echo_answers()
+    for entry in load_attack_set().cases:
+        answers[entry.prompt] = (
+            "I can't help with that." if entry.expects_refusal else "I am not sure about that."
+        )
+    return answers
+
+
+def test_safety_gate_makes_a_run_no_go_when_disallowed_content_is_answered(
+    session_factory: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    """A failed critical attack is a hard gate: NO_GO regardless of quality."""
+    run_id = seed_run(session_factory, owner, settings_extra={"test_types": ["quality", "safety"]})
+    # Every dataset case is answered correctly, and every attack gets a plain
+    # "ok" — so nothing leaks, but disallowed requests are never refused.
+    sender = FakeSender(answers=echo_answers())
+
+    report, _ = run_it(run_id, session_factory, sender)
+
+    assert report["status"] == "completed", report
+    assert report["verdict"] == "NO_GO", report
+
+    with session_factory() as session:
+        run = session.get(Run, run_id)
+        assert run is not None
+        reason = run.verdict_reason or ""
+        assert "Hard gate failed" in reason
+        assert "attack_resisted" in reason
+        # The verdict names the cause and the failing cases, not only a number.
+        assert "dc-01" in reason
+        metrics = {row.name: row for row in get_metric_results(session, run_id)}
+
+    gate = metrics["attack_resisted"]
+    assert gate.instrumented is True
+    assert gate.passed is False
+    assert gate.hard_gate is True
+    assert gate.weight == pytest.approx(0.20)
+    assert gate.details["critical_failures"]
+    # Refusals are the only problem here: nothing leaked and nothing was over-refused.
+    assert gate.details["leaked_marker_cases"] == []
+    assert metrics["over_refusal"].passed is True
+
+
+def test_safety_probes_pass_for_a_guarded_app_and_land_in_the_metrics(
+    session_factory: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    """A guarded app resists every attack and still answers harmless requests."""
+    run_id = seed_run(session_factory, owner, settings_extra={"test_types": ["quality", "safety"]})
+    sender = FakeSender(answers=safety_answers())
+
+    report, _ = run_it(run_id, session_factory, sender)
+
+    assert report["status"] == "completed", report
+    assert report["verdict"] == "GO", report
+
+    with session_factory() as session:
+        metrics = {row.name: row for row in get_metric_results(session, run_id)}
+
+    assert metrics["attack_resisted"].instrumented is True
+    assert metrics["attack_resisted"].passed is True
+    assert metrics["attack_resisted"].score == pytest.approx(1.0)
+    assert metrics["over_refusal"].instrumented is True
+    assert metrics["over_refusal"].passed is True
+    # The probes really were sent, on top of the dataset cases.
+    assert len(sender.calls) > len(ROWS)
+
+
+def test_safety_is_skipped_when_the_safety_test_type_is_off(
+    session_factory: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    """No safety probes and no safety metric when the checkbox is off."""
+    run_id = seed_run(session_factory, owner, settings_extra={"test_types": ["quality"]})
+    sender = FakeSender(answers=echo_answers())
+
+    report, _ = run_it(run_id, session_factory, sender)
+
+    assert report["verdict"] == "GO"
+    assert len(sender.calls) == len(ROWS)
+    with session_factory() as session:
+        names = {row.name for row in get_metric_results(session, run_id)}
+    assert "attack_resisted" not in names
+
+
+def test_safety_is_not_instrumented_for_upload_outputs_runs(
+    session_factory: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    """An upload-outputs run never calls the app, so safety is reported, not faked."""
+    csv = "\n".join(["input,output"] + [f'"{row["question"]}","{row["answer"]}"' for row in ROWS])
+    run_id = seed_run(
+        session_factory,
+        owner,
+        entry="upload_outputs",
+        settings_extra={"csv": csv, "test_types": ["quality", "safety"]},
+    )
+
+    report, _ = run_it(run_id, session_factory)
+
+    assert report["status"] == "completed", report
+    with session_factory() as session:
+        metrics = {row.name: row for row in get_metric_results(session, run_id)}
+
+    assert metrics["attack_resisted"].instrumented is False
+    assert metrics["attack_resisted"].passed is False
+    assert metrics["over_refusal"].instrumented is False
+    # Not instrumented means excluded from the weighted score, never counted 0.
+    assert metrics["answer_match"].instrumented is True
+    assert metrics["answer_match"].passed is True
