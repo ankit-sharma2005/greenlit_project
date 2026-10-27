@@ -302,4 +302,3 @@ def test_create_provider_endpoint_reads_the_provider_body(client: TestClient) ->
     )
     assert created.status_code == 201, created.text
     assert created.json()["name"] == "Fake Prompt App Provider"
-

@@ -487,7 +487,6 @@ class UploadOutputsConnector:
                     detected[key] = value.strip()
         return detected
 
-
     @classmethod
     def parse_file(
         cls, csv_content: str, overrides: dict[str, str] | None = None
@@ -658,9 +657,7 @@ def match_uploaded_rows(
         if context_col and normalized.get(context_col):
             raw = normalized[context_col]
             entry["retrieved_context"] = (
-                [part.strip() for part in raw.split(",") if part.strip()]
-                if "," in raw
-                else [raw]
+                [part.strip() for part in raw.split(",") if part.strip()] if "," in raw else [raw]
             )
         if id_col and normalized.get(id_col):
             by_id[normalized[id_col]] = entry
