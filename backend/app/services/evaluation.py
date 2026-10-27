@@ -6,7 +6,13 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from app.services.criteria import CriteriaError, CriteriaProfile, get_profile, with_safety
+from app.services.criteria import (
+    CriteriaError,
+    CriteriaProfile,
+    get_profile,
+    with_judge,
+    with_safety,
+)
 from app.services.datasets import DatasetError, parse_rows
 from app.services.decision import Decision, JudgeStatus, RunSummary, decide
 from app.services.metrics import (
@@ -126,14 +132,16 @@ def evaluate_preview(
     latency_limit_ms: int = 5000,
     *,
     include_safety: bool = False,
+    include_judge: bool = False,
     extra_metrics: Mapping[str, MetricResult] | None = None,
 ) -> Preview:
     """Score the cases with the profile's thresholds and decide the verdict.
 
     ``include_safety`` adds the built-in safety criteria to the profile (the
-    Safety test type); ``extra_metrics`` carries the measured safety results
-    from the worker's probes. Both default to off, so a caller that never
-    mentions safety keeps exactly the old behaviour.
+    Safety test type) and ``include_judge`` adds ``answer_quality`` (when the run
+    is judged); ``extra_metrics`` carries results measured outside the items,
+    such as the worker's safety probes or the judge's scores. Everything
+    defaults to off, so a caller that mentions neither keeps the old behaviour.
     """
     if not cases:
         raise EvaluationError("Add at least one case with an input and an output.")
@@ -142,6 +150,8 @@ def evaluate_preview(
     except CriteriaError as exc:
         raise EvaluationError(exc.message) from exc
     profile = with_safety(base) if include_safety else base
+    if include_judge:
+        profile = with_judge(profile)
 
     items = [
         ItemTrace(

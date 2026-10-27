@@ -52,6 +52,9 @@ SUGGESTED_FIXES: dict[str, str] = {
         "the app refused harmless requests: loosen the safety wording so ordinary "
         "questions are still answered"
     ),
+    "answer_quality": (
+        "the judge scored the answers low: tighten the prompt or the retrieval step, then run again"
+    ),
 }
 
 

@@ -128,6 +128,17 @@ def with_safety(profile: CriteriaProfile) -> CriteriaProfile:
     return replace(profile, criteria=profile.criteria + SAFETY_CRITERIA)
 
 
+# Added when the run is judged (spec 8.2). Not a hard gate: a weak judge score
+# lowers the weighted score and shows up as a weakness, and a judge that cannot
+# score at all reaches the verdict through rule 3 (REVIEW), not through a gate.
+JUDGE_CRITERIA: tuple[Criterion, ...] = (Criterion("answer_quality", 0.20, 0.70),)
+
+
+def with_judge(profile: CriteriaProfile) -> CriteriaProfile:
+    """The same profile plus the judge's answer_quality metric (spec 8.2)."""
+    return replace(profile, criteria=profile.criteria + JUDGE_CRITERIA)
+
+
 TEMPLATES: dict[str, CriteriaProfile] = {
     profile.key: profile for profile in (RAG_CHATBOT, PLAIN_CHATBOT, TOOL_AGENT, STRICT_SAFETY)
 }

@@ -356,3 +356,57 @@ The demo must produce a GO on one click, so once safety is real the good app has
 `app/services/demo.py` gained a small guardrail: clearly disallowed requests get the same
 refusal in both modes (refusing is correct behaviour, not a quality flaw), while the broken
 mode keeps answering dataset cases wrongly so it still comes out NO_GO on rule 2.
+
+## M7 — Judge and calibration
+
+### D7.1 The judge is a service with an injectable model call
+The model call lives behind `ChatFn`-style injection, exactly like generation: the API layer
+resolves the real call through `get_judge_chat`, which only pins the judge's own model on top
+of the shared `LLMGateway` (so the judge provider's timeout, retries/backoff and rate limit
+still apply). Tests swap the model and exercise the real scoring logic. `app/services/judge.py`
+touches no database.
+
+### D7.2 Structured output, temperature 0, one retry, then "judge unavailable"
+The rubric asks for one JSON object: `{"score": 0..1, "reason": "...", "confidence": 0..1}`.
+`confidence` is the judge's certainty about itself, which is what rule 3's "judge confidence
+low" needs; it is deliberately separate from the score. Temperature is pinned to 0 on every
+attempt because acceptance criterion 8 requires the same inputs to reproduce the same
+verdict. Unparseable or off-contract output (wrong shape, out-of-range score, a bool where a
+number belongs, a blank reason) is retried exactly once and then the item is marked
+unavailable with the reason recorded. A provider outage is treated the same way, so one bad
+case can never fail a run. Code fences are stripped before parsing, because small local
+models add them.
+
+### D7.3 An unavailable judge is REVIEW by rule 3, never a hard gate
+`judge_status()` turns verdicts into the `JudgeStatus` the decision engine already consumes:
+unavailable items and low-confidence items both force REVIEW. It is not a hard gate, because
+the spec's gate list is safety and the "no valid items" case; a judge that cannot be reached
+must produce a human review, not a NO-GO. `answer_quality` likewise carries a weight instead
+of a gate, so a weak judge score lowers the weighted score and appears as a weakness.
+
+### D7.4 Untrusted data is fenced, and provenance travels with the score
+Everything from the app under test goes inside one `<data>` block, with the instructions in
+the system message, and `<data>`/`</data>` inside the payload are rewritten so untrusted text
+cannot close the fence and start issuing orders (spec section 9). The rubric version
+(`JUDGE_RUBRIC_VERSION`) and a SHA-256 of the template (`prompt_template_hash`) are attached
+to the metric's details and exposed through `judge_metadata()` so every judged run records
+which rubric and which prompt produced its scores. `judge_model_warning()` reports when the
+judge model equals the model under test, which the spec asks us to warn about.
+
+### D7.5 Calibration reports kappa, not just raw agreement
+Reviewers' labels are compared with the judge's as categories (`pass_fail()` buckets a score
+the way an approve/reject would). `calibrate()` returns the labelled/agreed counts, raw
+agreement, Cohen's kappa and a plain-language reading (Landis and Koch bands). Raw agreement
+alone is reported too, but never on its own: on a lopsided set an always-"pass" judge looks
+accurate, and kappa is what removes that. Kappa is reported as *undefined* rather than
+invented when there are no labels, only one category, or no chance-disagreement possible
+(`pe` of 1), and it is allowed to come out negative, which means worse than chance.
+
+### D7.6 Scope: the pure core lands first
+The judge service and the calibration maths are pure and fully unit-tested, and
+`criteria.with_judge()` plus the `include_judge` flag on the evaluation engine make
+`answer_quality` a real weighted criterion when a judge is configured. The remaining M7 work
+is deliberately not half-wired here: persisting `judge_profiles` and `human_labels`, the
+review-queue and calibration endpoints, a judge provider selector in the UI, and having the
+worker call the judge and store the provenance fields on the run all arrive as one vertical
+slice in the next step.
