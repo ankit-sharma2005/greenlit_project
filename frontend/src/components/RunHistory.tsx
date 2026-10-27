@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "./Button";
+import { DemoPanel } from "./DemoPanel";
 import { RunProgressPanel } from "./RunProgressPanel";
 import { Spinner } from "./Spinner";
 import { ApiError } from "../lib/api";
@@ -169,6 +170,7 @@ export function RunHistory() {
           <div className="empty-state" data-testid="run-history-empty">
             <h3>No runs yet</h3>
             <p>Start a test from the New Test page and its verdict will show up here.</p>
+            <DemoPanel />
           </div>
         ) : (
           <table className="results__table" data-testid="run-history-table">

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "../components/Button";
-import { ComingSoon } from "../components/ComingSoon";
+import { DemoPanel } from "../components/DemoPanel";
 import { PromptAppPanel } from "../components/PromptAppPanel";
 import { RunProgressPanel } from "../components/RunProgressPanel";
 import { Spinner } from "../components/Spinner";
@@ -653,17 +653,12 @@ export function NewTestPage() {
       >
         <div className="card__header">
           <h2 id="demo-heading">See it working first</h2>
-          <ComingSoon detail="The built-in demo app ships in M10." />
         </div>
         <p className="card__hint">
           The demo runs a sample helpdesk app twice — a healthy version and a broken one — so you
           can see a GO and a NO-GO report without configuring anything.
         </p>
-        <div style={{ marginTop: "var(--space-5)" }}>
-          <Button variant="secondary" disabled title="Demo data ships in M10.">
-            Try the demo
-          </Button>
-        </div>
+        <DemoPanel />
       </section>
     </>
   );

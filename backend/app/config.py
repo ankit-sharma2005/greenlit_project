@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     provider_max_retries: int = Field(default=3, ge=0, le=10)
     provider_backoff_factor: float = Field(default=2.0, ge=1.0, le=10.0)
 
+    # --- Built-in demo (M10, spec section 10) ---
+    # The demo helpdesk runs as its own Compose service (profile ``demo``):
+    # one instance answering correctly, one returning broken answers.
+    demo_app_url: str = "http://demo-app:9000/chat"
+    demo_app_broken_url: str = "http://demo-app-broken:9000/chat"
+
     @property
     def is_development(self) -> bool:
         return self.app_env.lower() in {"development", "dev", "local"}

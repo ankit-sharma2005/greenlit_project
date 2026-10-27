@@ -111,5 +111,60 @@ services:
       retries: 12
       start_period: 15s
 
+  # Built-in demo (spec section 10): the college helpdesk app, answered
+  # correctly by demo-app and wrongly by demo-app-broken, so "Try the demo"
+  # can show a GO and a NO-GO with no model and no setup. Both run the same
+  # image and module; only MODE differs. Started with:
+  #   docker compose --profile demo up -d
+  demo-app:
+    build:
+      context: ./backend
+    command: uvicorn app.demo_server:app --host 0.0.0.0 --port 9000
+    profiles: ["demo"]
+    environment:
+      MODE: good
+      APP_ENV: development
+    ports:
+      - "${DEMO_APP_PORT:-9301}:9000"
+    volumes:
+      - ./backend:/app
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:9000/healthz', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  demo-app-broken:
+    build:
+      context: ./backend
+    command: uvicorn app.demo_server:app --host 0.0.0.0 --port 9000
+    profiles: ["demo"]
+    environment:
+      MODE: broken
+      APP_ENV: development
+    ports:
+      - "${DEMO_APP_BROKEN_PORT:-9302}:9000"
+    volumes:
+      - ./backend:/app
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:9000/healthz', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
 volumes:
   postgres-data:
