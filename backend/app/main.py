@@ -14,6 +14,7 @@ from app.api.datasets import router as datasets_router
 from app.api.demo import router as demo_router
 from app.api.evaluations import router as evaluations_router
 from app.api.health import router as health_router
+from app.api.judge_profiles import router as judge_profiles_router
 from app.api.providers import router as providers_router
 from app.api.runs import router as runs_router
 from app.api.users import router as users_router
@@ -45,6 +46,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router)
     app.include_router(users_router)
     app.include_router(providers_router)
+    app.include_router(judge_profiles_router)
     app.include_router(datasets_router)
     app.include_router(connectors_router)
     app.include_router(evaluations_router)

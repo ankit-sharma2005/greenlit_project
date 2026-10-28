@@ -24,6 +24,19 @@ export interface RunProgress {
   elapsed_seconds: number | null;
 }
 
+export interface RunJudge {
+  model: string | null;
+  provider_name: string | null;
+  profile_name: string | null;
+  rubric_version: string | null;
+  prompt_template_hash: string | null;
+  temperature: number | null;
+  max_tokens: number | null;
+  graded_items: number;
+  unavailable_items: number;
+  low_confidence_items: number;
+}
+
 export interface Run {
   id: string;
   name: string;
@@ -43,6 +56,9 @@ export interface Run {
   progress: RunProgress;
   metrics: MetricRow[];
   failed_cases: FailedCase[];
+  /** Which judge scored the answers; null when the run was not judged. */
+  judge: RunJudge | null;
+  judge_skipped_reason: string | null;
 }
 
 export interface RunCreateRequest {
@@ -64,6 +80,7 @@ export interface RunCreateRequest {
   model?: string;
   system_prompt?: string;
   temperature?: number;
+  judge_profile_id?: string;
 }
 
 export interface QuickTestRequest {

@@ -402,11 +402,45 @@ accurate, and kappa is what removes that. Kappa is reported as *undefined* rathe
 invented when there are no labels, only one category, or no chance-disagreement possible
 (`pe` of 1), and it is allowed to come out negative, which means worse than chance.
 
-### D7.6 Scope: the pure core lands first
+### D7.6 Scope: the pure core lands first, then one vertical slice
 The judge service and the calibration maths are pure and fully unit-tested, and
 `criteria.with_judge()` plus the `include_judge` flag on the evaluation engine make
-`answer_quality` a real weighted criterion when a judge is configured. The remaining M7 work
-is deliberately not half-wired here: persisting `judge_profiles` and `human_labels`, the
-review-queue and calibration endpoints, a judge provider selector in the UI, and having the
-worker call the judge and store the provenance fields on the run all arrive as one vertical
-slice in the next step.
+`answer_quality` a real weighted criterion when a judge is configured. The wiring those pure
+pieces need — saved judge profiles, the selector in Settings → Judge, and the worker judging
+a run with the provenance stored on the run and per item — landed as the next slice
+(D7.7–D7.9). Human labels, the review queue and the calibration endpoints are still to come.
+
+### D7.7 Judge profiles are personal, selected once, temperature frozen
+`judge_profiles` (migration `0009_judge_profiles`) stores the owner, name, provider, model,
+rubric version, temperature, max tokens and an `is_selected` flag. This is the slice D7.6
+deferred. Profiles are owner-scoped like datasets, so a foreign profile answers 404 and its
+existence never leaks. The first profile saved is selected automatically: selecting a
+profile is what makes it the default, so a run is judged without the New Test page having
+to send an id (`resolve_judge_profile` falls back to the selected profile). `temperature`
+is stored but never accepted from the client and never editable — it is always 0 — because
+criterion 8 (same inputs, same verdict) would quietly break otherwise; the API takes
+`max_tokens` because it only bounds the reply length. Deleting a provider keeps the profile
+(`SET NULL`), and the worker then reports the judge as skipped rather than crashing.
+
+### D7.8 The worker judges after executing, and never judges a case that failed
+Judging is phase 2c of `execute_run`: after the cases run and after the safety probes, a
+separate short session reads the judge profile and provider, and the model calls then run
+with **no session open**, so a slow judge never holds a transaction. Cases whose call
+failed are not sent to the judge: there is no answer to grade, and errors are what
+`error_rate` measures. Like the safety probes, judging is skipped when the run is being
+cancelled. `judge_chat` is an injectable parameter on `execute_run`, exactly like
+`sender_factory`, so tests exercise the real scoring, provenance and decision path with a
+fake model.
+
+### D7.9 Provenance is stored on the run and per item; no judge means REVIEW, never a failure
+On the run, `settings_snapshot.judge` carries the model, provider name, rubric version,
+prompt-template hash, temperature, max tokens and the graded/unavailable/low-confidence
+counts; `GET /api/v1/runs/{id}` exposes it as `judge` (or `judge` null plus
+`judge_skipped_reason` when no judge ran), which is what lets the verdict card name the
+judge or say it was skipped. Per item, a `metric_results` row with `run_item_id` set stores
+the score, the judge's reason, its confidence and the same rubric/hash, so one bad answer is
+traceable back to the sentence the judge wrote. A judge that cannot be reached, replies
+off-contract twice, or configured but deleted becomes `answer_quality` not instrumented
+plus `JudgeStatus.unavailable_items`, which reaches REVIEW through rule 3 — the run still
+completes, because one bad case can never fail a run.
+

@@ -34,6 +34,8 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     },
     metrics: [],
     failed_cases: [],
+    judge: null,
+    judge_skipped_reason: "This run had no judge profile.",
     ...overrides,
   };
 }
@@ -127,5 +129,97 @@ describe("RunProgressPanel", () => {
 
     expect(screen.getByTestId("run-state")).toHaveTextContent("partial results");
     expect(screen.getByTestId("run-verdict-reason")).toHaveTextContent("partial");
+  });
+
+  it("names the judge model and rubric that scored the answers", () => {
+    render(
+      <RunProgressPanel
+        run={makeRun({
+          state: "completed",
+          verdict: "REVIEW",
+          score: 0.88,
+          judge: {
+            model: "gpt-4o-mini",
+            provider_name: "OpenAI",
+            profile_name: "The judge",
+            rubric_version: "1.0",
+            prompt_template_hash: "abc123",
+            temperature: 0,
+            max_tokens: 512,
+            graded_items: 3,
+            unavailable_items: 1,
+            low_confidence_items: 0,
+          },
+          judge_skipped_reason: null,
+        })}
+        onCancel={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("run-verdict-judge")).toHaveTextContent("gpt-4o-mini");
+    expect(screen.getByTestId("run-verdict-judge")).toHaveTextContent("rubric 1.0");
+    expect(screen.getByTestId("run-verdict-judge-note")).toHaveTextContent(
+      "could not score 1 answer",
+    );
+    expect(screen.queryByTestId("run-verdict-judge-skipped")).not.toBeInTheDocument();
+  });
+
+  it("says the judge was skipped when no judge was used", () => {
+    render(
+      <RunProgressPanel
+        run={makeRun({
+          state: "completed",
+          verdict: "GO",
+          score: 0.92,
+          judge: null,
+          judge_skipped_reason: "This run had no judge profile, so answer quality was not scored.",
+        })}
+        onCancel={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("run-verdict-judge")).toHaveTextContent("not used");
+    expect(screen.getByTestId("run-verdict-judge-skipped")).toHaveTextContent("Judge skipped");
+  });
+
+  it("shows the safety section for a run that was probed", () => {
+    render(
+      <RunProgressPanel
+        run={makeRun({
+          state: "completed",
+          verdict: "GO",
+          score: 0.95,
+          test_types: ["quality", "safety", "operations"],
+          metrics: [
+            {
+              name: "attack_resisted",
+              score: 1,
+              passed: true,
+              explanation: "the app resisted 44 of 44 attacks.",
+              instrumented: true,
+              weight: 0.2,
+              threshold: 0.95,
+              hard_gate: true,
+              details: { attacks: 44, resisted: 44, critical_failures: [] },
+            },
+            {
+              name: "over_refusal",
+              score: 1,
+              passed: true,
+              explanation: "none of the 26 harmless requests were refused.",
+              instrumented: true,
+              weight: 0.05,
+              threshold: 0.9,
+              hard_gate: false,
+              details: { prompts: 26, refused: 0, over_refusal_share: 0 },
+            },
+          ],
+        })}
+        onCancel={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("safety-section")).toBeInTheDocument();
+    expect(screen.getByTestId("safety-resisted")).toHaveTextContent("44 of 44");
   });
 });

@@ -26,6 +26,7 @@ from app.services.datasets import (
     create_dataset,
 )
 from app.services.generation import ChatFn, GenerationError, generate_test_cases
+from app.services.judge_profiles import get_judge_profile, selected_judge_profile
 from app.services.run_repository import create_run
 
 Enqueue = Callable[[uuid.UUID], None]
@@ -195,6 +196,25 @@ def _check_test_types(test_types: Sequence[str]) -> Sequence[str]:
     return test_types
 
 
+def resolve_judge_profile(session: Session, user: User, requested: uuid.UUID | None) -> str | None:
+    """The judge for this run: the requested profile, else the selected one.
+
+    Selecting a profile in Settings > Judge is what makes it the default, so a
+    run judges its answers without the New Test page having to send an id.
+    """
+    if requested is not None:
+        profile = get_judge_profile(session, requested, owner_id=user.id)
+        if profile is None:
+            raise RunServiceError(
+                "That judge profile was not found. Pick one in Settings > Judge.",
+                status=404,
+                code="not_found",
+            )
+        return str(profile.id)
+    selected = selected_judge_profile(session, user.id)
+    return str(selected.id) if selected is not None else None
+
+
 def create_run_from_request(
     session: Session,
     user: User,
@@ -212,6 +232,9 @@ def create_run_from_request(
     )
     snapshot = build_snapshot(payload, dataset_version_id=version.id, entry_point=entry)
     snapshot["test_types"] = test_types
+    judge_id = resolve_judge_profile(session, user, payload.judge_profile_id)
+    if judge_id is not None:
+        snapshot["judge_profile_id"] = judge_id
     profile = resolve_criteria_profile(payload.criteria_profile, snapshot)
     run = create_run(
         session,

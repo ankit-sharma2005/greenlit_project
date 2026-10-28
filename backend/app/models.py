@@ -396,12 +396,46 @@ class MetricResultRow(TimestampMixin, Base):
     run: Mapped[Run] = relationship(back_populates="metric_results")
 
 
+class JudgeProfile(TimestampMixin, Base):
+    """A saved judge configuration: which model grades, and with what limits (M7).
+
+    ``temperature`` is stored rather than hard-coded so the frozen value (0) is
+    visible per profile, and ``is_selected`` marks the one profile new runs use
+    by default. Deleting a provider keeps the profile (``SET NULL``) so history
+    still explains how a run was judged; the worker then reports it as skipped.
+    """
+
+    __tablename__ = "judge_profiles"
+    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_judge_profiles_owner_name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    provider_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("providers.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    rubric_version: Mapped[str] = mapped_column(String(20), nullable=False, default="1.0")
+    temperature: Mapped[float] = mapped_column(nullable=False, default=0.0)
+    max_tokens: Mapped[int] = mapped_column(nullable=False, default=512)
+    is_selected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
 __all__ = [
     "AuditEvent",
     "Dataset",
     "DatasetColumnMapping",
     "DatasetItem",
     "DatasetVersion",
+    "JudgeProfile",
     "MetricResultRow",
     "PasswordReset",
     "Provider",

@@ -65,6 +65,9 @@ class RunCreateRequest(BaseModel):
     # Upload outputs connector settings.
     column_overrides: UploadOutputsColumnOverrides | None = None
 
+    # Judge settings: an explicit profile, else the selected one (Settings > Judge).
+    judge_profile_id: UUID | None = None
+
 
 class QuickTestRequest(BaseModel):
     """Everything a CI job needs: entry point, target and the test types."""
@@ -122,6 +125,21 @@ class RunItemsResponse(BaseModel):
     total: int
 
 
+class RunJudgeRead(BaseModel):
+    """Which judge scored a run, with which rubric (spec 8.2)."""
+
+    model: str | None = None
+    provider_name: str | None = None
+    profile_name: str | None = None
+    rubric_version: str | None = None
+    prompt_template_hash: str | None = None
+    temperature: float | None = None
+    max_tokens: int | None = None
+    graded_items: int = 0
+    unavailable_items: int = 0
+    low_confidence_items: int = 0
+
+
 class RunRead(BaseModel):
     id: UUID
     name: str
@@ -141,6 +159,8 @@ class RunRead(BaseModel):
     progress: RunProgressRead = Field(default_factory=RunProgressRead)
     metrics: list[MetricOut] = Field(default_factory=list)
     failed_cases: list[FailedCaseOut] = Field(default_factory=list)
+    judge: RunJudgeRead | None = None
+    judge_skipped_reason: str | None = None
 
 
 class RunListResponse(BaseModel):

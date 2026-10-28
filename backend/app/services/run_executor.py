@@ -25,9 +25,9 @@ import logging
 import threading
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import select
@@ -35,14 +35,39 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import get_settings
 from app.db import SessionLocal
-from app.models import DatasetVersion, Provider, Run, RunItem, RunItemState, RunState, utcnow
+from app.models import (
+    DatasetVersion,
+    JudgeProfile,
+    Provider,
+    Run,
+    RunItem,
+    RunItemState,
+    RunState,
+    utcnow,
+)
 from app.safety.metrics import not_instrumented_safety
 from app.safety.runner import probe_safety
 from app.security.rate_limit import get_rate_limiter
 from app.services.connectors import ConnectorError, HttpConnector, PromptAppConnector, Trace
+from app.services.decision import JudgeStatus
 from app.services.evaluation import CaseData, EvaluationError, evaluate_preview
+from app.services.judge import (
+    ANSWER_QUALITY,
+    DEFAULT_ANSWER_QUALITY_THRESHOLD,
+    JUDGE_RUBRIC_VERSION,
+    JudgeChat,
+    JudgeInput,
+    JudgeVerdict,
+    answer_quality,
+    judge_item,
+    judge_metadata,
+    judge_status,
+    make_judge_chat,
+    prompt_template_hash,
+)
+from app.services.judge_profiles import effective_model
 from app.services.llm_gateway import LLMGateway
-from app.services.metrics import MetricResult
+from app.services.metrics import MetricResult, not_instrumented
 from app.services.run_progress import ProgressReporter, RunProgress, get_progress
 from app.services.run_repository import (
     add_metric_result,
@@ -60,6 +85,11 @@ SenderFactory = Callable[[Mapping[str, Any], Callable[[], Session]], Sender]
 
 _DEFAULT_BODY_TEMPLATE = '{"question": {{input}}}'
 _LATENCY_LIMIT_MS = 5000
+
+NO_JUDGE_REASON = (
+    "This run had no judge profile, so answer quality was not scored. "
+    "Choose one in Settings > Judge to have the answers graded."
+)
 
 
 class RunExecutionError(Exception):
@@ -353,6 +383,150 @@ def _precomputed_trace(case: _Case) -> Trace:
     )
 
 
+@dataclass
+class JudgeRunResult:
+    """What the judge phase produced: provenance and per-item verdicts, or why not.
+
+    ``metadata`` is None when the judge did not run (no profile, a deleted
+    profile, or a cancelled run) and ``skipped_reason`` explains that in plain
+    words, so the verdict card can say "judge skipped" instead of staying silent.
+    """
+
+    metadata: dict[str, Any] | None = None
+    skipped_reason: str | None = None
+    verdicts: dict[uuid.UUID, JudgeVerdict] = field(default_factory=dict)
+    status: JudgeStatus = field(default_factory=JudgeStatus)
+    metric: MetricResult | None = None
+
+
+def judge_run(
+    factory: Callable[[], Session],
+    snapshot: Mapping[str, Any],
+    cases: Sequence[_Case],
+    *,
+    run_id: uuid.UUID,
+    chat: JudgeChat | None = None,
+) -> JudgeRunResult:
+    """Score every answered case with the run's saved judge (spec 8.2).
+
+    Three choices are worth knowing:
+
+    * a case whose call failed never reaches the judge: there is no answer to
+      grade, and errors are what ``error_rate`` measures;
+    * a judge that cannot be reached is not a run failure: the caller turns it
+      into the decision engine's rule 3 (REVIEW);
+    * nothing is written here. The caller stores the provenance and the
+      per-item rows in the transaction that stores the verdict.
+
+    The provider row is read in its own short session and the model calls then
+    run with no session open, so a slow judge never holds a transaction.
+    """
+    raw = snapshot.get("judge_profile_id")
+    if not raw:
+        return JudgeRunResult(skipped_reason=NO_JUDGE_REASON)
+    try:
+        profile_id = uuid.UUID(str(raw))
+    except ValueError:
+        return _judge_skipped("The judge profile saved on this run is not a valid id.", cases)
+
+    with factory() as session:
+        profile = session.get(JudgeProfile, profile_id)
+        if profile is None:
+            return _judge_skipped(
+                "The judge profile saved on this run no longer exists. "
+                "Pick one in Settings > Judge and run again.",
+                cases,
+            )
+        provider = session.get(Provider, profile.provider_id) if profile.provider_id else None
+        if provider is None:
+            return _judge_skipped(
+                "The judge's provider no longer exists. "
+                "Pick another provider in Settings > Judge and run again.",
+                cases,
+            )
+        model = effective_model(profile, provider)
+        max_tokens = profile.max_tokens
+        metadata = judge_metadata(provider, model)
+        metadata.update(
+            {
+                "judge_profile_id": str(profile.id),
+                "judge_profile_name": profile.name,
+                "judge_provider_name": provider.name,
+                "judge_rubric_version": profile.rubric_version,
+                "judge_max_tokens": max_tokens,
+            }
+        )
+        rows = [
+            (
+                item.id,
+                item.row_index,
+                item.input_text,
+                item.output,
+                _judge_context(item.retrieved_context),
+            )
+            for item in list_run_items(session, run_id)
+        ]
+
+    chat_fn = chat if chat is not None else make_judge_chat(get_rate_limiter())
+    cases_by_row = {case.row_index: case for case in cases}
+    verdicts: dict[uuid.UUID, JudgeVerdict] = {}
+    for item_id, row_index, input_text, output, context in rows:
+        if not output or not output.strip():
+            continue
+        original = cases_by_row.get(row_index)
+        verdicts[item_id] = judge_item(
+            JudgeInput(
+                question=input_text,
+                app_answer=output,
+                expected_answer=original.expected_answer if original is not None else None,
+                retrieved_context=context,
+            ),
+            provider=provider,
+            model=model,
+            chat=chat_fn,
+            max_tokens=max_tokens,
+        )
+
+    status = judge_status(list(verdicts.values()))
+    metadata.update(
+        {
+            "judge_rubric_version": JUDGE_RUBRIC_VERSION,
+            "judge_graded_items": len(verdicts),
+            "judge_unavailable_items": status.unavailable_items,
+            "judge_low_confidence_items": status.low_confidence_items,
+        }
+    )
+    return JudgeRunResult(
+        metadata=metadata,
+        verdicts=verdicts,
+        status=status,
+        metric=answer_quality(list(verdicts.values())),
+    )
+
+
+def _judge_skipped(reason: str, cases: Sequence[_Case]) -> JudgeRunResult:
+    """A judge that was configured but could not run: rule 3, never a silent score."""
+    return JudgeRunResult(
+        skipped_reason=reason,
+        # Not instrumented, so it is excluded from the weighted score instead of
+        # counting as zero; every case counts as unavailable, which is what makes
+        # the decision engine answer REVIEW.
+        status=JudgeStatus(unavailable_items=len(cases)),
+        metric=not_instrumented(ANSWER_QUALITY, reason),
+    )
+
+
+def _judge_context(value: Sequence[str] | str | None) -> str | None:
+    """Retrieved context as one string for the judge, or None when absent."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return None if text.lower() == "not instrumented" else text or None
+    joined = "\n".join(str(part) for part in value).strip()
+    return joined or None
+
+
 def execute_run(
     run_id: uuid.UUID | str,
     *,
@@ -360,12 +534,17 @@ def execute_run(
     sender_factory: SenderFactory | None = None,
     progress: ProgressReporter | None = None,
     parallelism: int | None = None,
+    judge_chat: JudgeChat | None = None,
 ) -> dict[str, Any]:
     """Execute one run to completion and return a JSON-able report.
 
     Never raises for a per-item or configuration problem: those are stored on
     the run (``failed``) or on the item (``failed``). Unexpected infrastructure
     errors mark the run failed and re-raise so the worker log shows them.
+
+    ``judge_chat`` swaps the judge's model call, exactly like ``sender_factory``
+    swaps the app's: tests inject a fake judge and exercise the real scoring,
+    provenance and decision path.
     """
     factory: Callable[[], Session] = session_factory or SessionLocal
     reporter: ProgressReporter = progress if progress is not None else get_progress()
@@ -609,6 +788,21 @@ def execute_run(
         else:
             extra_metrics = probe_safety(sender, workers=workers)
 
+    # ---- phase 2c: judge the answers (spec 8.2) --------------------------
+    # A cancelled run stops here, like the safety probes: paying for judge calls
+    # on results that are already labelled partial helps nobody.
+    judge_requested = bool(snapshot.get("judge_profile_id"))
+    if not judge_requested:
+        judge_result = JudgeRunResult(skipped_reason=NO_JUDGE_REASON)
+    elif is_stopping():
+        judge_result = _judge_skipped(
+            "The run was cancelled before the answers were judged.", cases
+        )
+    else:
+        judge_result = judge_run(factory, snapshot, cases, run_id=rid, chat=judge_chat)
+    if judge_result.metric is not None:
+        extra_metrics[ANSWER_QUALITY] = judge_result.metric
+
     # ---- phase 3: score the finished items and store the verdict ---------
     report: dict[str, Any]
     final_payload: RunProgress
@@ -618,6 +812,15 @@ def execute_run(
             if run is None:
                 raise RunExecutionError(f"Run {rid} disappeared while executing.")
             items = list_run_items(session, rid)
+            # Provenance travels with the verdict: which judge, which rubric and
+            # which prompt hash scored these answers, or why no judge ran.
+            snapshot_update = dict(snapshot)
+            if judge_result.metadata is not None:
+                snapshot_update["judge"] = judge_result.metadata
+            if judge_result.skipped_reason is not None:
+                snapshot_update["judge_skipped_reason"] = judge_result.skipped_reason
+            if snapshot_update != snapshot:
+                update_run(session, run, settings_snapshot=snapshot_update)
             was_cancelled = run.state in (
                 RunState.CANCELLING.value,
                 RunState.CANCELLED.value,
@@ -681,8 +884,10 @@ def execute_run(
                     preview = evaluate_preview(
                         run.criteria_profile,
                         scored,
+                        judge_result.status if judge_requested else None,
                         latency_limit_ms=_LATENCY_LIMIT_MS,
                         include_safety=include_safety,
+                        include_judge=judge_requested,
                         extra_metrics=extra_metrics,
                     )
                 except EvaluationError as exc:
@@ -725,6 +930,30 @@ def execute_run(
                             threshold=criterion.threshold if criterion else 0.0,
                             hard_gate=criterion.hard_gate if criterion else False,
                             details=result.details,
+                        )
+                    # Per-item judge rows: the score, the reason, the confidence and
+                    # the rubric that produced it, so one bad answer is traceable.
+                    for item_id, verdict in judge_result.verdicts.items():
+                        add_metric_result(
+                            session,
+                            run,
+                            name=ANSWER_QUALITY,
+                            score=verdict.score if verdict.score is not None else 0.0,
+                            passed=bool(
+                                verdict.available
+                                and (verdict.score or 0.0) >= DEFAULT_ANSWER_QUALITY_THRESHOLD
+                            ),
+                            explanation=verdict.reason,
+                            instrumented=verdict.available,
+                            run_item_id=item_id,
+                            threshold=DEFAULT_ANSWER_QUALITY_THRESHOLD,
+                            details={
+                                "confidence": verdict.confidence,
+                                "attempts": verdict.attempts,
+                                "rubric_version": JUDGE_RUBRIC_VERSION,
+                                "prompt_template_hash": prompt_template_hash(),
+                                "judge_model": (judge_result.metadata or {}).get("judge_model"),
+                            },
                         )
                     decision = preview.decision
                     reason = decision.reason

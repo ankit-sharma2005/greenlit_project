@@ -174,6 +174,7 @@ def judge_item(
     model: str | None,
     chat: JudgeChat,
     attempts: int = JUDGE_ATTEMPTS,
+    max_tokens: int = JUDGE_MAX_TOKENS,
 ) -> JudgeVerdict:
     """Score one case; never raises, so one bad case cannot fail a run.
 
@@ -183,7 +184,7 @@ def judge_item(
     problem = "no attempt was made"
     for attempt in range(1, max(attempts, 1) + 1):
         try:
-            content = chat(provider, messages, JUDGE_TEMPERATURE, JUDGE_MAX_TOKENS, model)
+            content = chat(provider, messages, JUDGE_TEMPERATURE, max_tokens, model)
         except Exception as exc:  # a provider outage marks the item unavailable
             problem = str(exc) or exc.__class__.__name__
             continue
@@ -215,9 +216,13 @@ def judge_items(
     provider: Provider,
     model: str | None,
     chat: JudgeChat,
+    max_tokens: int = JUDGE_MAX_TOKENS,
 ) -> list[JudgeVerdict]:
     """Score a sequence of cases in order."""
-    return [judge_item(case, provider=provider, model=model, chat=chat) for case in cases]
+    return [
+        judge_item(case, provider=provider, model=model, chat=chat, max_tokens=max_tokens)
+        for case in cases
+    ]
 
 
 def answer_quality(
@@ -302,11 +307,13 @@ def judge_metadata(provider: Provider, model: str | None) -> dict[str, Any]:
     }
 
 
-def get_judge_chat(rate_limiter: RateLimiter = Depends(get_rate_limiter)) -> JudgeChat:
-    """FastAPI dependency resolving the real judge call through the gateway.
+def make_judge_chat(rate_limiter: RateLimiter | None = None) -> JudgeChat:
+    """The real judge call: the shared gateway with the judge's model pinned.
 
     The gateway applies the judge provider's timeout, retries/backoff and request
-    rate limit; this wrapper only pins the judge's own model.
+    rate limit; this wrapper only pins the judge's own model. The worker builds it
+    directly (``make_judge_chat()``) and the API through :func:`get_judge_chat`,
+    so both share one implementation.
     """
     gateway = LLMGateway(rate_limiter=rate_limiter)
 
@@ -320,6 +327,11 @@ def get_judge_chat(rate_limiter: RateLimiter = Depends(get_rate_limiter)) -> Jud
         return gateway.chat(provider, messages, temperature, max_tokens, model=model)
 
     return chat
+
+
+def get_judge_chat(rate_limiter: RateLimiter = Depends(get_rate_limiter)) -> JudgeChat:
+    """FastAPI dependency resolving the real judge call through the gateway."""
+    return make_judge_chat(rate_limiter)
 
 
 def _score(value: Any) -> float | None:

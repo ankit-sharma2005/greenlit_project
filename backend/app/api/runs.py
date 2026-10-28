@@ -21,6 +21,7 @@ from app.schemas.runs import (
     RunCreateRequest,
     RunItemRead,
     RunItemsResponse,
+    RunJudgeRead,
     RunListResponse,
     RunProgressRead,
     RunRead,
@@ -104,6 +105,44 @@ def _progress(
     )
 
 
+def _text_or_none(value: object) -> str | None:
+    """A JSON value as display text, or None when it is missing or not scalar."""
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    return None
+
+
+def _count(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    return int(value)
+
+
+def _judge_read(
+    snapshot: dict[str, Any],
+) -> RunJudgeRead | None:
+    """The judge provenance the worker stored, or None when no judge ran."""
+    raw = snapshot.get("judge")
+    if not isinstance(raw, dict):
+        return None
+    temperature = raw.get("judge_temperature")
+    max_tokens = raw.get("judge_max_tokens")
+    return RunJudgeRead(
+        model=_text_or_none(raw.get("judge_model")),
+        provider_name=_text_or_none(raw.get("judge_provider_name")),
+        profile_name=_text_or_none(raw.get("judge_profile_name")),
+        rubric_version=_text_or_none(raw.get("judge_rubric_version")),
+        prompt_template_hash=_text_or_none(raw.get("judge_prompt_hash")),
+        temperature=float(temperature) if isinstance(temperature, (int, float)) else None,
+        max_tokens=_count(max_tokens) if max_tokens is not None else None,
+        graded_items=_count(raw.get("judge_graded_items")),
+        unavailable_items=_count(raw.get("judge_unavailable_items")),
+        low_confidence_items=_count(raw.get("judge_low_confidence_items")),
+    )
+
+
 def _run_read(
     db: Session,
     run: Run,
@@ -161,6 +200,8 @@ def _run_read(
         progress=_progress(run, reader, items),
         metrics=metrics,
         failed_cases=failures,
+        judge=_judge_read(snapshot),
+        judge_skipped_reason=_text_or_none(snapshot.get("judge_skipped_reason")),
     )
 
 

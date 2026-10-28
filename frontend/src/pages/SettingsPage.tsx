@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { ComingSoon } from "../components/ComingSoon";
 import { DatasetsPanel } from "../components/DatasetsPanel";
+import { JudgePanel } from "../components/JudgePanel";
 import { ProvidersPanel } from "../components/ProvidersPanel";
 
 const SECTIONS = [
@@ -16,7 +17,7 @@ const SECTIONS = [
   { name: "Preferences", detail: "Theme, previews and defaults for new tests." },
 ];
 
-const AVAILABLE = new Set(["Datasets", "Providers and models"]);
+const AVAILABLE = new Set(["Datasets", "Providers and models", "Judge"]);
 
 export function SettingsPage() {
   const [active, setActive] = useState("Datasets");
@@ -74,6 +75,15 @@ export function SettingsPage() {
                 health.
               </p>
               <ProvidersPanel />
+            </>
+          ) : active === "Judge" ? (
+            <>
+              <h2>Judge</h2>
+              <p className="page__description" style={{ marginBottom: "var(--space-4)" }}>
+                The model that grades your answers against the expected ones, with the rubric and
+                confidence handling that decide when a verdict needs a human.
+              </p>
+              <JudgePanel />
             </>
           ) : (
             <section className="card" aria-labelledby="settings-current">

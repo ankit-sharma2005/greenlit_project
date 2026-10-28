@@ -62,6 +62,8 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     },
     metrics: [makeMetric("answer_match", 1)],
     failed_cases: [],
+    judge: null,
+    judge_skipped_reason: null,
     ...overrides,
   };
 }

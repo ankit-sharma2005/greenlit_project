@@ -1,5 +1,6 @@
 import { Button } from "./Button";
 import { ProgressBar } from "./ProgressBar";
+import { SafetySection } from "./SafetySection";
 import { Spinner } from "./Spinner";
 import { isTerminal, type Run } from "../lib/runs";
 import "../styles/results.css";
@@ -140,12 +141,40 @@ function RunVerdict({ run }: { run: Run }) {
               {run.progress.items_done} of {run.progress.items_total}
             </span>
           </div>
+          <div>
+            <span className="verdict__label">Judge</span>
+            <span data-testid="run-verdict-judge">
+              {run.judge
+                ? `${run.judge.model ?? "unknown model"} · rubric ${run.judge.rubric_version ?? "—"}`
+                : "not used"}
+            </span>
+          </div>
         </div>
 
         <p className="verdict__reason" data-testid="run-verdict-reason">
           {run.verdict_reason}
         </p>
+
+        {run.judge ? (
+          run.judge.unavailable_items > 0 || run.judge.low_confidence_items > 0 ? (
+            <p className="card__hint" data-testid="run-verdict-judge-note">
+              {run.judge.unavailable_items > 0
+                ? `The judge could not score ${run.judge.unavailable_items} answer(s).`
+                : ""}
+              {run.judge.unavailable_items > 0 && run.judge.low_confidence_items > 0 ? " " : ""}
+              {run.judge.low_confidence_items > 0
+                ? `It was unsure about ${run.judge.low_confidence_items} answer(s).`
+                : ""}
+            </p>
+          ) : null
+        ) : (
+          <p className="card__hint" data-testid="run-verdict-judge-skipped">
+            Judge skipped: {run.judge_skipped_reason ?? "no judge was configured for this run."}
+          </p>
+        )}
       </section>
+
+      <SafetySection metrics={run.metrics} />
 
       {run.metrics.length > 0 ? (
         <section className="card" style={{ marginTop: "var(--space-5)" }}>

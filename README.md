@@ -5,10 +5,13 @@ Pre-launch testing and evaluation for LLM-powered applications. GreenLit tests t
 safety and operational checks into one decision: **GO / REVIEW / NO-GO**, with evidence and
 suggested fixes.
 
-> Status: M6 (runs) and M8 (safety) are complete: accounts, providers, the three connectors,
-> datasets, metrics/decision engine, worker-executed runs with live progress and cancel, and
-> the built-in safety module (a versioned attack set, a safe-prompt set, `attack_resisted` /
-> `over_refusal`, and a hard-gate NO-GO on a critical failure). The judge, regression and
+> Status: M6 (runs), M8 (safety) and M7 (judge) are complete: accounts, providers, the three
+> connectors, datasets, metrics/decision engine, worker-executed runs with live progress and
+> cancel, the built-in safety module (a versioned attack set, a safe-prompt set,
+> `attack_resisted` / `over_refusal`, and a hard-gate NO-GO on a critical failure), and the
+> judge (saved judge profiles in Settings → Judge, per-answer scoring at temperature 0 with
+> stored provenance, and REVIEW when the judge is unavailable or unsure). A run's verdict card
+> shows which judge and rubric scored it, plus a dedicated Safety section. Regression and
 > reports arrive in later milestones; anything not built yet is visibly marked "Coming soon".
 
 ## Quick start
