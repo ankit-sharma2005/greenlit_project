@@ -112,7 +112,9 @@ export function NewTestPage() {
   const [uploadTokensInColumn, setUploadTokensInColumn] = useState("");
   const [uploadTokensOutColumn, setUploadTokensOutColumn] = useState("");
   const [uploadDatasetVersionId, setUploadDatasetVersionId] = useState("");
-  const [uploadConnectorStatus, setUploadConnectorStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
+  const [uploadConnectorStatus, setUploadConnectorStatus] = useState<
+    "idle" | "loading" | "ok" | "error"
+  >("idle");
   const [uploadConnectorMessage, setUploadConnectorMessage] = useState("");
 
   const [detectResult, setDetectResult] = useState<
@@ -179,13 +181,9 @@ export function NewTestPage() {
         if (first?.trim().startsWith("{") || first?.trim().startsWith("[")) {
           try {
             const parsed = JSON.parse(raw);
-            const items =
-              Array.isArray(parsed)
-                ? parsed
-                : parsed.data ??
-                  parsed.items ??
-                  parsed.rows ??
-                  [];
+            const items = Array.isArray(parsed)
+              ? parsed
+              : (parsed.data ?? parsed.items ?? parsed.rows ?? []);
             if (items.length > 0) {
               const sample = items[0];
               if (sample && typeof sample === "object" && !Array.isArray(sample)) {
@@ -207,7 +205,15 @@ export function NewTestPage() {
           return null;
         };
         const cols: UploadOutputsColumnOption[] = [];
-        for (const key of ["input", "output", "id", "retrieved_context", "latency_ms", "tokens_in", "tokens_out"] as const) {
+        for (const key of [
+          "input",
+          "output",
+          "id",
+          "retrieved_context",
+          "latency_ms",
+          "tokens_in",
+          "tokens_out",
+        ] as const) {
           const found = detect(key);
           if (found) cols.push({ label: found, value: found });
         }
@@ -623,7 +629,17 @@ export function NewTestPage() {
               label: opt.label,
             }))}
             selectedDatasetVersionId={uploadDatasetVersionId}
-            datasetRowCount={datasetOptions.find((opt) => opt.value === uploadDatasetVersionId)?.label.match(/\(([0-9]+) cases\)/)?.[1] ? Number(datasetOptions.find((opt) => opt.value === uploadDatasetVersionId)!.label.match(/\(([0-9]+) cases\)/)![1]) : 0}
+            datasetRowCount={
+              datasetOptions
+                .find((opt) => opt.value === uploadDatasetVersionId)
+                ?.label.match(/\(([0-9]+) cases\)/)?.[1]
+                ? Number(
+                    datasetOptions
+                      .find((opt) => opt.value === uploadDatasetVersionId)!
+                      .label.match(/\(([0-9]+) cases\)/)![1],
+                  )
+                : 0
+            }
             connectorTestStatus={uploadConnectorStatus}
             connectorTestMessage={uploadConnectorMessage}
             disabled={loading || startingRun}
@@ -705,8 +721,8 @@ export function NewTestPage() {
           {testTypes.safety ? (
             <p className="form__hint">
               Safety sends the built-in attack set (prompt injection, hidden instructions,
-              system-prompt leaks, jailbreaks and harmful requests) plus harmless prompts that
-              must still be answered. A leaked secret or a missing refusal is a hard NO-GO.
+              system-prompt leaks, jailbreaks and harmful requests) plus harmless prompts that must
+              still be answered. A leaked secret or a missing refusal is a hard NO-GO.
             </p>
           ) : null}
         </fieldset>

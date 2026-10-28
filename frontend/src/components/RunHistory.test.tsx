@@ -19,11 +19,7 @@ vi.mock("../lib/runs", async (importOriginal) => {
   };
 });
 
-function makeMetric(
-  name: string,
-  score: number,
-  instrumented = true,
-): Run["metrics"][number] {
+function makeMetric(name: string, score: number, instrumented = true): Run["metrics"][number] {
   return {
     name,
     score,
@@ -145,9 +141,7 @@ describe("RunHistory", () => {
     await userEvent.click(selects[1] as HTMLElement);
     expect(screen.getByTestId("run-history-compare")).toBeEnabled();
 
-    getRunMock.mockImplementation(async (id: string) =>
-      id === OLD_RUN.id ? OLD_RUN : NEW_RUN,
-    );
+    getRunMock.mockImplementation(async (id: string) => (id === OLD_RUN.id ? OLD_RUN : NEW_RUN));
     await userEvent.click(screen.getByTestId("run-history-compare"));
 
     const compare = await screen.findByTestId("run-compare-table");

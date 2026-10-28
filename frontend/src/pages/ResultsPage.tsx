@@ -84,7 +84,11 @@ export function ResultsPage() {
 
       <RunHistory />
 
-      <section className="card" aria-labelledby="evaluate-heading" style={{ marginTop: "var(--space-5)" }}>
+      <section
+        className="card"
+        aria-labelledby="evaluate-heading"
+        style={{ marginTop: "var(--space-5)" }}
+      >
         <div className="card__header">
           <h2 id="evaluate-heading">Evaluate outputs</h2>
         </div>

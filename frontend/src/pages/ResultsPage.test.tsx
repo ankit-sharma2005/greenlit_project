@@ -127,9 +127,7 @@ describe("ResultsPage", () => {
   beforeEach(() => {
     mocks.listTemplates.mockReset().mockResolvedValue(TEMPLATES);
     mocks.previewEvaluation.mockReset().mockResolvedValue(BROKEN);
-    mocks.listRuns
-      .mockReset()
-      .mockResolvedValue({ items: [], total: 0, limit: 50, offset: 0 });
+    mocks.listRuns.mockReset().mockResolvedValue({ items: [], total: 0, limit: 50, offset: 0 });
   });
 
   it("loads the criteria templates into the profile select", async () => {

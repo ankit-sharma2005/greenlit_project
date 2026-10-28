@@ -94,8 +94,7 @@ export function DemoPanel() {
     }
   };
 
-  const unreachable =
-    results.length > 0 && results.every((run) => run.state === "failed");
+  const unreachable = results.length > 0 && results.every((run) => run.state === "failed");
 
   return (
     <div style={{ marginTop: "var(--space-5)" }}>
@@ -155,34 +154,34 @@ export function DemoPanel() {
                   <h4>{label}</h4>
                   <span className="badge">{run.name}</span>
                 </div>
-                  <div className="verdict">
-                    <span
-                      className={`verdict__word ${VERDICT_CLASS[run.verdict ?? ""] ?? ""}`}
-                      data-testid={`${testid}-verdict`}
-                    >
-                      {run.verdict ? (VERDICT_LABEL[run.verdict] ?? run.verdict) : "—"}
+                <div className="verdict">
+                  <span
+                    className={`verdict__word ${VERDICT_CLASS[run.verdict ?? ""] ?? ""}`}
+                    data-testid={`${testid}-verdict`}
+                  >
+                    {run.verdict ? (VERDICT_LABEL[run.verdict] ?? run.verdict) : "—"}
+                  </span>
+                  <div>
+                    <span className="verdict__label">Weighted score</span>
+                    <span className="verdict__score" data-testid={`${testid}-score`}>
+                      {run.score === null ? "—" : run.score.toFixed(2)}
                     </span>
-                    <div>
-                      <span className="verdict__label">Weighted score</span>
-                      <span className="verdict__score" data-testid={`${testid}-score`}>
-                        {run.score === null ? "—" : run.score.toFixed(2)}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="verdict__label">Cases</span>
-                      <span>
-                        {run.progress.items_done} of {run.progress.items_total}
-                      </span>
-                    </div>
                   </div>
-                  <p className="verdict__reason" data-testid={`${testid}-reason`}>
-                    {run.verdict_reason ?? run.state}
-                  </p>
+                  <div>
+                    <span className="verdict__label">Cases</span>
+                    <span>
+                      {run.progress.items_done} of {run.progress.items_total}
+                    </span>
+                  </div>
+                </div>
+                <p className="verdict__reason" data-testid={`${testid}-reason`}>
+                  {run.verdict_reason ?? run.state}
+                </p>
               </section>
             );
           })}
         </>
-        ) : null}
+      ) : null}
     </div>
   );
 }

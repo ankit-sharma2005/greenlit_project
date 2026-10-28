@@ -243,7 +243,11 @@ export function RunHistory() {
             Compare {selectedIds.length === 2 ? "these two" : selectedIds.length + " of 2"}
           </Button>
           {selectedIds.length === 2 ? (
-            <Button variant="secondary" onClick={() => setSelectedIds([])} data-testid="run-history-clear">
+            <Button
+              variant="secondary"
+              onClick={() => setSelectedIds([])}
+              data-testid="run-history-clear"
+            >
               Clear selection
             </Button>
           ) : null}
@@ -257,12 +261,20 @@ export function RunHistory() {
           <section className="card" style={{ marginTop: "var(--space-5)" }}>
             <div className="card__header">
               <h3 data-testid="run-detail-heading">{openRun.name}</h3>
-              <Button variant="ghost" onClick={() => setOpenRun(null)} data-testid="run-detail-close">
+              <Button
+                variant="ghost"
+                onClick={() => setOpenRun(null)}
+                data-testid="run-detail-close"
+              >
                 Close
               </Button>
             </div>
           </section>
-          <RunProgressPanel run={openRun} onCancel={() => void handleCancel()} cancelling={cancelling} />
+          <RunProgressPanel
+            run={openRun}
+            onCancel={() => void handleCancel()}
+            cancelling={cancelling}
+          />
         </>
       ) : null}
     </>
@@ -306,7 +318,9 @@ function RunCompare({ runs }: { runs: [Run, Run] }) {
             <td data-testid="compare-candidate-verdict">
               {VERDICT_LABEL[candidate.verdict ?? ""] ?? candidate.verdict ?? "—"}
             </td>
-            <td>{(baseline.verdict ?? "") === (candidate.verdict ?? "") ? "unchanged" : "changed"}</td>
+            <td>
+              {(baseline.verdict ?? "") === (candidate.verdict ?? "") ? "unchanged" : "changed"}
+            </td>
           </tr>
           <tr>
             <td>Weighted score</td>
@@ -325,10 +339,8 @@ function RunCompare({ runs }: { runs: [Run, Run] }) {
           {names.map((name) => {
             const before = baseline.metrics.find((metric) => metric.name === name);
             const after = candidate.metrics.find((metric) => metric.name === name);
-            const comparable =
-              before?.instrumented === true && after?.instrumented === true;
-            const delta =
-              comparable && before && after ? after.score - before.score : null;
+            const comparable = before?.instrumented === true && after?.instrumented === true;
+            const delta = comparable && before && after ? after.score - before.score : null;
             const change = !comparable
               ? "not instrumented"
               : delta === null

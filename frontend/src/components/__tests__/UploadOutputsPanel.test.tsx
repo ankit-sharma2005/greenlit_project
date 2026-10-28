@@ -4,9 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { UploadOutputsPanel } from "../UploadOutputsPanel";
 
-function renderPanel(
-  overrides: Partial<React.ComponentProps<typeof UploadOutputsPanel>> = {},
-) {
+function renderPanel(overrides: Partial<React.ComponentProps<typeof UploadOutputsPanel>> = {}) {
   const props = {
     file: null,
     fileName: "",
@@ -76,9 +74,7 @@ describe("UploadOutputsPanel", () => {
     });
 
     expect(screen.getByText(/2 columns detected/i)).toBeInTheDocument();
-    const badges = container.querySelectorAll(
-      "[data-testid=\"upload-column-badge\"]",
-    );
+    const badges = container.querySelectorAll('[data-testid="upload-column-badge"]');
     expect(badges).toHaveLength(2);
     expect(badges[0]).toHaveTextContent("question");
     expect(badges[1]).toHaveTextContent("answer");
@@ -106,9 +102,7 @@ describe("UploadOutputsPanel", () => {
       detectedColumns: [{ label: "foo", value: "foo" }],
     });
 
-    expect(
-      screen.getByText(/file must contain the input and output columns/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/file must contain the input and output columns/i)).toBeInTheDocument();
   });
 
   it("renders a mapping select for each optional column", () => {
@@ -249,9 +243,7 @@ describe("UploadOutputsPanel", () => {
 
   it("shows the row count when a dataset version is selected", () => {
     renderPanel({
-      datasetOptions: [
-        { value: "v1", label: "Helpdesk cases · v1 (12 cases)" },
-      ],
+      datasetOptions: [{ value: "v1", label: "Helpdesk cases · v1 (12 cases)" }],
       selectedDatasetVersionId: "v1",
       datasetRowCount: 12,
     });
@@ -269,9 +261,7 @@ describe("UploadOutputsPanel", () => {
     const user = userEvent.setup();
     const onDatasetChange = vi.fn();
     renderPanel({
-      datasetOptions: [
-        { value: "v1", label: "Helpdesk cases · v1 (12 cases)" },
-      ],
+      datasetOptions: [{ value: "v1", label: "Helpdesk cases · v1 (12 cases)" }],
       onDatasetChange,
     });
 

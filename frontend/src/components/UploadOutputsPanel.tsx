@@ -36,7 +36,10 @@ export interface UploadOutputsPanelProps {
 }
 
 const REQUIRED_COLUMNS = ["input", "output"] as const;
-const OPTIONAL_COLUMNS: Array<{ label: string; key: "id" | "context" | "latency" | "tokens_in" | "tokens_out" }> = [
+const OPTIONAL_COLUMNS: Array<{
+  label: string;
+  key: "id" | "context" | "latency" | "tokens_in" | "tokens_out";
+}> = [
   { label: "id", key: "id" },
   { label: "retrieved_context", key: "context" },
   { label: "latency_ms", key: "latency" },
@@ -65,11 +68,11 @@ export function UploadOutputsPanel({
   onColumnChange,
   onDatasetChange,
 }: UploadOutputsPanelProps) {
-  const hasRequiredMapped =
-    Boolean(inputColumn) && Boolean(outputColumn);
-  const fileError = file && !hasRequiredMapped
-    ? `File must contain the ${REQUIRED_COLUMNS.join(" and ")} columns.`
-    : "";
+  const hasRequiredMapped = Boolean(inputColumn) && Boolean(outputColumn);
+  const fileError =
+    file && !hasRequiredMapped
+      ? `File must contain the ${REQUIRED_COLUMNS.join(" and ")} columns.`
+      : "";
 
   return (
     <div style={{ marginTop: "var(--space-5)" }}>
@@ -96,7 +99,12 @@ export function UploadOutputsPanel({
           e.stopPropagation();
           if (disabled) return;
           const dropped = e.dataTransfer.files[0];
-          if (dropped && (dropped.type === "text/csv" || dropped.name.endsWith(".csv") || dropped.name.endsWith(".json"))) {
+          if (
+            dropped &&
+            (dropped.type === "text/csv" ||
+              dropped.name.endsWith(".csv") ||
+              dropped.name.endsWith(".json"))
+          ) {
             onFileChange(dropped);
           }
         }}
@@ -115,11 +123,24 @@ export function UploadOutputsPanel({
         data-testid="upload-file-drop"
       >
         {file ? (
-          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", justifyContent: "center" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "var(--space-2)",
+              justifyContent: "center",
+            }}
+          >
             <span data-testid="upload-file-name">{fileName}</span>
             <button
               type="button"
-              style={{ background: "none", border: "none", color: "var(--muted)", cursor: "pointer", padding: 0 }}
+              style={{
+                background: "none",
+                border: "none",
+                color: "var(--muted)",
+                cursor: "pointer",
+                padding: 0,
+              }}
               onClick={(e) => {
                 e.stopPropagation();
                 onFileChange(null);
@@ -186,12 +207,12 @@ export function UploadOutputsPanel({
             key === "id"
               ? idColumn
               : key === "context"
-              ? contextColumn
-              : key === "latency"
-              ? latencyColumn
-              : key === "tokens_in"
-              ? tokensInColumn
-              : tokensOutColumn;
+                ? contextColumn
+                : key === "latency"
+                  ? latencyColumn
+                  : key === "tokens_in"
+                    ? tokensInColumn
+                    : tokensOutColumn;
           return (
             <div key={opt.key} style={{ marginBottom: "var(--space-2)" }}>
               <label
@@ -288,14 +309,14 @@ export function UploadOutputsPanel({
               connectorTestStatus === "error"
                 ? "var(--color-error-bg)"
                 : connectorTestStatus === "ok"
-                ? "var(--color-success-bg)"
-                : "var(--bg-muted)",
+                  ? "var(--color-success-bg)"
+                  : "var(--bg-muted)",
             color:
               connectorTestStatus === "error"
                 ? "var(--color-error)"
                 : connectorTestStatus === "ok"
-                ? "var(--color-success)"
-                : "var(--text)",
+                  ? "var(--color-success)"
+                  : "var(--text)",
           }}
           data-testid="upload-connector-result"
           role={connectorTestStatus === "error" ? "alert" : "status"}

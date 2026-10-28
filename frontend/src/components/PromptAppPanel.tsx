@@ -107,7 +107,9 @@ export function PromptAppPanel({
 
           <p className="card__hint" data-testid="prompt-app-target">
             This run will use:{" "}
-            {selected ? `${selected.name} · ${selected.modelName || "default model"}` : "no provider yet"}
+            {selected
+              ? `${selected.name} · ${selected.modelName || "default model"}`
+              : "no provider yet"}
           </p>
         </>
       )}
