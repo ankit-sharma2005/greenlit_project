@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { AuditPanel } from "../components/AuditPanel";
 import { ComingSoon } from "../components/ComingSoon";
 import { DatasetsPanel } from "../components/DatasetsPanel";
 import { JudgePanel } from "../components/JudgePanel";
@@ -17,7 +18,8 @@ const SECTIONS = [
   { name: "Preferences", detail: "Theme, previews and defaults for new tests." },
 ];
 
-const AVAILABLE = new Set(["Datasets", "Providers and models", "Judge"]);
+// Only tabs with a working panel are listed here; everything else keeps "soon".
+const AVAILABLE = new Set(["Datasets", "Providers and models", "Judge", "Audit log"]);
 
 export function SettingsPage() {
   const [active, setActive] = useState("Datasets");
@@ -84,6 +86,14 @@ export function SettingsPage() {
                 confidence handling that decide when a verdict needs a human.
               </p>
               <JudgePanel />
+            </>
+          ) : active === "Audit log" ? (
+            <>
+              <h2>Audit log</h2>
+              <p className="page__description" style={{ marginBottom: "var(--space-4)" }}>
+                Append-only record of sign-ins and changes. Admins only.
+              </p>
+              <AuditPanel />
             </>
           ) : (
             <section className="card" aria-labelledby="settings-current">

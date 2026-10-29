@@ -4,6 +4,7 @@ import { Button } from "../components/Button";
 import { DemoPanel } from "../components/DemoPanel";
 import { PromptAppPanel } from "../components/PromptAppPanel";
 import { RunProgressPanel } from "../components/RunProgressPanel";
+import { SetupChecklist } from "../components/SetupChecklist";
 import {
   type UploadOutputsColumnOption,
   UploadOutputsPanel,
@@ -512,6 +513,23 @@ export function NewTestPage() {
           </p>
         </div>
       </header>
+
+      {/* The three prerequisites only line up for the HTTP entry point: a prompt
+          app needs no connector test, and uploaded outputs need no target. */}
+      {connector === "http_endpoint" ? (
+        <div style={{ marginBottom: "var(--space-5)" }}>
+          <SetupChecklist
+            providers={providerOptions}
+            connectorTested={detectResult !== null}
+            approvedDatasets={datasetOptions.length}
+            onGoToTarget={() => {
+              const field = document.querySelector<HTMLInputElement>('[data-testid="target-url"]');
+              field?.scrollIntoView({ block: "center" });
+              field?.focus();
+            }}
+          />
+        </div>
+      ) : null}
 
       <section className="card" aria-labelledby="target-heading">
         <div className="card__header">
