@@ -12,7 +12,7 @@ RUN groupadd --system greenlit \
 
 COPY pyproject.toml ./
 COPY app ./app
-RUN pip install --upgrade pip && pip install -e ".[dev]"
+RUN pip install --upgrade pip && pip install .
 
 COPY alembic.ini ./
 COPY alembic ./alembic
