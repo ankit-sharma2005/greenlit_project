@@ -6,6 +6,7 @@ import {
   GOLDEN_CSV,
   createJudgeProfile,
   createProvider,
+  ensureAdmin,
   login,
   openNewTestPage,
   startFakeProvider,
@@ -29,6 +30,7 @@ test("a judged run names the judge model and rubric on the verdict card", async 
     judgeReply: { score: 1, reason: "The answer states the expected fact.", confidence: 0.95 },
   });
   try {
+    await ensureAdmin();
     await login(page, ADMIN_EMAIL);
     const baseUrl = `http://127.0.0.1:${provider.port}/v1`;
     await createProvider(page, { name: `Judge app ${stamp}`, model: appModel, baseUrl });

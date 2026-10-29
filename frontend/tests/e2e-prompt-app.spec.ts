@@ -1,4 +1,4 @@
-import { test, expect, request as playwrightRequest, type Page } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { createServer } from "http";
 import type { AddressInfo } from "net";
 
@@ -8,8 +8,6 @@ const WEB = process.env.E2E_BASE_URL ?? "http://localhost:5177";
 const API = process.env.E2E_API_URL ?? "http://localhost:8003";
 const PASSWORD = "password123456";
 const MODEL = "fake-connector-model";
-/** The admin e2e-admin.spec.ts registers first; providers are admin-only. */
-const ADMIN_EMAIL = "admin@example.com";
 
 const ANSWERS: Record<string, string> = {
   "What is GreenLit?": "GreenLit tests LLM apps before launch.",
@@ -102,32 +100,28 @@ async function register(page: Page, name: string, email: string): Promise<void> 
   await page.waitForURL((url) => !url.pathname.includes("/register"), { timeout: 15_000 });
 }
 
-/** Add the saved provider the prompt-app form picks up, pointed at the fake server. */
-async function createFakeProvider(provider: FakeProvider): Promise<void> {
-  const api = await playwrightRequest.newContext({ baseURL: API });
-  try {
-    const login = await api.post("/api/v1/auth/login", {
-      data: { email: ADMIN_EMAIL, password: PASSWORD },
-    });
-    expect(login.status(), "the admin account from e2e-admin.spec.ts must exist").toBe(200);
-    const created = await api.post("/api/v1/providers", {
-      data: {
-        name: "Fake Prompt App Provider",
-        kind: "openai-compatible",
-        model_name: MODEL,
-        base_url: `http://127.0.0.1:${provider.port}/v1`,
-        connector: "prompt_app",
-        timeout_seconds: 30,
-        // The run probes the app 64 times for safety; this double absorbs that,
-        // like a real provider does (the default 30/min would throttle it).
-        rate_limit_per_minute: 600,
-        is_active: true,
-      },
-    });
-    expect(created.status(), await created.text()).toBe(201);
-  } finally {
-    await api.dispose();
-  }
+/**
+ * Add the saved provider the prompt-app form picks up, pointed at the fake server.
+ *
+ * The signed-in session is used because providers are admin-only and the account
+ * this spec registers is the first one on the fresh database, so it is the admin.
+ */
+async function createFakeProvider(page: Page, provider: FakeProvider): Promise<void> {
+  const created = await page.request.post(`${API}/api/v1/providers`, {
+    data: {
+      name: "Fake Prompt App Provider",
+      kind: "openai-compatible",
+      model_name: MODEL,
+      base_url: `http://127.0.0.1:${provider.port}/v1`,
+      connector: "prompt_app",
+      timeout_seconds: 30,
+      // The run probes the app 64 times for safety; this double absorbs that,
+      // like a real provider does (the default 30/min would throttle it).
+      rate_limit_per_minute: 600,
+      is_active: true,
+    },
+  });
+  expect(created.status(), await created.text()).toBe(201);
 }
 
 /** Upload a CSV and approve version 1, using the signed-in session's cookies. */
@@ -151,7 +145,7 @@ test("prompt app entry point runs a prompt to a verdict", async ({ page }) => {
   try {
     const email = `promptapp${Date.now()}@example.com`;
     await register(page, "Prompt App Tester", email);
-    await createFakeProvider(provider);
+    await createFakeProvider(page, provider);
     const datasetName = `Prompt Golden ${Date.now()}`;
     await uploadApprovedDataset(page, datasetName);
 

@@ -9,7 +9,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
-import { expect, type Page } from "@playwright/test";
+import { expect, request, type Page } from "@playwright/test";
 
 import { GUARDED_REFUSAL, isDisallowed } from "./guard";
 
@@ -217,7 +217,25 @@ export async function register(page: Page, name: string, email: string): Promise
   await page.waitForURL((url) => !url.pathname.includes("/register"), { timeout: 15_000 });
 }
 
-/** Sign in through the form (the admin account is seeded by e2e-admin.spec.ts). */
+/**
+ * Create the admin account when this spec runs on its own.
+ *
+ * The first account on a fresh database is the admin. When the whole suite runs
+ * in order, e2e-admin.spec.ts has already registered it and this is a no-op.
+ */
+export async function ensureAdmin(): Promise<void> {
+  const api = await request.newContext({ baseURL: API });
+  try {
+    const created = await api.post("/api/v1/auth/register", {
+      data: { email: ADMIN_EMAIL, name: "Admin", password: PASSWORD },
+    });
+    expect([201, 409]).toContain(created.status());
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** Sign in through the form (e2e-admin.spec.ts, or `ensureAdmin`, seeds the account). */
 export async function login(page: Page, email: string): Promise<void> {
   await page.goto(`${WEB}/login`);
   await page.fill("#login-email", email);
