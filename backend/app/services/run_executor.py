@@ -450,6 +450,7 @@ def judge_run(
             )
         model = effective_model(profile, provider)
         max_tokens = profile.max_tokens
+        max_cases = profile.max_cases
         metadata = judge_metadata(provider, model)
         metadata.update(
             {
@@ -458,6 +459,7 @@ def judge_run(
                 "judge_provider_name": provider.name,
                 "judge_rubric_version": profile.rubric_version,
                 "judge_max_tokens": max_tokens,
+                "judge_max_cases": max_cases,
             }
         )
         rows = [
@@ -473,10 +475,13 @@ def judge_run(
 
     chat_fn = chat if chat is not None else make_judge_chat(get_rate_limiter())
     cases_by_row = {case.row_index: case for case in cases}
+    # Only answered cases are candidates: a failed call has nothing to grade.
+    answered = [row for row in rows if row[3] and row[3].strip()]
+    capped = max(0, len(answered) - max_cases) if max_cases is not None else 0
+    if capped:
+        answered = answered[:max_cases]
     verdicts: dict[uuid.UUID, JudgeVerdict] = {}
-    for item_id, row_index, input_text, output, context in rows:
-        if not output or not output.strip():
-            continue
+    for item_id, row_index, input_text, output, context in answered:
         original = cases_by_row.get(row_index)
         verdicts[item_id] = judge_item(
             JudgeInput(
@@ -498,13 +503,17 @@ def judge_run(
             "judge_graded_items": len(verdicts),
             "judge_unavailable_items": status.unavailable_items,
             "judge_low_confidence_items": status.low_confidence_items,
+            # "judged N of M cases": M counts every answer the run produced, so a
+            # capped run says so instead of looking like it covered everything.
+            "judge_case_total": len(verdicts) + capped,
+            "judge_capped_items": capped,
         }
     )
     return JudgeRunResult(
         metadata=metadata,
         verdicts=verdicts,
         status=status,
-        metric=answer_quality(list(verdicts.values())),
+        metric=answer_quality(list(verdicts.values()), skipped=capped),
     )
 
 
@@ -994,6 +1003,9 @@ def execute_run(
     except RunExecutionError as exc:
         return _fail(factory, reporter, rid, exc.message)
     except Exception:
+        # The user-facing reason stays generic, but the traceback belongs in the
+        # worker log: without it a scoring bug looks like an environment problem.
+        logger.exception("Run %s failed while scoring", rid)
         _fail(
             factory,
             reporter,

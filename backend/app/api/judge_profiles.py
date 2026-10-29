@@ -53,6 +53,7 @@ def _read(db: Session, profile: JudgeProfile) -> JudgeProfileRead:
         rubric_version=profile.rubric_version,
         temperature=profile.temperature,
         max_tokens=profile.max_tokens,
+        max_cases=profile.max_cases,
         is_selected=profile.is_selected,
         created_at=profile.created_at,
         updated_at=profile.updated_at,
@@ -76,6 +77,7 @@ def create_profile(
             provider_id=payload.provider_id,
             model=payload.model,
             max_tokens=payload.max_tokens,
+            max_cases=payload.max_cases,
         )
     except JudgeProfileError as exc:
         db.rollback()
@@ -91,6 +93,7 @@ def create_profile(
             "provider_id": str(profile.provider_id) if profile.provider_id else None,
             "model": response.model,
             "rubric_version": profile.rubric_version,
+            "max_cases": profile.max_cases,
             "self_grading_warning": bool(response.warnings),
         },
         request=request,

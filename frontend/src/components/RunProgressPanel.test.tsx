@@ -146,6 +146,9 @@ describe("RunProgressPanel", () => {
             prompt_template_hash: "abc123",
             temperature: 0,
             max_tokens: 512,
+            max_cases: null,
+            case_total: 3,
+            capped_items: 0,
             graded_items: 3,
             unavailable_items: 1,
             low_confidence_items: 0,
@@ -221,5 +224,71 @@ describe("RunProgressPanel", () => {
 
     expect(screen.getByTestId("safety-section")).toBeInTheDocument();
     expect(screen.getByTestId("safety-resisted")).toHaveTextContent("44 of 44");
+  });
+
+  it("says how many of how many cases the cap allowed the judge", () => {
+    render(
+      <RunProgressPanel
+        run={makeRun({
+          state: "completed",
+          verdict: "GO",
+          score: 0.9,
+          judge: {
+            model: "gpt-4o-mini",
+            provider_name: "OpenAI",
+            profile_name: "The judge",
+            rubric_version: "1.0",
+            prompt_template_hash: "abc123",
+            temperature: 0,
+            max_tokens: 512,
+            max_cases: 5,
+            case_total: 12,
+            capped_items: 7,
+            graded_items: 5,
+            unavailable_items: 0,
+            low_confidence_items: 0,
+          },
+          judge_skipped_reason: null,
+        })}
+        onCancel={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("run-verdict-judge-cap")).toHaveTextContent("Judged 5 of 12 cases");
+    expect(screen.getByTestId("run-verdict-judge-cap")).toHaveTextContent("cap of 5");
+    expect(screen.getByTestId("run-verdict-judge-cap")).toHaveTextContent(
+      "instead of scoring them zero",
+    );
+  });
+
+  it("shows no cap note when every case was judged", () => {
+    render(
+      <RunProgressPanel
+        run={makeRun({
+          state: "completed",
+          verdict: "GO",
+          score: 0.9,
+          judge: {
+            model: "gpt-4o-mini",
+            provider_name: "OpenAI",
+            profile_name: "The judge",
+            rubric_version: "1.0",
+            prompt_template_hash: "abc123",
+            temperature: 0,
+            max_tokens: 512,
+            max_cases: null,
+            case_total: 8,
+            capped_items: 0,
+            graded_items: 8,
+            unavailable_items: 0,
+            low_confidence_items: 0,
+          },
+          judge_skipped_reason: null,
+        })}
+        onCancel={() => {}}
+      />,
+    );
+
+    expect(screen.queryByTestId("run-verdict-judge-cap")).not.toBeInTheDocument();
   });
 });

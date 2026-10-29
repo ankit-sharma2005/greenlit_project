@@ -70,6 +70,7 @@ function makeProfile(overrides: Partial<JudgeProfile> = {}): JudgeProfile {
     rubric_version: "1.0",
     temperature: 0,
     max_tokens: 512,
+    max_cases: null,
     is_selected: true,
     created_at: "2026-10-27T09:00:00Z",
     updated_at: "2026-10-27T09:00:00Z",
@@ -107,6 +108,8 @@ describe("JudgePanel", () => {
       provider_id: "p1",
       model: "llama-3.1-8b",
       max_tokens: 512,
+      // Empty cap box means "grade every case".
+      max_cases: null,
     });
     expect(await screen.findByTestId("judge-notice")).toHaveTextContent("will grade your next run");
     expect(screen.getByTestId("judge-warning")).toHaveTextContent(

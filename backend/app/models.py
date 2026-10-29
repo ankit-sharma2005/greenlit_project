@@ -426,6 +426,9 @@ class JudgeProfile(TimestampMixin, Base):
     rubric_version: Mapped[str] = mapped_column(String(20), nullable=False, default="1.0")
     temperature: Mapped[float] = mapped_column(nullable=False, default=0.0)
     max_tokens: Mapped[int] = mapped_column(nullable=False, default=512)
+    # Cost guard: grade at most this many cases per run. NULL means every case,
+    # which is what an existing profile keeps after the migration.
+    max_cases: Mapped[int | None] = mapped_column(nullable=True, default=None)
     is_selected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 

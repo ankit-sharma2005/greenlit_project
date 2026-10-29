@@ -19,6 +19,9 @@ class JudgeProfileCreate(BaseModel):
     provider_id: UUID | None = None
     model: str | None = Field(default=None, max_length=120)
     max_tokens: int = Field(default=JUDGE_MAX_TOKENS, ge=64, le=4096)
+    # Cost guard: grade at most this many cases per run. Omitted or null grades
+    # every case, which is the behaviour of a profile saved before the cap.
+    max_cases: int | None = Field(default=None, ge=1, le=1000)
 
 
 class JudgeProfileRead(BaseModel):
@@ -34,6 +37,7 @@ class JudgeProfileRead(BaseModel):
     rubric_version: str
     temperature: float
     max_tokens: int
+    max_cases: int | None = None
     is_selected: bool
     created_at: datetime
     updated_at: datetime

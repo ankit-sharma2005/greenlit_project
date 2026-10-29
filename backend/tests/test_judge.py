@@ -246,6 +246,27 @@ def test_answer_quality_fails_below_its_threshold() -> None:
     assert result.passed is False
 
 
+def test_answer_quality_excludes_capped_cases_instead_of_scoring_them_zero() -> None:
+    # Two good scores, one answer left out by the profile's cap: the cap is a
+    # cost guard, so the untouched answer must not drag the average down.
+    verdicts = [
+        JudgeVerdict(0.9, "good", 0.9, True, 1),
+        JudgeVerdict(0.9, "good", 0.9, True, 1),
+    ]
+
+    capped = answer_quality(verdicts, threshold=0.8, skipped=1)
+    uncapped = answer_quality(verdicts, threshold=0.8)
+
+    assert capped.score == pytest.approx(0.9) == uncapped.score
+    assert capped.passed is True
+    assert "2 of 3" in capped.explanation
+    assert "left out by the per-run cap" in capped.explanation
+    assert "2 of 2" in uncapped.explanation
+    assert capped.details["measured_items"] == uncapped.details["measured_items"] == 2
+    assert capped.details["skipped_by_cap"] == 1
+    assert capped.details["case_total"] == 3
+
+
 def test_answer_quality_is_not_instrumented_when_the_judge_scored_nothing() -> None:
     unavailable = answer_quality([JudgeVerdict(None, "down", None, False, 2)])
     nothing_sent = answer_quality([])

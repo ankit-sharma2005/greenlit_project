@@ -32,6 +32,11 @@ export interface RunJudge {
   prompt_template_hash: string | null;
   temperature: number | null;
   max_tokens: number | null;
+  /** The profile's per-run cap; null means every case was judged. */
+  max_cases: number | null;
+  /** Answerable cases the run had, and how many the cap left out. */
+  case_total: number;
+  capped_items: number;
   graded_items: number;
   unavailable_items: number;
   low_confidence_items: number;

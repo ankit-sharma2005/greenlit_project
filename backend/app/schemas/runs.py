@@ -135,6 +135,11 @@ class RunJudgeRead(BaseModel):
     prompt_template_hash: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None
+    # The profile's per-run cap (null grades every case), how many answerable
+    # cases the run had, and how many the cap left out.
+    max_cases: int | None = None
+    case_total: int = 0
+    capped_items: int = 0
     graded_items: int = 0
     unavailable_items: int = 0
     low_confidence_items: int = 0

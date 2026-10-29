@@ -34,6 +34,7 @@ export function JudgePanel() {
   const [providerId, setProviderId] = useState("");
   const [model, setModel] = useState("");
   const [maxTokens, setMaxTokens] = useState(String(DEFAULT_MAX_TOKENS));
+  const [maxCases, setMaxCases] = useState("");
 
   const showError = (caught: unknown) => {
     setError(caught instanceof ApiError ? caught.message : "Something went wrong. Try again.");
@@ -88,6 +89,8 @@ export function JudgePanel() {
         provider_id: providerId || null,
         model: model.trim() || null,
         max_tokens: Number(maxTokens) || DEFAULT_MAX_TOKENS,
+        // An empty box means "grade every case", which is the default.
+        max_cases: maxCases.trim() ? Number(maxCases) : null,
       });
       setNotice(
         created.is_selected
@@ -221,6 +224,28 @@ export function JudgePanel() {
           </div>
 
           <div className="form__field">
+            <label className="form__label" htmlFor="judge-max-cases">
+              Judge at most (cases):
+            </label>
+            <input
+              id="judge-max-cases"
+              data-testid="judge-max-cases"
+              type="number"
+              min={1}
+              max={1000}
+              placeholder="every case"
+              value={maxCases}
+              onChange={(event) => setMaxCases(event.target.value)}
+              disabled={busy}
+            />
+            <p className="form__hint">
+              A per-run cost guard. Cases beyond the cap are left out of <code>answer_quality</code>{" "}
+              rather than scored zero, and the verdict card says how many of how many were judged.
+              Leave empty to judge every case.
+            </p>
+          </div>
+
+          <div className="form__field">
             <label className="form__label" htmlFor="judge-max-tokens">
               Max tokens:
             </label>
@@ -260,6 +285,7 @@ export function JudgePanel() {
               <th scope="col">Name</th>
               <th scope="col">Model</th>
               <th scope="col">Rubric</th>
+              <th scope="col">Cap</th>
               <th scope="col">State</th>
               <th scope="col">Actions</th>
             </tr>
@@ -278,6 +304,9 @@ export function JudgePanel() {
                 </td>
                 <td>
                   {profile.rubric_version} · {profile.temperature.toFixed(1)}
+                </td>
+                <td data-testid={`judge-cap-${profile.name}`}>
+                  {profile.max_cases === null ? "all cases" : `${profile.max_cases} cases`}
                 </td>
                 <td>
                   {profile.is_selected ? (

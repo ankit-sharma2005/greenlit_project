@@ -74,7 +74,11 @@ def owner(session_factory: sessionmaker[Session]) -> uuid.UUID:
 
 
 def seed_judge(
-    session_factory: sessionmaker[Session], owner_id: uuid.UUID, *, model: str = "judge-model"
+    session_factory: sessionmaker[Session],
+    owner_id: uuid.UUID,
+    *,
+    model: str = "judge-model",
+    max_cases: int | None = None,
 ) -> uuid.UUID:
     """One provider plus the judge profile a run will use."""
     with session_factory() as session:
@@ -94,6 +98,7 @@ def seed_judge(
             rubric_version=JUDGE_RUBRIC_VERSION,
             temperature=0.0,
             max_tokens=256,
+            max_cases=max_cases,
             is_selected=True,
         )
         session.add(profile)
@@ -180,6 +185,42 @@ def test_every_answered_case_is_judged_with_stored_provenance(
     assert {row.run_item_id for row in per_item} == {item.id for item in items}
     assert all(row.explanation == "the answer matches" for row in per_item)
     assert all((row.details or {})["confidence"] == 0.9 for row in per_item)
+
+
+# ---- the per-run cost guard ----------------------------------------------
+
+
+def test_the_cap_judges_a_subset_and_excludes_the_rest(
+    session_factory: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    """A capped profile judges only max_cases answers and says how many it left out."""
+    profile_id = seed_judge(session_factory, owner, max_cases=1)
+    run_id = seed_run(session_factory, owner, settings_extra={"judge_profile_id": str(profile_id)})
+    chat = FakeJudge()
+    report = run_judged(run_id, session_factory, FakeSender(answers=echo_answers()), chat)
+
+    assert report["status"] == "completed", report
+    # Only one model call, no matter how many cases the run answered.
+    assert len(chat.calls) == 1
+
+    with session_factory() as session:
+        run = session.get(Run, run_id)
+        assert run is not None
+        provenance = (run.settings_snapshot or {})["judge"]
+        assert provenance["judge_max_cases"] == 1
+        assert provenance["judge_graded_items"] == 1
+        assert provenance["judge_case_total"] == len(ROWS)
+        assert provenance["judge_capped_items"] == len(ROWS) - 1
+        rows = get_metric_results(session, run_id)
+
+    run_level = [row for row in rows if row.name == "answer_quality" and row.run_item_id is None]
+    assert len(run_level) == 1
+    # The cases nobody looked at are excluded from the average, not scored 0.
+    assert run_level[0].instrumented is True
+    assert run_level[0].score == pytest.approx(0.9)
+    assert f"1 of {len(ROWS)}" in run_level[0].explanation
+    per_item = [row for row in rows if row.name == "answer_quality" and row.run_item_id is not None]
+    assert len(per_item) == 1
 
 
 # ---- an untrustworthy judge is REVIEW, never a failure ---------------------

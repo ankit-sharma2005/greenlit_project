@@ -11,6 +11,8 @@ export interface JudgeProfile {
   rubric_version: string;
   temperature: number;
   max_tokens: number;
+  /** Per-run cost guard: grade at most this many cases; null grades every case. */
+  max_cases: number | null;
   is_selected: boolean;
   created_at: string;
   updated_at: string;
@@ -23,6 +25,7 @@ export interface JudgeProfileCreate {
   provider_id?: string | null;
   model?: string | null;
   max_tokens?: number;
+  max_cases?: number | null;
 }
 
 export interface JudgeProfileList {

@@ -212,11 +212,18 @@ def test_create_and_list_a_profile_through_the_api(client: TestClient) -> None:
 
     created = client.post(
         "/api/v1/judge-profiles",
-        json={"name": "Saved judge", "provider_id": provider_id, "model": "gpt-4o-mini"},
+        json={
+            "name": "Saved judge",
+            "provider_id": provider_id,
+            "model": "gpt-4o-mini",
+            "max_cases": 25,
+        },
     )
     assert created.status_code == 201, created.text
     body = created.json()
     assert body["is_selected"] is True
+    # The per-run cost guard is saved with the profile.
+    assert body["max_cases"] == 25
     assert body["rubric_version"] == JUDGE_RUBRIC_VERSION
     assert body["temperature"] == 0.0
     assert body["provider_name"]
@@ -333,6 +340,9 @@ def test_run_read_exposes_the_judge_and_the_skip_reason(
                     "judge_prompt_hash": "deadbeef",
                     "judge_temperature": 0.0,
                     "judge_max_tokens": 512,
+                    "judge_max_cases": 10,
+                    "judge_case_total": 12,
+                    "judge_capped_items": 2,
                     "judge_graded_items": 3,
                     "judge_unavailable_items": 1,
                     "judge_low_confidence_items": 0,
@@ -359,6 +369,10 @@ def test_run_read_exposes_the_judge_and_the_skip_reason(
     assert judge["prompt_template_hash"] == "deadbeef"
     assert judge["graded_items"] == 3
     assert judge["unavailable_items"] == 1
+    # The cap and what it left out reach the verdict card (M7 cost guard).
+    assert judge["max_cases"] == 10
+    assert judge["case_total"] == 12
+    assert judge["capped_items"] == 2
     assert first.json()["judge_skipped_reason"] is None
 
     second = client.get(f"/api/v1/runs/{unjudged_id}")

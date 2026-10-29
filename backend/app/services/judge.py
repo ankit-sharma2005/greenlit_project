@@ -228,9 +228,17 @@ def judge_items(
 def answer_quality(
     verdicts: Sequence[JudgeVerdict],
     threshold: float = DEFAULT_ANSWER_QUALITY_THRESHOLD,
+    *,
+    skipped: int = 0,
 ) -> MetricResult:
-    """Mean judge score over the items the judge could actually score."""
+    """Mean judge score over the items the judge could actually score.
+
+    ``skipped`` counts the answers left out by the profile's per-run cap. They are
+    *excluded* from the average rather than scored 0: the cap is a cost guard, and
+    a case nobody looked at says nothing about the answer's quality.
+    """
     measured = [verdict for verdict in verdicts if verdict.available and verdict.score is not None]
+    considered = len(verdicts) + skipped
     if not measured:
         return not_instrumented(
             ANSWER_QUALITY,
@@ -239,10 +247,12 @@ def answer_quality(
     average = sum(verdict.score or 0.0 for verdict in measured) / len(measured)
     unavailable = len(verdicts) - len(measured)
     explanation = (
-        f"the judge scored {len(measured)} of {len(verdicts)} answers (average {average:.2f})"
+        f"the judge scored {len(measured)} of {considered} answers (average {average:.2f})"
     )
     if unavailable:
         explanation += f"; {unavailable} could not be scored"
+    if skipped:
+        explanation += f"; {skipped} left out by the per-run cap"
     return MetricResult(
         name=ANSWER_QUALITY,
         score=average,
@@ -251,6 +261,8 @@ def answer_quality(
         details={
             "measured_items": len(measured),
             "unavailable_items": unavailable,
+            "skipped_by_cap": skipped,
+            "case_total": considered,
             "threshold": threshold,
             "rubric_version": JUDGE_RUBRIC_VERSION,
             "prompt_template_hash": prompt_template_hash(),

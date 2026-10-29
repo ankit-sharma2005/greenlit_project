@@ -158,6 +158,14 @@ function RunVerdict({ run }: { run: Run }) {
 
         <ReportExport runId={run.id} />
 
+        {run.judge && run.judge.capped_items > 0 ? (
+          <p className="card__hint" data-testid="run-verdict-judge-cap">
+            Judged {run.judge.graded_items} of {run.judge.case_total} cases: the profile's cap of{" "}
+            {run.judge.max_cases ?? run.judge.graded_items} left {run.judge.capped_items} out of{" "}
+            <code>answer_quality</code> instead of scoring them zero.
+          </p>
+        ) : null}
+
         {run.judge ? (
           run.judge.unavailable_items > 0 || run.judge.low_confidence_items > 0 ? (
             <p className="card__hint" data-testid="run-verdict-judge-note">

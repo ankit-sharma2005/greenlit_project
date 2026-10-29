@@ -45,6 +45,7 @@ def create_judge_profile(
     provider_id: uuid.UUID | None,
     model: str | None = None,
     max_tokens: int = JUDGE_MAX_TOKENS,
+    max_cases: int | None = None,
 ) -> JudgeProfile:
     """Create one profile for the owner; the first profile is selected at once."""
     cleaned = name.strip()
@@ -69,6 +70,7 @@ def create_judge_profile(
         rubric_version=JUDGE_RUBRIC_VERSION,
         temperature=JUDGE_TEMPERATURE,
         max_tokens=max_tokens,
+        max_cases=max_cases,
         # The first profile becomes the default, so a run is judged as soon as
         # the user saves one instead of needing a second click.
         is_selected=selected_judge_profile(session, owner_id) is None,
