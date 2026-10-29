@@ -30,9 +30,19 @@ a safety section, the judge that scored it, and an exportable report.
   cases are excluded from the answer-quality average, not scored 0.
 - **Reports (spec 8.5):** export any finished run as self-contained printable HTML, full
   JSON or case-level CSV. Request headers are redacted and no key is ever exported.
+- **Baselines and regression (spec 8.5):** set a completed run as the baseline for its
+  dataset version; the next run is compared with it and shows **PASS / WARN / BLOCK** with
+  the metric deltas and the cases that passed before and fail now, on the verdict card and
+  in every export.
+- **Human review (M7):** reviewers and admins get a queue of the cases the judge could not
+  settle (unavailable, unsure, or a label that disagrees) and label them; the Calibration
+  page reports raw agreement and Cohen's kappa, so a judge that always says "pass" cannot
+  look accurate. Plain members can run tests but cannot label.
+- **Setup and audit:** the New Test page lists the three things a first test needs with
+  their real state, and Settings → Audit log is a real, paged, filterable admin view of the
+  append-only event trail.
 
-Regression baselines, the review queue and calibration against human labels are **not
-built yet**; anything missing is visibly marked "soon" in the UI rather than faked.
+Anything still missing is visibly marked "soon" in the UI rather than faked.
 
 ## Quick start
 
@@ -77,6 +87,10 @@ golden set against both apps through the normal runs API and shows both verdicts
 side: **GO** for the healthy app, **NO-GO** for the broken one with the weighted score
 and the REVIEW threshold in the reason. Nothing is precomputed, and no provider is
 involved.
+
+To see regression: open the healthy run in **Results**, press **Set as baseline**, then
+run the broken app on the same dataset. Its verdict card reports **BLOCK** and names the
+metric that dropped (`answer_match`).
 
 ## Add a model with Ollama
 
@@ -134,10 +148,11 @@ missing optional columns are reported as not instrumented.
 ## Read the verdict
 
 A finished run shows the verdict word, the weighted score, the reason rule that produced
-it, the metric table, the cases that failed, the safety section and the judge's model and
-rubric version. Three **Export** buttons download the same result as HTML (printable and
-self-contained), JSON (the full result) or CSV (one row per case). The export never
-contains a secret: header values are redacted and provider keys never enter it.
+it, the metric table, the cases that failed, the safety section, the judge's model and
+rubric version, and — when a baseline exists — the regression status with its deltas.
+Three **Export** buttons download the same result as HTML (printable and self-contained),
+JSON (the full result) or CSV (one row per case). The export never contains a secret:
+header values are redacted and provider keys never enter it.
 
 ## Quality checks
 
@@ -166,10 +181,18 @@ rebuilds the docker stack you use in the browser:
 - two demo helpdesk servers (healthy on 9501, broken on 9502) start the same way, since
   the disposable stack runs the API on the host and "Try the demo" needs somewhere to
   point;
-- Playwright runs the whole suite in `frontend/tests` (`e2e-admin`, `e2e-demo`,
-  `e2e-judge`, `e2e-prompt-app`, `e2e-report`, `e2e-safety`, `e2e-upload-outputs`)
-  against `http://localhost:5277` (`E2E_BASE_URL`), then tears the project down with
+- Playwright runs the whole suite in `frontend/tests` (`e2e-admin`, `e2e-baseline`,
+  `e2e-calibration`, `e2e-demo`, `e2e-judge`, `e2e-prompt-app`, `e2e-report`,
+  `e2e-safety`, `e2e-setup-audit`, `e2e-upload-outputs`) against
+  `http://localhost:5277` (`E2E_BASE_URL`), then tears the project down with
   `docker compose down -v`.
+
+Because the whole suite takes longer than one command on a slow machine, a single spec can
+be run on the same disposable stack:
+
+```bash
+bash scripts/run-e2e.sh tests/e2e-baseline.spec.ts
+```
 
 To run the suite against an already-running dev stack instead:
 

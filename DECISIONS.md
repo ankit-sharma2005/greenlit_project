@@ -450,3 +450,63 @@ off-contract twice, or configured but deleted becomes `answer_quality` not instr
 plus `JudgeStatus.unavailable_items`, which reaches REVIEW through rule 3 — the run still
 completes, because one bad case can never fail a run.
 
+### D7.10 The judge can be capped per run
+`judge_profiles.max_cases` (migration `0010_judge_max_cases`) bounds how many answers one
+run sends to the judge; NULL keeps the old behaviour of grading every answer. The cap is a
+cost guard, not a score: capped cases are *excluded* from `answer_quality` (never scored 0)
+and the run records `judge_case_total` and `judge_capped_items`, which the verdict card
+turns into "judged N of M cases". A capped run therefore cannot look like a fully judged
+one.
+
+## M9 — Baselines, human review and the audit screen
+
+### D9.1 A baseline is one run per owner and dataset version
+`run_baselines` (migration `0011_run_baselines`) has a unique `(owner_id,
+dataset_version_id)`, so "set as baseline" replaces the previous choice instead of piling
+up rows; clearing it deactivates the row so the history of what was compared survives.
+Only a `completed` run with a dataset version can be a baseline (409 otherwise), and the
+endpoints are owner-scoped like runs and datasets — a foreign run answers 404.
+
+### D9.2 Regression is a stored comparison with two configurable tolerances
+The worker compares a finished run with the active baseline and stores the result in the
+run's settings snapshot, so the card and the export read the same numbers the moment the
+run finished. The rules are pure (`services/regression.py`): **BLOCK** when a hard gate
+stopped passing, a metric dropped beyond `metric_tolerance` (default 0.05), or more cases
+regressed than `case_tolerance` (default 2); **WARN** for a smaller drop or up to
+`case_tolerance` regressed cases; **PASS** otherwise. A metric measured in only one of the
+two runs is not compared — saying it "dropped" would be a lie. If the baseline changes
+later, the stored comparison is recomputed on read rather than shown against the wrong run.
+
+### D9.3 A case is a regression when it passed before and fails now
+A case counts as passed when it completed and every per-item metric recorded for it passed
+(the judge's per-item rows are the usual source). Cases added by a new dataset version are
+not compared: a baseline only makes sense within one dataset version, and versions are
+approved, not edited.
+
+### D9.4 Labels belong to their reviewer, and calibration spans the project
+`human_labels` (migration `0012_human_labels`) is unique per `(reviewer_id, run_item_id)`,
+so submitting again replaces that reviewer's own label and a second reviewer is a second
+opinion rather than a correction. The queue shows the cases where the judge was
+unavailable, was unsure (confidence < 0.5), or where the reviewer's label disagrees with
+the judge's bucket; a confident, agreed case stays out. Calibration pairs each label with
+the judge's own pass/fail bucket (threshold 0.70) and ignores unavailable judges, then
+reports raw agreement and Cohen's kappa through the existing `calibrate()`. Only reviewers
+and admins may label or read the queue (403 for members, enforced by `require_roles`).
+
+### D9.5 The setup checklist only counts what the run will actually accept
+The checklist lives on the New Test page and mirrors the run's own rules: an active
+provider (with an on-demand live check, so "reachable" is measured, not assumed), a
+connector that answered a detection in this session, and at least one **approved** dataset
+version. It is shown for the HTTP entry point only, because a prompt app needs no connector
+test and uploaded outputs need no target; claiming those steps otherwise would be noise.
+
+### D9.6 The audit screen filters and pages on the server
+`GET /api/v1/audit` gained `action` (case-insensitive substring) and `target_type` filters
+that narrow the **total** as well as the page, so "1-20 of 42" stays true under a filter.
+Settings → Audit log is now a real tab; the tabs that still have no panel (Connectors,
+Criteria, Safety, Account, Preferences) keep the "soon" badge.
+
+### D9.7 The e2e runner takes a spec as its first argument
+`bash scripts/run-e2e.sh tests/e2e-baseline.spec.ts` runs one spec on the same disposable
+stack, for machines where the full 16-test suite takes longer than one command. This is a
+developer convenience: the suite still runs whole in CI.

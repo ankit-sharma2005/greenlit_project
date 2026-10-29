@@ -1,8 +1,9 @@
 # GreenLit — Handover notes
 
-> Living document. It reflects the repository as of the reports milestone (M6 runs,
-> M7 judge, M8 safety, spec 8.5 exports). Everything below is exercised by a command in
-> this file; nothing in it is a plan.
+> Living document. It reflects the repository as of the baselines, human-review and audit
+> milestone (M6 runs, M7 judge and calibration, M8 safety, spec 8.5 reports and
+> regression). Everything below is exercised by a command in this file; nothing in it is a
+> plan.
 
 ## What GreenLit is
 
@@ -11,7 +12,9 @@ a system prompt plus a provider, or a file of outputs the app already produced),
 golden dataset, and it answers one question: **is this app good enough to ship?** — as
 **GO / REVIEW / NO-GO**, with the rule that produced the verdict, the metric table, the
 failed cases, the safety probes and the judge that scored it. Any finished run can be
-exported as HTML, JSON or CSV.
+exported as HTML, JSON or CSV, and compared with the dataset version's baseline
+(PASS / WARN / BLOCK) once one is set. Reviewers label the cases the judge could not
+settle, and the Calibration page reports how well the judge agrees with them.
 
 ## How to run
 
@@ -46,8 +49,9 @@ broken one.
 **Backend (`backend/app`)** — FastAPI, sync SQLAlchemy 2 with psycopg 3, Alembic
 migrations, one error envelope `{"error": {"code", "message", "fields"}}`.
 
-- `api/` — one router per area: `auth`, `users`, `audit`, `providers`, `connectors`,
-  `datasets`, `evaluations`, `runs`, `judge_profiles`, `demo`, `health`. Thin: parse,
+- `api/` — one router per area: `auth`, `users`, `audit` (paged and filtered), `providers`,
+  `connectors`, `datasets`, `evaluations`, `runs` (including baseline and report), 
+  `judge_profiles`, `labels` (review queue and calibration), `demo`, `health`. Thin: parse,
   authorise, delegate, audit.
 - `services/` — the logic, no HTTP in it and mostly no I/O outside the session:
   - `run_service.py` validates a request, builds the **settings snapshot**, resolves the
@@ -60,6 +64,10 @@ migrations, one error envelope `{"error": {"code", "message", "fields"}}`.
     sets, the canary/refusal rules and the hard gate.
   - `judge.py` / `judge_profiles.py` / `calibration.py` — structured grading at
     temperature 0 with one retry, the saved profiles, and raw agreement / Cohen's kappa.
+  - `regression.py` — the baseline of a dataset version and the pure PASS / WARN / BLOCK
+    comparison (metric deltas plus case-level regressions) the worker stores.
+  - `labels.py` — the review queue (judge unavailable, unsure, or a label that disagrees),
+    one label per reviewer per case, and the project calibration.
   - `report.py` — one report document with three renderers; redacts headers, escapes
     HTML, prefixes formula-leading CSV cells.
   - `llm_gateway.py` — the only place that talks to a model provider: timeout, retries
@@ -75,19 +83,23 @@ migrations, one error envelope `{"error": {"code", "message", "fields"}}`.
 properties with a dark default and a light theme.
 
 - `pages/` — `NewTestPage` (the three entry points and the live run), `ResultsPage`
-  (run history, compare, ad-hoc scoring), `SettingsPage` (Datasets, Providers, Judge),
-  auth pages, `TestChatPage` (not built).
+  (run history, compare, ad-hoc scoring), `CalibrationPage` (review queue and kappa),
+  `SettingsPage` (Datasets, Providers, Judge, Audit log), auth pages, `TestChatPage`
+  (not built).
 - `components/` — the pieces the pages compose: `PromptAppPanel`, `UploadOutputsPanel`,
-  `DemoPanel`, `RunProgressPanel` (progress → verdict card → exports), `SafetySection`,
-  `ReportExport`, `RunHistory`, `JudgePanel`, `ProvidersPanel`, `DatasetsPanel`.
+  `DemoPanel`, `RunProgressPanel` (progress → verdict card → exports), `BaselinePanel`
+  (baseline control and the regression table), `SafetySection`, `ReportExport`,
+  `RunHistory`, `JudgePanel`, `ProvidersPanel`, `DatasetsPanel`, `ReviewQueue`,
+  `CalibrationSummary`, `SetupChecklist`, `AuditPanel`.
 - `lib/` — typed API clients, one module per area, all going through `lib/api.ts` so the
   session cookie and the error envelope are handled in one place.
 
 **Data flow of one run:** `POST /api/v1/quick-test` (or `/runs`) snapshots settings and
 queues → Celery executes case by case, writing items and metric rows → the decision rules
-produce the verdict and reason → the browser polls `/runs/{id}/progress` and then reads
-`/runs/{id}` for metrics, failures, safety and judge provenance → `/runs/{id}/report`
-renders the same document out of the box.
+produce the verdict and reason → the worker compares the run with its dataset version's
+baseline and stores the result → the browser polls `/runs/{id}/progress` and then reads
+`/runs/{id}` for metrics, failures, safety, judge provenance and regression →
+`/runs/{id}/report` renders the same document out of the box.
 
 ## How to test
 
@@ -105,9 +117,10 @@ bash scripts/run-e2e.sh
 - Backend tests live in `backend/tests`, one module per area. They never touch a real
   provider: `ChatFn` is injected, and so are the queue and the progress reader.
 - Frontend component tests are Vitest + Testing Library next to the components.
-- `frontend/tests` is the Playwright suite (13 tests in 7 specs): admin/accounts and the
-  results page, Try the demo, judge provenance, the prompt app, report download, safety
-  both ways and uploaded outputs. It runs against fake apps started inside the test
+- `frontend/tests` is the Playwright suite (16 tests in 10 specs): admin/accounts and the
+  results page, Try the demo, baseline regression, calibration (label → kappa), judge
+  provenance, the prompt app, report download, safety both ways, the setup checklist and
+  audit screen, and uploaded outputs. It runs against fake apps started inside the test
   process (`tests/helpers.ts`), so no model and no network are needed.
 - `scripts/run-e2e.sh` uses its own Compose project `greenlit-e2e` (Postgres 5536, Redis
   6482, fresh volume), the API on 8103, a solo Celery worker, Vite on 5277 and the two
@@ -117,14 +130,14 @@ bash scripts/run-e2e.sh
 
 - **No email provider.** Password reset works through `POST /auth/password-reset/request`,
   which returns a `debug_token` only in development; production needs an email integration.
-- **No UI for some endpoints that exist:** password reset, user administration and the
-  audit log are API-only.
-- **Regression is not built.** There is no baseline set, no compare-against-baseline rule
-  and no review queue; `/runs/{id}/baseline` and `/compare` do not exist.
-- **Calibration is backend-only.** `services/calibration.py` computes raw agreement and
-  Cohen's kappa against human labels, but there is no screen for collecting labels yet.
-- **Judge cost is not capped per run.** A judge profile grades every answer it is given;
-  there is no per-run ceiling and no "judged N of M" note on the verdict card.
+- **No UI for some endpoints that exist:** password reset and user administration are
+  API-only.
+- **A baseline is per owner and dataset version.** GreenLit has one project, but the
+  baseline is stored against the signed-in user, so two accounts testing the same dataset
+  version keep separate baselines, and not every dataset version has one.
+- **Regression is metric-and-case based, not statistical.** A drop smaller than the
+  baseline's tolerance is a WARN even if it is real, and a case whose answer changed but
+  still passed is not reported.
 - **The safety probe burst is large** (44 attacks plus 26 safe prompts). A provider with a
   low per-minute limit reports many probes as _unprobed_ rather than failed; that is
   deliberate (see D8.5) but it means a heavily throttled provider needs a higher limit to
@@ -138,11 +151,12 @@ bash scripts/run-e2e.sh
 ## Still marked "Coming soon"
 
 - **Settings sections:** Connectors (saved targets), Criteria (weight editing), Safety
-  (set selection), Account, Audit log, Preferences.
+  (set selection), Account, Preferences.
 - **Entry points on New Test:** Python function (traced), Built-in RAG app, Python SDK
   (traced), Docker image, Git repository, CLI command, and the disabled optgroup options
   beside them.
 - **Test Chat:** manual chat with the app under test.
 - **Tests still to be run when Docker is available:** none of the current suite is
-  skipped — `bash scripts/run-e2e.sh` passes 13 of 13 — but any browser-level coverage of
-  the features in the two lists above will have to be added with them.
+  skipped — all 16 Playwright tests are exercised against the disposable stack — but any
+  browser-level coverage of the features in the two lists above will have to be added with
+  them.

@@ -90,9 +90,7 @@ def upgrade() -> None:
     )
     op.create_index("ix_run_baselines_owner_id", "run_baselines", ["owner_id"])
     op.create_index("ix_run_baselines_run_id", "run_baselines", ["run_id"])
-    op.create_index(
-        "ix_run_baselines_dataset_version_id", "run_baselines", ["dataset_version_id"]
-    )
+    op.create_index("ix_run_baselines_dataset_version_id", "run_baselines", ["dataset_version_id"])
 
 
 def downgrade() -> None:
