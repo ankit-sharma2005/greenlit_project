@@ -5,6 +5,9 @@
 .env
 .env.*
 !.env.example
+# Local session jars written by curl/manual API poking (real tokens live here).
+cookies.txt
+*.cookies.txt
 
 # Python
 __pycache__/
