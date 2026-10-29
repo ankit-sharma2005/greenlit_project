@@ -2,3 +2,9 @@ node_modules
 dist
 coverage
 .git
+# Never bake local secrets or logs into the image.
+.env
+.env.*
+*.log
+test-results
+playwright-report

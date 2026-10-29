@@ -70,8 +70,9 @@ update `WEB_ORIGIN` (CORS) and `VITE_API_BASE_URL` to match.
 
 Health checks: `GET /healthz` (liveness) and `GET /readyz` (Postgres + Redis readiness).
 
-**Create the first account and it becomes the admin.** Every later account is a member
-until an admin changes its role in Settings.
+**Create the first account and it becomes the admin.** Every later account is a member;
+changing a role is an admin API call for now (`PATCH /api/v1/users/{id}/role`, see
+`/docs`) — there is no user-administration screen yet.
 
 ## Try the demo (no model needed)
 
