@@ -342,6 +342,30 @@ def _judge_block(snapshot: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _regression_block(snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    """The stored baseline comparison, if the run finished after one was set."""
+    raw = snapshot.get("regression")
+    if not isinstance(raw, dict):
+        return None
+    deltas = raw.get("metric_deltas")
+    cases = raw.get("regressed_cases")
+    return {
+        "status": raw.get("status"),
+        "reason": raw.get("reason"),
+        "baseline_run_id": raw.get("baseline_run_id"),
+        "baseline_run_name": raw.get("baseline_run_name"),
+        "metric_tolerance": raw.get("metric_tolerance"),
+        "case_tolerance": raw.get("case_tolerance"),
+        "regressed_metrics": list(raw.get("regressed_metrics") or []),
+        "metric_deltas": [delta for delta in deltas if isinstance(delta, dict)]
+        if isinstance(deltas, list)
+        else [],
+        "regressed_cases": [case for case in cases if isinstance(case, dict)]
+        if isinstance(cases, list)
+        else [],
+    }
+
+
 def build_report(session: Session, run: Run) -> dict[str, Any]:
     """The full result of one run as plain data, for every renderer."""
     snapshot = dict(run.settings_snapshot or {})
@@ -389,6 +413,7 @@ def build_report(session: Session, run: Run) -> dict[str, Any]:
         "safety": _safety_block(metrics),
         "judge": judged,
         "judge_skipped_reason": snapshot.get("judge_skipped_reason"),
+        "regression": _regression_block(snapshot),
     }
 
 
@@ -437,6 +462,12 @@ def render_csv(document: dict[str, Any]) -> str:
             ]
         )
     return buffer.getvalue()
+
+
+def _format_number(value: object) -> str:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "—"
+    return f"{float(value):.2f}"
 
 
 def _esc(value: object) -> str:
@@ -642,6 +673,50 @@ def render_html(document: dict[str, Any]) -> str:
         graded = "—" if judge["graded_items"] is None else str(int(judge["graded_items"]))
         parts.append(f"<dt>Cases graded</dt><dd>{graded}</dd>")
         parts.append("</dl>")
+
+    # Regression against the baseline (spec 8.5).
+    parts.append("<h2>Regression</h2>")
+    regression = document.get("regression")
+    if not isinstance(regression, dict):
+        parts.append(
+            '<p class="muted">No baseline was set for this dataset version, so there '
+            "is nothing to compare.</p>"
+        )
+    else:
+        status = str(regression.get("status") or "")
+        status_class = {"PASS": "pass", "WARN": "review", "BLOCK": "fail"}.get(status, "skip")
+        parts.append(f'<p class="big {status_class}">{_esc(status)}</p>')
+        parts.append(f"<p>{_esc(regression.get('reason'))}</p>")
+        baseline_name = _esc(regression.get("baseline_run_name") or "the baseline")
+        parts.append(f'<p class="muted">Baseline: {baseline_name}</p>')
+        deltas = regression.get("metric_deltas") or []
+        if deltas:
+            parts.append(
+                "<table><thead><tr><th>Metric</th><th>Baseline</th><th>Now</th>"
+                "<th>Delta</th></tr></thead><tbody>"
+            )
+            for delta in deltas:
+                change = delta.get("delta")
+                parts.append(
+                    _row(
+                        [
+                            _esc(_spaced(delta.get("name"))),
+                            _esc(_format_number(delta.get("baseline"))),
+                            _esc(_format_number(delta.get("current"))),
+                            _esc(f"{change:+.2f}" if isinstance(change, (int, float)) else "—"),
+                        ]
+                    )
+                )
+            parts.append("</tbody></table>")
+        regressed = regression.get("regressed_cases") or []
+        if regressed:
+            parts.append(
+                f"<p><strong>Cases that passed before and fail now ({len(regressed)}):</strong></p>"
+            )
+            parts.append("<ul>")
+            for case in regressed:
+                parts.append(f"<li><pre>{_esc(case.get('input'))}</pre></li>")
+            parts.append("</ul>")
 
     # Failed cases: input, expected, actual, reason.
     parts.append(f"<h2>Cases that failed ({len(document['failed_cases'])})</h2>")

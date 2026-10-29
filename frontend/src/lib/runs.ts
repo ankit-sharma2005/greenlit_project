@@ -42,6 +42,37 @@ export interface RunJudge {
   low_confidence_items: number;
 }
 
+export type RegressionStatus = "PASS" | "WARN" | "BLOCK";
+
+export interface RegressionMetric {
+  name: string;
+  baseline: number | null;
+  current: number | null;
+  delta: number | null;
+  passed_before: boolean;
+  passed_now: boolean;
+  hard_gate: boolean;
+  regressed: boolean;
+}
+
+export interface RegressedCase {
+  row_index: number;
+  input: string;
+}
+
+/** How a finished run compares with its dataset version's baseline (spec 8.5). */
+export interface RunRegression {
+  status: RegressionStatus;
+  reason: string;
+  baseline_run_id: string | null;
+  baseline_run_name: string | null;
+  metric_tolerance: number;
+  case_tolerance: number;
+  metric_deltas: RegressionMetric[];
+  regressed_metrics: string[];
+  regressed_cases: RegressedCase[];
+}
+
 export interface Run {
   id: string;
   name: string;
@@ -64,6 +95,10 @@ export interface Run {
   /** Which judge scored the answers; null when the run was not judged. */
   judge: RunJudge | null;
   judge_skipped_reason: string | null;
+  /** The stored baseline comparison; null when no baseline existed. */
+  regression?: RunRegression | null;
+  /** True when this run *is* the dataset version's baseline. */
+  is_baseline?: boolean;
 }
 
 export interface RunCreateRequest {

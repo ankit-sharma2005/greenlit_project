@@ -48,7 +48,9 @@ export WEB_ORIGIN="http://localhost:${WEB_PORT}"
 export APP_ENV="development"
 
 PYTHON="${PYTHON:-${ROOTDIR}/backend/runner/Scripts/python.exe}"
-TESTS="${TESTS:-.}"
+# One spec file (or a Playwright filter) can be passed as the first argument:
+#   bash scripts/run-e2e.sh tests/e2e-baseline.spec.ts
+TESTS="${1:-${TESTS:-.}}"
 
 PIDS=()
 

@@ -145,6 +145,61 @@ class RunJudgeRead(BaseModel):
     low_confidence_items: int = 0
 
 
+class RegressionMetricRead(BaseModel):
+    """One metric's before/after in a baseline comparison (spec 8.5)."""
+
+    name: str
+    baseline: float | None = None
+    current: float | None = None
+    delta: float | None = None
+    passed_before: bool = False
+    passed_now: bool = False
+    hard_gate: bool = False
+    regressed: bool = False
+
+
+class RegressedCaseRead(BaseModel):
+    row_index: int
+    input: str
+
+
+class RegressionRead(BaseModel):
+    """How a finished run compares with the baseline for its dataset version."""
+
+    status: str
+    reason: str
+    baseline_run_id: UUID | None = None
+    baseline_run_name: str | None = None
+    metric_tolerance: float
+    case_tolerance: int
+    metric_deltas: list[RegressionMetricRead] = Field(default_factory=list)
+    regressed_metrics: list[str] = Field(default_factory=list)
+    regressed_cases: list[RegressedCaseRead] = Field(default_factory=list)
+
+
+class BaselineCreate(BaseModel):
+    """Tolerances for the comparison; the defaults match the service."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    metric_tolerance: float = Field(default=0.05, ge=0, le=1)
+    case_tolerance: int = Field(default=2, ge=0, le=1000)
+
+
+class BaselineRead(BaseModel):
+    """The active baseline for one dataset version."""
+
+    run_id: UUID
+    run_name: str | None = None
+    dataset_id: UUID | None = None
+    dataset_version_id: UUID | None = None
+    metric_tolerance: float
+    case_tolerance: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
 class RunRead(BaseModel):
     id: UUID
     name: str
@@ -166,6 +221,9 @@ class RunRead(BaseModel):
     failed_cases: list[FailedCaseOut] = Field(default_factory=list)
     judge: RunJudgeRead | None = None
     judge_skipped_reason: str | None = None
+    # Set when a baseline exists for the run's dataset version (spec 8.5).
+    regression: RegressionRead | None = None
+    is_baseline: bool = False
 
 
 class RunListResponse(BaseModel):

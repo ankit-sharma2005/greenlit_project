@@ -13,11 +13,14 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import get_current_user
-from app.models import Run, RunItem, User, utcnow
+from app.models import Run, RunBaseline, RunItem, User, utcnow
 from app.schemas.evaluation import FailedCaseOut, MetricOut
 from app.schemas.runs import (
+    BaselineCreate,
+    BaselineRead,
     QuickTestRequest,
     QuickTestResponse,
+    RegressionRead,
     RunCreateRequest,
     RunItemRead,
     RunItemsResponse,
@@ -28,6 +31,17 @@ from app.schemas.runs import (
 )
 from app.services.audit import record
 from app.services.generation import ChatFn, get_chat_fn
+from app.services.regression import (
+    RegressionError,
+    baseline_for_run,
+    regression_for,
+)
+from app.services.regression import (
+    clear_baseline as clear_run_baseline,
+)
+from app.services.regression import (
+    set_baseline as set_run_baseline,
+)
 from app.services.report import build_report, render
 from app.services.run_progress import RunProgress, read_progress
 from app.services.run_repository import get_metric_results, list_run_items
@@ -147,6 +161,44 @@ def _judge_read(
     )
 
 
+def _baseline_read(db: Session, baseline: RunBaseline) -> BaselineRead:
+    """A stored baseline plus the run's name, which is what the UI shows."""
+    baseline_run = db.get(Run, baseline.run_id)
+    return BaselineRead(
+        run_id=baseline.run_id,
+        run_name=baseline_run.name if baseline_run is not None else None,
+        dataset_id=baseline.dataset_id,
+        dataset_version_id=baseline.dataset_version_id,
+        metric_tolerance=baseline.metric_tolerance,
+        case_tolerance=baseline.case_tolerance,
+        is_active=baseline.is_active,
+        created_at=baseline.created_at,
+        updated_at=baseline.updated_at,
+    )
+
+
+def _regression_read(
+    db: Session, run: Run, snapshot: dict[str, Any]
+) -> tuple[dict[str, Any] | None, bool]:
+    """The comparison for this run, and whether the run is the baseline itself.
+
+    The worker stores the comparison when the run finishes. It is recomputed here
+    only when the baseline has been changed since, so the card never shows a
+    comparison against a run that is no longer the baseline.
+    """
+    baseline = baseline_for_run(db, run)
+    if baseline is None:
+        return None, False
+    is_baseline = baseline.run_id == run.id
+    if is_baseline or run.state != "completed":
+        return None, is_baseline
+    stored = snapshot.get("regression")
+    if isinstance(stored, dict) and stored.get("baseline_run_id") == str(baseline.run_id):
+        return stored, False
+    fresh = regression_for(db, run)
+    return (fresh.as_dict() if fresh is not None else None), False
+
+
 def _run_read(
     db: Session,
     run: Run,
@@ -185,6 +237,7 @@ def _run_read(
                     reason=item.error or "The app did not answer this case.",
                 )
             )
+    regression_payload, is_baseline = _regression_read(db, run, snapshot)
     return RunRead(
         id=run.id,
         name=run.name,
@@ -206,6 +259,12 @@ def _run_read(
         failed_cases=failures,
         judge=_judge_read(snapshot),
         judge_skipped_reason=_text_or_none(snapshot.get("judge_skipped_reason")),
+        regression=(
+            RegressionRead.model_validate(regression_payload)
+            if regression_payload is not None
+            else None
+        ),
+        is_baseline=is_baseline,
     )
 
 
@@ -408,3 +467,76 @@ def cancel(
     db.commit()
     db.refresh(run)
     return _run_read(db, run, reader, detail=True)
+
+
+@router.get("/runs/{run_id}/baseline", response_model=BaselineRead | None)
+def get_baseline(
+    run_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: Any = Depends(get_current_user),
+) -> BaselineRead | None:
+    """The baseline for this run's dataset version, or null when none is set."""
+    run = _owned_run(db, run_id, user)
+    baseline = baseline_for_run(db, run)
+    return _baseline_read(db, baseline) if baseline is not None else None
+
+
+@router.post("/runs/{run_id}/baseline", response_model=BaselineRead, status_code=201)
+def set_baseline(
+    run_id: uuid.UUID,
+    payload: BaselineCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: Any = Depends(get_current_user),
+) -> BaselineRead:
+    """Make this completed run the baseline for its dataset version (spec 8.5)."""
+    run = _owned_run(db, run_id, user)
+    try:
+        baseline = set_run_baseline(
+            db,
+            run,
+            metric_tolerance=payload.metric_tolerance,
+            case_tolerance=payload.case_tolerance,
+        )
+    except RegressionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+    record(
+        db,
+        "run.baseline_set",
+        actor_id=user.id,
+        target_type="run",
+        target_id=str(run.id),
+        metadata={
+            "metric_tolerance": payload.metric_tolerance,
+            "case_tolerance": payload.case_tolerance,
+        },
+        request=request,
+    )
+    db.commit()
+    db.refresh(baseline)
+    return _baseline_read(db, baseline)
+
+
+@router.delete("/runs/{run_id}/baseline", status_code=204)
+def clear_baseline(
+    run_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: Any = Depends(get_current_user),
+) -> Response:
+    """Stop comparing against this dataset version's baseline."""
+    run = _owned_run(db, run_id, user)
+    removed = clear_run_baseline(db, run)
+    if not removed:
+        raise HTTPException(status_code=404, detail="This dataset version has no baseline.")
+    record(
+        db,
+        "run.baseline_cleared",
+        actor_id=user.id,
+        target_type="run",
+        target_id=str(run.id),
+        request=request,
+    )
+    db.commit()
+    return Response(status_code=204)

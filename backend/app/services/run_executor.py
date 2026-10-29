@@ -68,6 +68,7 @@ from app.services.judge import (
 from app.services.judge_profiles import effective_model
 from app.services.llm_gateway import LLMGateway
 from app.services.metrics import MetricResult, not_instrumented
+from app.services.regression import store_regression
 from app.services.run_progress import ProgressReporter, RunProgress, get_progress
 from app.services.run_repository import (
     add_metric_result,
@@ -985,6 +986,9 @@ def execute_run(
                         is_partial=was_cancelled,
                         completed_at=utcnow(),
                     )
+                    # Regression is recorded as the run finishes, so the card and
+                    # the report read the comparison the worker stored (spec 8.5).
+                    store_regression(session, run)
                     session.commit()
                     report = _report(
                         rid,

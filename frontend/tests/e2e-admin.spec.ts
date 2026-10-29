@@ -247,6 +247,9 @@ test("new test page auto-detects the question shape", async ({ page }) => {
 });
 
 test("new test page runs a test to a GO verdict", async ({ page }) => {
+  // The run also probes the app for safety (44 attacks plus 26 safe prompts), so
+  // a slow machine needs more than the default budget to reach the verdict.
+  test.setTimeout(180_000);
   const app = await startGoldenApp();
   try {
     const email = `run${Date.now()}@example.com`;
@@ -267,7 +270,7 @@ test("new test page runs a test to a GO verdict", async ({ page }) => {
     await expect(page.getByTestId("run-counters")).toContainText("cases done");
 
     // Then the stored verdict, with the engine's own explanation.
-    await expect(page.getByTestId("run-verdict")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId("run-verdict")).toBeVisible({ timeout: 120_000 });
     await expect(page.getByTestId("run-verdict-word")).toHaveText("Go");
     await expect(page.getByTestId("run-verdict-score")).toHaveText("1.00");
     await expect(page.getByTestId("run-verdict-reason")).toContainText("GO threshold 0.80");

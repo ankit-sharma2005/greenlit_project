@@ -432,6 +432,50 @@ class JudgeProfile(TimestampMixin, Base):
     is_selected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
+class RunBaseline(TimestampMixin, Base):
+    """The run a project compares against for one dataset version (spec 8.5).
+
+    One row per owner and dataset version, so "set as baseline" replaces the
+    previous choice instead of piling up; clearing it deactivates the row so the
+    history of what was compared stays readable.
+    """
+
+    __tablename__ = "run_baselines"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "dataset_version_id", name="uq_run_baselines_owner_version"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("runs.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    dataset_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("datasets.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    dataset_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("dataset_versions.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    # How much a metric may drop, and how many cases may regress, before the
+    # comparison escalates. Stored per baseline so a team can tune one dataset.
+    metric_tolerance: Mapped[float] = mapped_column(nullable=False, default=0.05)
+    case_tolerance: Mapped[int] = mapped_column(nullable=False, default=2)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
 __all__ = [
     "AuditEvent",
     "Dataset",
@@ -444,6 +488,7 @@ __all__ = [
     "Provider",
     "RefreshToken",
     "Run",
+    "RunBaseline",
     "RunItem",
     "RunItemState",
     "RunState",
