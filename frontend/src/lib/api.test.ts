@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { API_BASE_URL, ApiError, apiRequest } from "./api";
+import { API_BASE_URL, ApiError, apiRequest, apiUpload } from "./api";
 
 function mockFetch(response: Partial<Response> & { json?: () => Promise<unknown> }) {
   const fetchMock = vi.fn().mockResolvedValue({
@@ -73,12 +73,23 @@ describe("apiRequest", () => {
     }
   });
 
-  it("reports an unreachable API in plain language", async () => {
+  it("reports the URL when the API is unreachable", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
 
     await expect(apiRequest("/api/v1/auth/me")).rejects.toMatchObject({
       code: "network_error",
-      message: "Cannot reach the GreenLit API. Check that it is running, then try again.",
+      message:
+        "Cannot reach the GreenLit API at http://localhost:8003/api/v1/auth/me. Check that it is running, then try again.",
+    });
+  });
+
+  it("reports the URL when an upload cannot reach the API", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+
+    await expect(apiUpload("/api/v1/datasets", new FormData())).rejects.toMatchObject({
+      code: "network_error",
+      message:
+        "Cannot reach the GreenLit API at http://localhost:8003/api/v1/datasets. Check that it is running, then try again.",
     });
   });
 });

@@ -72,7 +72,7 @@ export async function apiUpload<T>(
       );
     }
     throw new ApiError(
-      "Cannot reach the GreenLit API. Check that it is running, then try again.",
+      `Cannot reach the GreenLit API at ${API_BASE_URL}${path}. Check that it is running, then try again.`,
       0,
       "network_error",
     );
@@ -130,7 +130,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
       );
     }
     throw new ApiError(
-      "Cannot reach the GreenLit API. Check that it is running, then try again.",
+      `Cannot reach the GreenLit API at ${API_BASE_URL}${path}. Check that it is running, then try again.`,
       0,
       "network_error",
     );

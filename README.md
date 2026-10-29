@@ -70,6 +70,22 @@ update `WEB_ORIGIN` (CORS) and `VITE_API_BASE_URL` to match.
 
 Health checks: `GET /healthz` (liveness) and `GET /readyz` (Postgres + Redis readiness).
 
+### Troubleshooting API connection errors
+
+The browser must reach the API through its **host** URL, normally
+`http://localhost:8003`; `api:8000` is only for traffic between Compose containers.
+The web container receives this value through `VITE_API_BASE_URL`, while API CORS allows
+the web origin in `WEB_ORIGIN` (normally `http://localhost:5177`). If you change host ports,
+keep those two variables aligned. Network errors in the UI now include the exact API URL
+and endpoint it tried.
+
+If that URL is correct but the API is unreachable, check `docker compose ps`,
+`docker compose logs api --tail 80` and `http://localhost:8003/readyz`. A missing runtime
+package can stop Uvicorn while the frontend reports a network error; for example, the API's
+key-encryption imports require `cryptography` to be installed in the image. Rebuild and
+recreate the API after changing runtime dependencies:
+`docker compose up --build -d --no-deps api`. Do not remove the database or Redis volumes.
+
 **Create the first account and it becomes the admin.** Every later account is a member;
 changing a role is an admin API call for now (`PATCH /api/v1/users/{id}/role`, see
 `/docs`) — there is no user-administration screen yet.
