@@ -2,97 +2,140 @@
 
 Pre-launch testing and evaluation for LLM-powered applications. GreenLit tests the
 **application** — its prompt, retrieval, tools and guardrails — and combines quality,
-safety and operational checks into one decision: **GO / REVIEW / NO-GO**, with evidence and
-suggested fixes.
+safety and operational checks into one decision: **GO / REVIEW / NO-GO**, with evidence,
+a safety section, the judge that scored it, and an exportable report.
 
-> Status: M6 (runs), M8 (safety) and M7 (judge) are complete: accounts, providers, the three
-> connectors, datasets, metrics/decision engine, worker-executed runs with live progress and
-> cancel, the built-in safety module (a versioned attack set, a safe-prompt set,
-> `attack_resisted` / `over_refusal`, and a hard-gate NO-GO on a critical failure), and the
-> judge (saved judge profiles in Settings → Judge, per-answer scoring at temperature 0 with
-> stored provenance, and REVIEW when the judge is unavailable or unsure). A run's verdict card
-> shows which judge and rubric scored it, plus a dedicated Safety section. Regression and
-> reports arrive in later milestones; anything not built yet is visibly marked "Coming soon".
+## What works today
+
+- **Accounts and sessions:** Argon2id passwords, httpOnly cookie sessions with rotating
+  refresh tokens, roles (`admin`, `member`, `reviewer`) and an append-only audit log.
+  The first account to register becomes the admin.
+- **Providers:** Ollama and any OpenAI-compatible endpoint, with a connection test,
+  encrypted keys and rate limits.
+- **Datasets:** upload a CSV/JSON golden set (or have the model generate one), then
+  approve a version. Every version stores a hash.
+- **Runs:** three entry points (HTTP endpoint, prompt app, uploaded outputs), executed in
+  a Celery worker with live progress and cancel. A run snapshots its settings, so
+  changing a provider later never rewrites history.
+- **Scoring:** criteria profiles with weights, thresholds and hard gates; metrics that
+  were not measured are reported as **not instrumented**, never as zero.
+- **Safety (spec 8.3):** a versioned built-in attack set (44 cases across five
+  categories, with a planted canary) and 26 harmless prompts, scored as
+  `attack_resisted` and `over_refusal`. A leaked marker or a missing refusal is a hard
+  NO-GO, and the result appears as its own section.
+- **Judge (spec 8.2):** a saved judge profile grades every answer at temperature 0 and
+  stores its model, rubric version and prompt-template hash; unavailable or unsure
+  judges fall back to REVIEW instead of failing the run.
+- **Reports (spec 8.5):** export any finished run as self-contained printable HTML, full
+  JSON or case-level CSV. Request headers are redacted and no key is ever exported.
+
+Regression baselines, the review queue and calibration against human labels are **not
+built yet**; anything missing is visibly marked "soon" in the UI rather than faked.
 
 ## Quick start
 
 Requirements: Docker Desktop (WSL2 on Windows) with Compose v2.
 
 ```bash
-cp .env.example .env       # optional; compose has working defaults
+git clone <your-fork-url> greenlit
+cd greenlit
+cp .env.example .env          # optional; compose has working defaults
 docker compose up --build
 ```
 
 Then open:
 
-| Service  | URL                            |
-| -------- | ------------------------------ |
-| Web UI   | http://localhost:5177          |
-| API      | http://localhost:8003          |
-| API docs | http://localhost:8003/docs     |
+| Service  | URL                        |
+| -------- | -------------------------- |
+| Web UI   | http://localhost:5177      |
+| API      | http://localhost:8003      |
+| API docs | http://localhost:8003/docs |
 
 Host ports are configurable through `.env` without editing the compose file:
 `WEB_PORT` (5177), `API_PORT` (8003), `POSTGRES_PORT` (5436), `REDIS_PORT` (6382).
-The ports inside the containers stay 5173, 8000, 5432 and 6379, so services keep talking to
-each other on the internal ones. `WEB_ORIGIN` (CORS) and `VITE_API_BASE_URL` must follow the
-host ports if you change them.
+Container ports stay 5173, 8000, 5432 and 6379. If you change `WEB_PORT` or `API_PORT`,
+update `WEB_ORIGIN` (CORS) and `VITE_API_BASE_URL` to match.
 
 Health checks: `GET /healthz` (liveness) and `GET /readyz` (Postgres + Redis readiness).
 
-Open the app and create the first account: it becomes the **admin**. Later accounts are
-**members** unless an admin changes their role. Roles are `admin`, `member` and `reviewer`.
+**Create the first account and it becomes the admin.** Every later account is a member
+until an admin changes its role in Settings.
 
-## Accounts and sessions
+## Try the demo (no model needed)
 
-- Passwords are hashed with Argon2id. Sign-in is rate limited per email + IP address.
-- Sessions use an httpOnly, SameSite=Lax access token (15 minutes) plus a rotating refresh
-token (14 days). The refresh token is stored hashed in Postgres; replaying a rotated token
-revokes the whole token family. Cookies get `Secure` automatically over HTTPS.
-- Admins can list users, change roles and read the append-only audit log. The last admin
-cannot be demoted.
-- Password reset creates a hashed, single-use token. **No email provider is configured yet**, so
-in development (APP_ENV=development or DEBUG=true) the API returns `debug_token` from
-`POST /api/v1/auth/password-reset/request`; production needs an email integration.
-
-The `debug_token` is only returned when `APP_ENV=development` or `DEBUG=true`;
-it is never returned in production.
-
-Auth endpoints: `POST /api/v1/auth/register`, `/login`, `/refresh`, `/logout`,
-`/password-reset/request`, `/password-reset/confirm`, and `GET /api/v1/auth/me`. Admin
-endpoints: `GET /api/v1/users`, `PATCH /api/v1/users/{id}/role`, `GET /api/v1/audit`.
-
-## Repository layout
-
-```
-backend/    FastAPI app, SQLAlchemy, Alembic migrations, tests
-frontend/   React + TypeScript + Vite UI
-demo/       Built-in demo app and sample data (later milestone)
-docs/       Documentation, brand assets
-scripts/    Developer utilities (brand asset generation)
-```
-
-## Local development without Docker
-
-Backend:
+The repo ships a college-helpdesk demo: the same app in a healthy and a broken flavour,
+plus a 12-case golden dataset.
 
 ```bash
-cd backend
-python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
-alembic upgrade head
-uvicorn app.main:app --reload
+docker compose --profile demo up -d
 ```
 
-Frontend:
+Open the app, sign in, and press **Try the demo** on the New Test page. It runs the
+golden set against both apps through the normal runs API and shows both verdicts side by
+side: **GO** for the healthy app, **NO-GO** for the broken one with the weighted score
+and the REVIEW threshold in the reason. Nothing is precomputed, and no provider is
+involved.
 
-```bash
-cd frontend
-npm ci
-npm run dev -- --port 5177
-```
+## Add a model with Ollama
 
-Run the API outside Docker against the Compose datastores (host ports 5436 and 6382) with
-the defaults already in `app/config.py`, or point `DATABASE_URL`/`REDIS_URL` at them.
+GreenLit needs a model for three things: generating a dataset if you do not upload one,
+the prompt-app entry point, and the judge.
+
+1. Install [Ollama](https://ollama.com) and pull a model: `ollama pull hermes3:8b`.
+2. In GreenLit open **Settings → Providers and models**.
+3. Press **Use Ollama defaults**: kind `ollama`, base URL
+   `http://host.docker.internal:11434/v1`, model `hermes3:8b`. `host.docker.internal` is
+   how the API container reaches Ollama on your machine; if you run the API outside
+   Docker, use `http://localhost:11434/v1` instead.
+4. Press **Add provider**, then **Test connection**. A green _healthy_ badge means the
+   gateway reached the model. If it fails, check that Ollama is running and that the
+   model name matches exactly.
+
+OpenAI, Groq and any other OpenAI-compatible endpoint work the same way: choose
+`openai-compatible`, set the base URL and paste the API key. Keys are encrypted at rest
+and never returned by the API.
+
+## Connect an app
+
+Everything starts on the **New Test** page. Pick an entry point, choose or generate a
+dataset, then press **Start test**.
+
+### HTTP endpoint
+
+1. Entry point **HTTP endpoint**.
+2. Target URL, for example `http://host.docker.internal:9000/chat`. Use
+   `host.docker.internal` for a service on your own machine when the API runs in Docker,
+   or the container name when it runs alongside it.
+3. Tick **This app runs on my computer** for a local or private target. Only do that for
+   targets you trust.
+4. GreenLit probes the endpoint once to detect the request/response shape (method, body
+   template, answer path, context path) and shows what it found. Adjust it if the guess
+   is wrong.
+5. Choose an approved dataset version, or leave it empty to have the model write cases.
+
+### Prompt app
+
+Entry point **Prompt app** tests a system prompt against a saved provider instead of a
+URL. Type the system prompt, pick the provider and model (the model defaults from the
+provider), and optionally a temperature. This is the fastest way to compare two prompt
+variants.
+
+### Upload outputs
+
+Entry point **Upload outputs** scores answers your app already produced. Drop a CSV or
+JSON file with an `id`, `input` and `output` column; `retrieved_context`, `latency_ms`,
+`tokens_in` and `tokens_out` are optional. Only `input` and `output` are required, and
+GreenLit auto-detects the columns (with a mapping view when detection is ambiguous).
+Cases with no matching output fail with a clear reason instead of scoring zero, and
+missing optional columns are reported as not instrumented.
+
+## Read the verdict
+
+A finished run shows the verdict word, the weighted score, the reason rule that produced
+it, the metric table, the cases that failed, the safety section and the judge's model and
+rubric version. Three **Export** buttons download the same result as HTML (printable and
+self-contained), JSON (the full result) or CSV (one row per case). The export never
+contains a secret: header values are redacted and provider keys never enter it.
 
 ## Quality checks
 
@@ -113,16 +156,18 @@ bash scripts/run-e2e.sh
 The script creates a **disposable** stack and drops it afterwards, so it never restarts or
 rebuilds the docker stack you use in the browser:
 
-- Postgres + Redis run in their own compose project (`greenlit-e2e`) on ports 5536/6482 with
-  a fresh volume — the e2e database is empty every run, so the first registered user is
-  asserted to be `admin` on that clean database;
-- the API (8103), Celery worker and Vite dev server (5277) start as local processes and are
-  killed on exit;
-- two demo helpdesk servers (healthy on 9501, broken on 9502) start the same way, since the
-  disposable stack runs the API on the host and "Try the demo" needs somewhere to point;
-- Playwright runs the whole suite in `frontend/tests` (`e2e-admin`, `e2e-demo`, `e2e-judge`,
-  `e2e-prompt-app`, `e2e-safety`, `e2e-upload-outputs`) against `http://localhost:5277`
-  (`E2E_BASE_URL`), then the script tears the project down with `docker compose down -v`.
+- Postgres + Redis run in their own Compose project (`greenlit-e2e`) on ports 5536/6482
+  with a fresh volume — the e2e database is empty every run, so the first registered user
+  is asserted to be `admin` on that clean database;
+- the API (8103), a solo Celery worker and the Vite dev server (5277) start as local
+  processes and are killed on exit;
+- two demo helpdesk servers (healthy on 9501, broken on 9502) start the same way, since
+  the disposable stack runs the API on the host and "Try the demo" needs somewhere to
+  point;
+- Playwright runs the whole suite in `frontend/tests` (`e2e-admin`, `e2e-demo`,
+  `e2e-judge`, `e2e-prompt-app`, `e2e-report`, `e2e-safety`, `e2e-upload-outputs`)
+  against `http://localhost:5277` (`E2E_BASE_URL`), then tears the project down with
+  `docker compose down -v`.
 
 To run the suite against an already-running dev stack instead:
 
@@ -159,9 +204,23 @@ for _ in $(seq 1 120); do
   sleep 1
 done
 
-# 4. Fail the pipeline on anything but GO.
+# 4. Fail the pipeline on anything but GO, and keep the report as an artifact.
 python -c 'import json,sys; run=json.load(open("/tmp/greenlit-run.json")); print(run["verdict"], run["score"], run["verdict_reason"]); sys.exit(0 if run["verdict"] == "GO" else 1)'
+curl -sS -b "$JAR" "$API/api/v1/runs/$RUN/report?format=html" -o greenlit-report.html
 ```
+
+## Repository layout
+
+```
+backend/    FastAPI app, SQLAlchemy, Alembic migrations, worker, tests
+frontend/   React + TypeScript + Vite UI, Vitest components, Playwright suite
+demo/       Shipped demo dataset (the demo app itself lives in backend/app/demo_server.py)
+docs/       Documentation and brand assets
+scripts/    Developer utilities (brand asset generation, the disposable e2e stack)
+```
+
+See [HANDOVER.md](HANDOVER.md) for the architecture, how the tests are organised and the
+known limitations.
 
 ## Brand assets
 
