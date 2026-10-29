@@ -132,8 +132,13 @@ def seed_run(
     approved: bool = True,
     with_dataset: bool = True,
     criteria: str = "plain_chatbot",
+    row_index_base: int = 1,
 ) -> uuid.UUID:
-    """One queued run over a small dataset, with its settings snapshot."""
+    """One queued run over a small dataset, with its settings snapshot.
+
+    ``row_index_base`` is 1 by default to match the run items' own numbering;
+    real datasets are stored 0-based, so upload matching is also tested with 0.
+    """
     rows = rows if rows is not None else ROWS
     settings: dict[str, object] = {
         "entry_point": entry,
@@ -177,7 +182,7 @@ def seed_run(
                 session.add(
                     DatasetItem(
                         dataset_version_id=version.id,
-                        row_index=index + 1,
+                        row_index=index + row_index_base,
                         data=row,
                     )
                 )
@@ -512,6 +517,45 @@ def test_upload_outputs_scores_the_file_without_calling_the_app(
         assert items[0].output == ROWS[0]["answer"]
         assert items[0].trace is not None
         assert items[0].trace["connector"] == "upload_outputs"
+        answer_match = [
+            row for row in get_metric_results(session, run_id) if row.name == "answer_match"
+        ]
+        assert answer_match and answer_match[0].passed is True
+
+
+def test_upload_outputs_matches_zero_indexed_dataset_rows(
+    session_factory: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    """Real datasets store 0-based row indices; matching must not shift by one.
+
+    Run items are 1-based, so keying matches by the dataset's own index handed
+    every case the next row's output and never matched the last item.
+    """
+    rows = [{"question": row["question"], "answer": row["answer"]} for row in ROWS]
+    csv_content = "\n".join(
+        ["question,output"] + [f"{row['question']},{row['answer']}" for row in rows]
+    )
+    run_id = seed_run(
+        session_factory,
+        owner,
+        rows=rows,
+        entry="upload_outputs",
+        settings_extra={"csv": csv_content},
+        row_index_base=0,
+    )
+
+    def forbidden_factory(snapshot: object, session_factory_arg: object) -> Callable[[str], Trace]:
+        raise AssertionError("upload_outputs runs must not build a sender")
+
+    report, _ = run_it(run_id, session_factory, sender_factory=forbidden_factory)
+
+    assert report["status"] == "completed", report
+    assert report["verdict"] == "GO"
+    with session_factory() as session:
+        items = list_run_items(session, run_id)
+        assert [item.output for item in items] == [row["answer"] for row in rows]
+        assert [item.row_index for item in items] == [1, 2, 3]
+        assert all(item.state == "completed" for item in items)
         answer_match = [
             row for row in get_metric_results(session, run_id) if row.name == "answer_match"
         ]

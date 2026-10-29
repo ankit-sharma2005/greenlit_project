@@ -344,7 +344,11 @@ def _load_cases(
         input_text = _text(data.get(input_column))
         if input_text is None:
             continue
-        item_tuples.append((row.row_index, input_text, data))
+        # The index must be the same one the cases get below: run items are
+        # 1-based, while a dataset version stores 0-based row indices. Keying
+        # matches by ``row.row_index`` shifted every upload match by one row and
+        # left the last item unmatched.
+        item_tuples.append((len(item_tuples) + 1, input_text, data))
 
     cases: list[_Case] = []
     for _row_index, input_text, data in item_tuples:

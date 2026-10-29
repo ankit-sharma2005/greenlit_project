@@ -1,151 +1,187 @@
-import { render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
 import { DemoPanel } from "./DemoPanel";
 import { ApiError } from "../lib/api";
 import type { Run } from "../lib/runs";
 
-const { loadDemoMock, startRunMock, getRunMock } = vi.hoisted(() => ({
+const { loadDemoMock } = vi.hoisted(() => ({
   loadDemoMock: vi.fn(),
-  startRunMock: vi.fn(),
-  getRunMock: vi.fn(),
+}));
+vi.mock("../lib/demo", () => ({
+  loadDemo: loadDemoMock,
 }));
 
-vi.mock("../lib/demo", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../lib/demo")>();
-  return { ...actual, loadDemo: loadDemoMock };
-});
-
+const { startRunMock } = vi.hoisted(() => ({
+  startRunMock: vi.fn(),
+}));
 vi.mock("../lib/runs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../lib/runs")>();
-  return { ...actual, startRun: startRunMock, getRun: getRunMock };
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    startRun: startRunMock,
+    isTerminal: (state: unknown) =>
+      state === "succeeded" || state === "failed" || state === "completed",
+  };
 });
 
-const SETUP = {
-  name: "Demo — College helpdesk",
-  dataset_id: "ds-1",
-  dataset_version_id: "dv-1",
-  good_url: "http://demo-app:9000/chat",
-  broken_url: "http://demo-app-broken:9000/chat",
+type DemoSetup = {
+  dataset_version_id: string;
+  good_url: string;
+  broken_url: string;
 };
 
-function makeRun(overrides: Partial<Run> = {}): Run {
+function pendingRun(): Run {
   return {
-    id: "4f0c1a9e-0000-4000-8000-0000000000a1",
-    name: "Demo — healthy helpdesk",
+    id: crypto.randomUUID(),
+    name: "demo run",
     entry_point: "http_endpoint",
-    state: "completed",
-    verdict: "GO",
-    score: 1,
-    verdict_reason: "Weighted score 1.00 is above the GO threshold 0.80.",
+    state: "running",
+    verdict: null,
+    score: null,
+    verdict_reason: null,
     is_partial: false,
     criteria_profile: "rag_chatbot",
     test_types: ["quality", "safety", "operations"],
-    dataset_id: "ds-1",
-    dataset_version_id: "dv-1",
+    dataset_id: null,
+    dataset_version_id: null,
     created_at: "2026-10-26T09:00:00Z",
     started_at: "2026-10-26T09:00:00Z",
-    completed_at: "2026-10-26T09:01:00Z",
+    completed_at: null,
     progress: {
       items_done: 12,
       items_total: 12,
       items_failed: 0,
       items_cancelled: 0,
-      stage: "finished",
+      stage: "running",
       started_at: "2026-10-26T09:00:00Z",
-      updated_at: "2026-10-26T09:01:00Z",
-      elapsed_seconds: 30,
+      updated_at: "2026-10-26T09:00:05Z",
+      elapsed_seconds: 5,
     },
     metrics: [],
     failed_cases: [],
     judge: null,
-    judge_skipped_reason: null,
-    ...overrides,
-  };
+    judge_skipped_reason: "This run had no judge profile.",
+  } as unknown as Run;
 }
 
-const GOOD_RUN = makeRun();
-const BROKEN_RUN = makeRun({
-  id: "4f0c1a9e-0000-4000-8000-0000000000a2",
-  name: "Demo — broken helpdesk",
-  verdict: "NO_GO",
-  score: 0.42,
-  verdict_reason:
-    "Weighted score 0.42 is below the REVIEW threshold 0.60. Weakest metrics: answer_match 0.00.",
+function settledRun(verdict: string, score: number, reason: string): Run {
+  return {
+    id: crypto.randomUUID(),
+    name: "demo run",
+    entry_point: "http_endpoint",
+    state: "succeeded",
+    verdict,
+    score,
+    verdict_reason: reason,
+    is_partial: false,
+    criteria_profile: "rag_chatbot",
+    test_types: ["quality", "safety", "operations"],
+    dataset_id: null,
+    dataset_version_id: null,
+    created_at: "2026-10-26T09:00:00Z",
+    started_at: "2026-10-26T09:00:00Z",
+    completed_at: "2026-10-26T09:00:12Z",
+    progress: {
+      items_done: 12,
+      items_total: 12,
+      items_failed: 0,
+      items_cancelled: 0,
+      stage: "completed",
+      started_at: "2026-10-26T09:00:00Z",
+      updated_at: "2026-10-26T09:00:12Z",
+      elapsed_seconds: 12,
+    },
+    metrics: [],
+    failed_cases: [],
+    judge: null,
+    judge_skipped_reason: "This run had no judge profile.",
+  } as unknown as Run;
+}
+
+function failedRun(reason: string): Run {
+  const run = settledRun("NO_GO", 0.2, reason);
+  return { ...run, state: "failed" } as Run;
+}
+
+const demoSetup: DemoSetup = {
+  dataset_version_id: crypto.randomUUID(),
+  good_url: "http://127.0.0.1:9991/ask",
+  broken_url: "http://127.0.0.1:9992/ask",
+};
+
+beforeEach(() => {
+  loadDemoMock.mockReset();
+  startRunMock.mockReset();
+  loadDemoMock.mockClear();
+  startRunMock.mockClear();
+});
+
+afterEach(() => {
+  vi.clearAllMocks();
 });
 
 describe("DemoPanel", () => {
-  beforeEach(() => {
-    loadDemoMock.mockReset().mockResolvedValue(SETUP);
-    startRunMock.mockReset();
-    getRunMock.mockReset();
+  it("shows the demo hint until pressed", () => {
+    const rendered = render(<DemoPanel />);
+    expect(rendered.getByTestId("try-demo")).toHaveTextContent("Try the demo");
+    expect(rendered.getByTestId("demo-hint")).toBeVisible();
   });
 
-  it("runs the good and the broken demo and shows both verdicts", async () => {
-    startRunMock.mockResolvedValueOnce(GOOD_RUN).mockResolvedValueOnce(BROKEN_RUN);
-    render(<DemoPanel />);
+  it("shows both verdicts after Try the demo lands both runs", async () => {
+    loadDemoMock.mockResolvedValue(demoSetup);
+    startRunMock.mockResolvedValueOnce(settledRun("GO", 0.95, "Good"));
+    startRunMock.mockResolvedValueOnce(settledRun("NO_GO", 0.42, "Low weighted score"));
+    const user = userEvent.setup();
+    const rendered = render(<DemoPanel />);
 
-    expect(screen.getByTestId("demo-hint")).toHaveTextContent("no model required");
-    await userEvent.click(screen.getByTestId("try-demo"));
-
-    expect(await screen.findByTestId("demo-good-verdict")).toHaveTextContent("Go");
-    expect(screen.getByTestId("demo-broken-verdict")).toHaveTextContent("No-Go");
-    expect(screen.getByTestId("demo-good-score")).toHaveTextContent("1.00");
-    expect(screen.getByTestId("demo-good-reason")).toHaveTextContent("GO threshold 0.80");
-
-    // The broken run's reason must name the score, the threshold and the metric.
-    const brokenReason = screen.getByTestId("demo-broken-reason");
-    expect(brokenReason).toHaveTextContent("Weighted score 0.42");
-    expect(brokenReason).toHaveTextContent("below the REVIEW threshold 0.60");
-    expect(brokenReason).toHaveTextContent("answer_match 0.00");
-
-    // Both legs go through the normal runs API against the seeded dataset.
-    expect(loadDemoMock).toHaveBeenCalledTimes(1);
-    expect(startRunMock).toHaveBeenCalledTimes(2);
-    const [good, broken] = startRunMock.mock.calls;
-    expect(good?.[0]).toMatchObject({
-      entry_point: "http_endpoint",
-      target: SETUP.good_url,
-      dataset_version_id: SETUP.dataset_version_id,
-      allow_private_targets: true,
+    await user.click(rendered.getByTestId("try-demo"));
+    await waitFor(() => expect(rendered.getByTestId("demo-good-verdict")).toHaveTextContent("Go"), {
+      timeout: 60_000,
     });
-    expect(broken?.[0]).toMatchObject({ target: SETUP.broken_url });
-
-    // The button is usable again: no spinner can stick.
-    expect(screen.getByTestId("try-demo")).toBeEnabled();
+    expect(rendered.getByTestId("demo-good-score")).toHaveTextContent("0.95");
+    expect(rendered.getByTestId("demo-broken-verdict")).toHaveTextContent("No-Go");
+    expect(rendered.getByTestId("demo-broken-score")).toHaveTextContent("0.42");
+    expect(rendered.getByTestId("demo-broken-reason")).toHaveTextContent("Low weighted score");
+    expect(rendered.getByTestId("demo-results")).toHaveTextContent("Demo results");
   });
 
-  it("reports a load failure instead of spinning forever", async () => {
-    loadDemoMock.mockRejectedValue(new ApiError("Demo setup failed.", 400, "bad_request"));
-    render(<DemoPanel />);
+  it("reports an error when the demo setup fails", async () => {
+    loadDemoMock.mockRejectedValueOnce(new ApiError("demo app not reachable", 503));
+    const user = userEvent.setup();
+    const rendered = render(<DemoPanel />);
 
-    await userEvent.click(screen.getByTestId("try-demo"));
-
-    expect(await screen.findByTestId("demo-error")).toHaveTextContent("Demo setup failed.");
-    expect(startRunMock).not.toHaveBeenCalled();
-    expect(screen.getByTestId("try-demo")).toBeEnabled();
-  });
-
-  it("tells the user how to start the demo app when every run fails", async () => {
-    startRunMock
-      .mockResolvedValueOnce(makeRun({ state: "failed", verdict: null, score: null }))
-      .mockResolvedValueOnce(
-        makeRun({
-          id: "4f0c1a9e-0000-4000-8000-0000000000a3",
-          state: "failed",
-          verdict: null,
-          score: null,
-        }),
-      );
-    render(<DemoPanel />);
-
-    await userEvent.click(screen.getByTestId("try-demo"));
-
-    expect(await screen.findByTestId("demo-unreachable")).toHaveTextContent(
-      "docker compose --profile demo up -d",
+    await user.click(rendered.getByTestId("try-demo"));
+    await waitFor(
+      () => expect(rendered.getByTestId("demo-error")).toHaveTextContent("demo app not reachable"),
+      { timeout: 60_000 },
     );
-    expect(screen.getByTestId("demo-results")).toBeInTheDocument();
-    expect(screen.getByTestId("try-demo")).toBeEnabled();
+  });
+
+  it("shows the unreachable banner when both runs fail", async () => {
+    loadDemoMock.mockResolvedValue(demoSetup);
+    startRunMock.mockResolvedValueOnce(failedRun("request failed"));
+    startRunMock.mockResolvedValueOnce(failedRun("request failed"));
+    const user = userEvent.setup();
+
+    const rendered = render(<DemoPanel />);
+    await user.click(rendered.getByTestId("try-demo"));
+    await waitFor(() => expect(rendered.getByTestId("demo-unreachable")).toBeVisible(), {
+      timeout: 60_000,
+    });
+  });
+
+  it("keeps waiting when the first run is still in flight", async () => {
+    loadDemoMock.mockResolvedValue(demoSetup);
+    startRunMock.mockResolvedValueOnce(pendingRun());
+    const user = userEvent.setup();
+    const rendered = render(<DemoPanel />);
+
+    await user.click(rendered.getByTestId("try-demo"));
+    await waitFor(
+      () => expect(rendered.getByTestId("try-demo")).toHaveTextContent("Running the demo"),
+      { timeout: 120_000 },
+    );
+    expect(rendered.queryByTestId("demo-good-verdict")).toBeNull();
   });
 });

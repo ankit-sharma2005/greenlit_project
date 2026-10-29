@@ -118,7 +118,10 @@ rebuilds the docker stack you use in the browser:
   asserted to be `admin` on that clean database;
 - the API (8103), Celery worker and Vite dev server (5277) start as local processes and are
   killed on exit;
-- Playwright runs `frontend/tests/e2e-admin.spec.ts` against `http://localhost:5277`
+- two demo helpdesk servers (healthy on 9501, broken on 9502) start the same way, since the
+  disposable stack runs the API on the host and "Try the demo" needs somewhere to point;
+- Playwright runs the whole suite in `frontend/tests` (`e2e-admin`, `e2e-demo`, `e2e-judge`,
+  `e2e-prompt-app`, `e2e-safety`, `e2e-upload-outputs`) against `http://localhost:5277`
   (`E2E_BASE_URL`), then the script tears the project down with `docker compose down -v`.
 
 To run the suite against an already-running dev stack instead:

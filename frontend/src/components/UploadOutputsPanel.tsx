@@ -1,5 +1,7 @@
 /** Upload outputs connector form: file drop, column mapping, golden dataset picker. */
 
+import { useRef } from "react";
+
 export interface UploadOutputsColumnOption {
   label: string;
   value: string;
@@ -68,6 +70,9 @@ export function UploadOutputsPanel({
   onColumnChange,
   onDatasetChange,
 }: UploadOutputsPanelProps) {
+  // One real file input, so the drop area, the keyboard and the e2e suite all
+  // open the same chooser instead of a detached element nobody can address.
+  const fileInput = useRef<HTMLInputElement | null>(null);
   const hasRequiredMapped = Boolean(inputColumn) && Boolean(outputColumn);
   const fileError =
     file && !hasRequiredMapped
@@ -80,6 +85,20 @@ export function UploadOutputsPanel({
       <label className="form__label" htmlFor="upload-file">
         Upload outputs (CSV or JSON):
       </label>
+      <input
+        ref={fileInput}
+        id="upload-file"
+        data-testid="upload-file-input"
+        type="file"
+        accept=".csv,.json,text/csv,application/json"
+        style={{ display: "none" }}
+        disabled={disabled}
+        onChange={(event) => {
+          onFileChange(event.target.files?.[0] ?? null);
+          // Reset so picking the same file again after Clear still fires.
+          event.target.value = "";
+        }}
+      />
       <div
         style={{
           border: "var(--border)",
@@ -111,14 +130,7 @@ export function UploadOutputsPanel({
         onDragEnter={(e) => e.preventDefault()}
         onClick={() => {
           if (disabled) return;
-          const input = document.createElement("input");
-          input.type = "file";
-          input.accept = ".csv,.json,text/csv,application/json";
-          input.onchange = () => {
-            const chosen = input.files?.[0] ?? null;
-            onFileChange(chosen);
-          };
-          input.click();
+          fileInput.current?.click();
         }}
         data-testid="upload-file-drop"
       >

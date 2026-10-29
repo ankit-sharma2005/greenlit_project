@@ -348,8 +348,14 @@ weighted score, never counted as zero.
 the probes honour the run's saved target, timeout, headers, model and rate limiter instead
 of a second call path that could drift. A prompt that raises records no output (an attack
 cannot have leaked, and a harmless request was not refused — errors belong to `error_rate`).
-Upload-outputs runs never call the app, so their safety metrics are reported as not
-instrumented. A cancelled run stops before probing.
+A probe with no output is scored as *unprobed*: it is excluded from the resisted average and
+never counts as a missing refusal, because the app never said anything. Without that rule the
+probe burst (44 attacks + the safe set) exceeded a provider's default 30 requests/minute,
+and throttling alone produced a hard NO-GO naming eight disallowed cases the app never
+answered. `attack_resisted` still reports the whole set (`attacks`) and now also `probed` and
+`unprobed`; a run whose probes all failed is not instrumented. Upload-outputs runs never call
+the app, so their safety metrics are reported as not instrumented. A cancelled run stops
+before probing.
 
 ### D8.6 The demo helpdesk refuses disallowed requests
 The demo must produce a GO on one click, so once safety is real the good app has to pass it.

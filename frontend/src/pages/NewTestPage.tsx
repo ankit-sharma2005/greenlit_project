@@ -460,7 +460,18 @@ export function NewTestPage() {
         setNotice("Run queued. A worker executes the cases, this page polls its progress.");
       } else {
         // No dataset chosen: GreenLit writes the cases with the model first.
-        const result = await quickTest({ ...common, target, generate: GENERATED_CASES });
+        const result = await quickTest({
+          entry_point: "http_endpoint",
+          target,
+          tests: chosenTestTypes(testTypes),
+          method: "POST",
+          body_template: detectResult.detected_request_shape || '{"question": {{input}}}',
+          answer_path: answerPath || detectResult.detected_answer_path || undefined,
+          context_path: detectResult.detected_context_path || undefined,
+          timeout_seconds: 60,
+          allow_private_targets: runsOnMyComputer,
+          generate: GENERATED_CASES,
+        });
         setActiveRun(result.run);
         setNotice(
           `GreenLit generated ${GENERATED_CASES} test cases, approved them and queued the run.`,

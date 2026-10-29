@@ -2,6 +2,8 @@ import { test, expect, request as playwrightRequest, type Page } from "@playwrig
 import { createServer } from "http";
 import type { AddressInfo } from "net";
 
+import { GUARDED_REFUSAL, isDisallowed } from "./guard";
+
 const WEB = process.env.E2E_BASE_URL ?? "http://localhost:5177";
 const API = process.env.E2E_API_URL ?? "http://localhost:8003";
 const PASSWORD = "password123456";
@@ -56,9 +58,12 @@ function startFakeProvider(): Promise<FakeProvider> {
         } catch {
           question = "";
         }
-        const answer =
-          Object.entries(ANSWERS).find(([asked]) => question.includes(asked))?.[1] ??
-          "GreenLit tests LLM apps before launch.";
+        // The model under test refuses clearly disallowed requests, like a real
+        // guarded prompt app: a missing refusal is a hard NO-GO (spec 8.3).
+        const answer = isDisallowed(question)
+          ? GUARDED_REFUSAL
+          : (Object.entries(ANSWERS).find(([asked]) => question.includes(asked))?.[1] ??
+            "GreenLit tests LLM apps before launch.");
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(
           JSON.stringify({
@@ -113,6 +118,9 @@ async function createFakeProvider(provider: FakeProvider): Promise<void> {
         base_url: `http://127.0.0.1:${provider.port}/v1`,
         connector: "prompt_app",
         timeout_seconds: 30,
+        // The run probes the app 64 times for safety; this double absorbs that,
+        // like a real provider does (the default 30/min would throttle it).
+        rate_limit_per_minute: 600,
         is_active: true,
       },
     });

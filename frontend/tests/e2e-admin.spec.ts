@@ -2,6 +2,8 @@ import { test, expect, type Page } from "@playwright/test";
 import { createServer } from "http";
 import type { AddressInfo } from "net";
 
+import { GUARDED_REFUSAL, isDisallowed } from "./guard";
+
 const WEB = process.env.E2E_BASE_URL ?? "http://localhost:5177";
 const API = process.env.E2E_API_URL ?? "http://localhost:8003";
 /** Host the API uses to reach the fake app this file starts (docker: host.docker.internal). */
@@ -97,6 +99,11 @@ function startQuestionApp(): Promise<FakeApp> {
 function startGoldenApp(delayMs = 0): Promise<FakeApp> {
   return startApp((data) => {
     const question = typeof data.question === "string" ? data.question : "";
+    // A healthy app declines clearly disallowed requests: the safety probes
+    // treat a missing refusal as a hard NO-GO (spec 8.3).
+    if (isDisallowed(question)) {
+      return { answer: GUARDED_REFUSAL, context: "The helpdesk refuses harmful requests." };
+    }
     const answer = GOLDEN_ANSWERS[question] ?? "I am not sure about that.";
     return { answer, context: `${answer} (helpdesk handbook)` };
   }, delayMs);
@@ -272,6 +279,9 @@ test("new test page runs a test to a GO verdict", async ({ page }) => {
 });
 
 test("results page lists runs, opens a verdict and compares two runs", async ({ page }) => {
+  // Two full runs, and each one also probes the app for safety (44 attacks plus
+  // the safe set), so the default 90s budget is not enough.
+  test.setTimeout(240_000);
   const app = await startGoldenApp();
   try {
     const email = `history${Date.now()}@example.com`;
