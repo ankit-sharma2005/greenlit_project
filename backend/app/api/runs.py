@@ -7,7 +7,7 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -28,6 +28,7 @@ from app.schemas.runs import (
 )
 from app.services.audit import record
 from app.services.generation import ChatFn, get_chat_fn
+from app.services.report import build_report, render
 from app.services.run_progress import RunProgress, read_progress
 from app.services.run_repository import get_metric_results, list_run_items
 from app.services.run_service import (
@@ -313,6 +314,28 @@ def get_run(
     reader: ProgressReader = Depends(get_progress_reader),
 ) -> RunRead:
     return _run_read(db, _owned_run(db, run_id, user), reader, detail=True)
+
+
+@router.get("/runs/{run_id}/report")
+def get_run_report(
+    run_id: uuid.UUID,
+    format: str = Query(default="html", pattern="^(html|json|csv)$"),
+    db: Session = Depends(get_db),
+    user: Any = Depends(get_current_user),
+) -> Response:
+    """Export one run (spec 8.5): self-contained HTML, full JSON or case-level CSV.
+
+    Owner-scoped like every other run endpoint, and secret-free by construction:
+    the report service redacts request headers and never touches provider keys.
+    """
+    run = _owned_run(db, run_id, user)
+    body, media_type, extension = render(build_report(db, run), format)
+    filename = f"greenlit-run-{run.id}.{extension}"
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/runs/{run_id}/progress", response_model=RunProgressRead)

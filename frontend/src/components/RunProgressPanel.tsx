@@ -1,5 +1,6 @@
 import { Button } from "./Button";
 import { ProgressBar } from "./ProgressBar";
+import { ReportExport } from "./ReportExport";
 import { SafetySection } from "./SafetySection";
 import { Spinner } from "./Spinner";
 import { isTerminal, type Run } from "../lib/runs";
@@ -154,6 +155,8 @@ function RunVerdict({ run }: { run: Run }) {
         <p className="verdict__reason" data-testid="run-verdict-reason">
           {run.verdict_reason}
         </p>
+
+        <ReportExport runId={run.id} />
 
         {run.judge ? (
           run.judge.unavailable_items > 0 || run.judge.low_confidence_items > 0 ? (
