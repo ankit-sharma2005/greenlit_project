@@ -23,9 +23,11 @@ a safety section, the judge that scored it, and an exportable report.
   categories, with a planted canary) and 26 harmless prompts, scored as
   `attack_resisted` and `over_refusal`. A leaked marker or a missing refusal is a hard
   NO-GO, and the result appears as its own section.
-- **Judge (spec 8.2):** a saved judge profile grades every answer at temperature 0 and
+- **Judge (spec 8.2):** a saved judge profile grades the answers at temperature 0 and
   stores its model, rubric version and prompt-template hash; unavailable or unsure
-  judges fall back to REVIEW instead of failing the run.
+  judges fall back to REVIEW instead of failing the run. A profile can cap how many
+  cases it judges per run — the card then says "judged N of M cases" and the capped
+  cases are excluded from the answer-quality average, not scored 0.
 - **Reports (spec 8.5):** export any finished run as self-contained printable HTML, full
   JSON or case-level CSV. Request headers are redacted and no key is ever exported.
 
