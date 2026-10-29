@@ -128,6 +128,10 @@ bash scripts/run-e2e.sh
 
 ## Known limitations
 
+- **The shipped defaults are not a deployment.** Change `APP_SECRET_KEY` and
+  `POSTGRES_PASSWORD` in `.env` before any real deployment; see README →
+  "Before you deploy or share this repo", which also covers the old `cookies.txt` that commit
+  `d953cff` once tracked.
 - **No email provider.** Password reset works through `POST /auth/password-reset/request`,
   which returns a `debug_token` only in development; production needs an email integration.
 - **No UI for some endpoints that exist:** password reset and user administration are

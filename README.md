@@ -74,6 +74,22 @@ Health checks: `GET /healthz` (liveness) and `GET /readyz` (Postgres + Redis rea
 changing a role is an admin API call for now (`PATCH /api/v1/users/{id}/role`, see
 `/docs`) — there is no user-administration screen yet.
 
+## Before you deploy or share this repo
+
+- **Change the default secret key and database password in `.env` first.** The compose
+  defaults (`APP_SECRET_KEY`, `POSTGRES_PASSWORD`) are public in this repo; `APP_SECRET_KEY`
+  encrypts provider keys at rest, so a known value means readable keys.
+- **Never commit `.env`, cookie jars, tokens or API keys.** `.gitignore` already ignores
+  `.env`, `.env.*` (except `.env.example`), `*.cookies.txt` and `*.log`; check `git status`
+  before you push and keep real credentials in the environment, not in the tree.
+- **Free-tier model providers see what you send them.** Dataset generation, the prompt-app
+  entry point and the judge all send prompts (and case text) to the provider you configure,
+  and free tiers may train on it — do not paste private or customer data into a test set.
+- **One old dev session jar was committed once.** `cookies.txt` (added in commit `d953cff`,
+  removed later) held expired local session tokens; the file is gone from the tree but still
+  in that commit's history. If this repo is ever made public, rewrite the history with
+  `git filter-repo --path cookies.txt --invert-paths`.
+
 ## Try the demo (no model needed)
 
 The repo ships a college-helpdesk demo: the same app in a healthy and a broken flavour,
