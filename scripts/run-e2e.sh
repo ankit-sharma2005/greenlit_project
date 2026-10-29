@@ -16,79 +16,89 @@
 
 set -euo pipefail
 
-if command -v winpty >/dev/null 2>&1; then
-  SUDO=winpty
-elif command -v sudo >/dev/null 2>&1; then
-  SUDO=sudo
-fi
-
 ROOTDIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOTDIR"
 
-E2E_BASE_URL="${E2E_BASE_URL:-http://localhost:5177}"
-E2E_API_URL="${E2E_API_URL:-http://localhost:8003}"
-E2E_API_BIND="${E2E_API_BIND:-0.0.0.0}"
-E2E_WEB_BIND="${E2E_WEB_BIND:-0.0.0.0}"
-API_PORT="${E2E_API_PORT:-8003}"
-WEB_PORT="${E2E_WEB_PORT:-5177}"
+# Every port here is deliberately different from the dev stack in
+# docker-compose.yml (5436/6382/8003/5177), so a run never touches it.
+API_PORT="${E2E_API_PORT:-8103}"
+WEB_PORT="${E2E_WEB_PORT:-5277}"
+PG_PORT="${E2E_POSTGRES_PORT:-5536}"
+REDIS_PORT="${E2E_REDIS_PORT:-6482}"
 DEMO_GOOD_PORT="${E2E_DEMO_GOOD_PORT:-9501}"
 DEMO_BROKEN_PORT="${E2E_DEMO_BROKEN_PORT:-9502}"
+E2E_BASE_URL="${E2E_BASE_URL:-http://localhost:${WEB_PORT}}"
+E2E_API_URL="${E2E_API_URL:-http://localhost:${API_PORT}}"
+E2E_API_BIND="${E2E_API_BIND:-0.0.0.0}"
+E2E_WEB_BIND="${E2E_WEB_BIND:-0.0.0.0}"
+COMPOSE_PROJECT="greenlit-e2e"
+
 export E2E_BASE_URL
 export E2E_API_URL
 export E2E_API_BIND
 export E2E_WEB_BIND
 export VITE_API_BASE_URL="http://localhost:${API_PORT}"
 
+# The API, worker and migrations all run from backend/ on the host, so they need
+# the e2e datastores rather than the dev ones. Real environment beats the .env
+# file, so these win over whatever backend/.env holds.
+export DATABASE_URL="postgresql+psycopg://greenlit:greenlit@localhost:${PG_PORT}/greenlit"
+export REDIS_URL="redis://localhost:${REDIS_PORT}/0"
+export WEB_ORIGIN="http://localhost:${WEB_PORT}"
+export APP_ENV="development"
+
 PYTHON="${PYTHON:-${ROOTDIR}/backend/runner/Scripts/python.exe}"
 TESTS="${TESTS:-.}"
 
+PIDS=()
+
 log() { echo "==> $*" >&2; }
 
+# Only the e2e project is torn down, by name. The dev stack in
+# docker-compose.yml (project "greenlit") is never mentioned here, so its
+# containers and its volume survive a run untouched.
 cleanup() {
-  log "Tearing down the disposable e2e stack"
-  if [ -n "${COMPOSE_PID:-}" ]; then
-    if kill -0 "$COMPOSE_PID" 2>/dev/null; then
-      log "Stopping Docker Compose"
-      kill "$COMPOSE_PID" 2>/dev/null || true
-      wait "$COMPOSE_PID" 2>/dev/null || true
-    fi
-  fi
   log "Stopping host processes"
-  for pid in "${PIDS[@]}"; do
+  for pid in "${PIDS[@]:-}"; do
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
       kill "$pid" 2>/dev/null || true
     fi
   done
   wait 2>/dev/null || true
+
+  if [ -z "${SKIP_STACK:-}" ] && [ -n "${COMPOSE_FILE:-}" ]; then
+    log "Removing the disposable ${COMPOSE_PROJECT} stack"
+    docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" down -v --remove-orphans \
+      >>"${ROOTDIR}/e2e-docker.log" 2>&1 || true
+  fi
 }
 trap cleanup EXIT
 
 if [ -z "${SKIP_STACK:-}" ]; then
-  log "Bringing up the disposable stack (Postgres + Redis)"
+  log "Bringing up the disposable stack (Postgres + Redis, project ${COMPOSE_PROJECT})"
 
-  # The Compose file is the env-friendly version of the project's normal stack.
-  COMPOSE_FILE="${ROOTDIR}/docker-compose.yml"
-  if [ ! -f "$COMPOSE_FILE" ]; then
-    COMPOSE_FILE="${ROOTDIR}/docker-compose.e2e.yml"
-  fi
+  # Only the datastores: docker-compose.e2e.yml has no api/worker/web services,
+  # so this can never rebuild or restart the stack used in the browser.
+  COMPOSE_FILE="${ROOTDIR}/docker-compose.e2e.yml"
 
   if [ ! -f "$COMPOSE_FILE" ]; then
-    echo "No docker-compose.yml found in ${ROOTDIR}; cannot start the local stack." >&2
+    echo "No docker-compose.e2e.yml found in ${ROOTDIR}; cannot start the local stack." >&2
     echo "Set SKIP_STACK=1 and provide E2E_BASE_URL / E2E_API_URL to target an existing stack." >&2
     exit 1
   fi
 
-  "$SUDO" docker compose -f "$COMPOSE_FILE" up -d --wait --wait-timeout 120 >"${ROOTDIR}/e2e-docker.log" 2>&1 &
-  COMPOSE_PID=$!
-  log "Docker Compose starting in background (pid ${COMPOSE_PID})"
+  # Drop any leftovers from an interrupted run so the database starts empty:
+  # the first account registered must be the admin.
+  docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" down -v --remove-orphans \
+    >"${ROOTDIR}/e2e-docker.log" 2>&1 || true
 
-  # Give Compose time to pull and start Postgres/Redis
-  for i in $(seq 1 90); do
-    if grep -qi 'healthy\|started\|created' "${ROOTDIR}/e2e-docker.log" 2>/dev/null; then
-      break
-    fi
-    sleep 2
-  done
+  E2E_POSTGRES_PORT="$PG_PORT" E2E_REDIS_PORT="$REDIS_PORT" \
+    docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" up -d --wait --wait-timeout 180 \
+    >>"${ROOTDIR}/e2e-docker.log" 2>&1 || {
+      echo "The e2e datastores did not become healthy; see ${ROOTDIR}/e2e-docker.log" >&2
+      tail -n 30 "${ROOTDIR}/e2e-docker.log" >&2
+      exit 1
+    }
 
   log "Applying migrations to the fresh database"
   (cd backend && exec "$PYTHON" -m alembic upgrade head)
@@ -110,6 +120,14 @@ if [ -z "${SKIP_STACK:-}" ]; then
   log "Starting API on :${API_PORT}"
   (cd backend && exec "$PYTHON" -m uvicorn app.main:app --host "$E2E_API_BIND" --port "$API_PORT") \
     >"${ROOTDIR}/e2e-api.log" 2>&1 &
+  PIDS+=($!)
+
+  # Runs never leave `queued` without a worker, and the prefork pool cannot take
+  # tasks on Windows (billiard semaphores fail with PermissionError), so the host
+  # worker uses solo. See DECISIONS.md D6.7.
+  log "Starting the Celery worker (--pool=solo)"
+  (cd backend && exec "$PYTHON" -m celery -A app.celery_app.celery worker --loglevel=INFO --pool=solo) \
+    >"${ROOTDIR}/e2e-worker.log" 2>&1 &
   PIDS+=($!)
 
   log "Starting web on :${WEB_PORT} (VITE_API_BASE_URL=http://localhost:${API_PORT})"
@@ -147,13 +165,35 @@ if [ -z "${SKIP_STACK:-}" ]; then
     fi
   done
   log "Demo helpdesk ready at ${DEMO_APP_URL} and ${DEMO_APP_BROKEN_URL}"
+
+  # A worker that dies on startup would turn every run into a timeout, so fail
+  # here with the log rather than 90 seconds later inside a test.
+  for i in $(seq 1 30); do
+    if grep -q 'ready' "${ROOTDIR}/e2e-worker.log" 2>/dev/null; then
+      break
+    fi
+    sleep 1
+  done
+  if ! grep -q 'ready' "${ROOTDIR}/e2e-worker.log" 2>/dev/null; then
+    echo "The Celery worker did not become ready; see ${ROOTDIR}/e2e-worker.log" >&2
+    tail -n 30 "${ROOTDIR}/e2e-worker.log" >&2
+    exit 1
+  fi
 fi
 
 log "Running the whole Playwright suite against ${E2E_BASE_URL} (fresh database)"
 cd frontend
-npm run e2e -- --project="${TESTS}"
+if [ "$TESTS" = "." ]; then
+  npm run e2e
+else
+  npm run e2e -- "$TESTS"
+fi
 
 log "E2E suite finished. Logs:"
 for f in "${ROOTDIR}"/e2e-*.log; do
+  # Skip this script's own output: tailing it would copy itself into itself.
+  case "$f" in
+    */e2e-run*.log) continue ;;
+  esac
   [ -f "$f" ] && echo "--- $f ---" && tail -n 30 "$f"
 done

@@ -1,0 +1,38 @@
+# Disposable datastores for the Playwright suite (scripts/run-e2e.sh).
+#
+# This is a separate Compose project with its own ports and its own volume, so a
+# run never restarts, rebuilds or empties the stack you use in the browser. Only
+# Postgres and Redis live here: the API, the Celery worker, the Vite dev server
+# and the two demo helpdesk servers all run as host processes, because the suite
+# drives them directly and the demo apps have to be reachable on 127.0.0.1.
+name: greenlit-e2e
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: greenlit
+      POSTGRES_PASSWORD: greenlit
+      POSTGRES_DB: greenlit
+    ports:
+      - "${E2E_POSTGRES_PORT:-5536}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U greenlit -d greenlit"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${E2E_REDIS_PORT:-6482}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  postgres-data:
