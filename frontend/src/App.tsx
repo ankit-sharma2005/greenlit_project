@@ -1,6 +1,7 @@
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 
 import { Layout } from "./components/Layout";
+import { CalibrationPage } from "./pages/CalibrationPage";
 import { RequireAuth } from "./components/RequireAuth";
 import { LoginPage } from "./pages/LoginPage";
 import { NewTestPage } from "./pages/NewTestPage";
@@ -21,6 +22,7 @@ export function App() {
           <Route element={<Layout />}>
             <Route index element={<NewTestPage />} />
             <Route path="results" element={<ResultsPage />} />
+            <Route path="calibration" element={<CalibrationPage />} />
             <Route path="test-chat" element={<TestChatPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="*" element={<NotFoundPage />} />

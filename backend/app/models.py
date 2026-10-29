@@ -432,6 +432,42 @@ class JudgeProfile(TimestampMixin, Base):
     is_selected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
+class HumanLabel(TimestampMixin, Base):
+    """One reviewer's verdict on one case, for the review queue and calibration.
+
+    A reviewer labels a case at most once: submitting again replaces the label
+    and the note, so a correction never creates a second opinion from the same
+    person (which would quietly skew Cohen's kappa).
+    """
+
+    __tablename__ = "human_labels"
+    __table_args__ = (
+        UniqueConstraint("reviewer_id", "run_item_id", name="uq_human_labels_reviewer_item"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("runs.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    run_item_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("run_items.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    reviewer_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    label: Mapped[str] = mapped_column(String(10), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class RunBaseline(TimestampMixin, Base):
     """The run a project compares against for one dataset version (spec 8.5).
 
@@ -482,6 +518,7 @@ __all__ = [
     "DatasetColumnMapping",
     "DatasetItem",
     "DatasetVersion",
+    "HumanLabel",
     "JudgeProfile",
     "MetricResultRow",
     "PasswordReset",

@@ -12,6 +12,7 @@ const THEME_STORAGE_KEY = "greenlit-theme";
 const NAV_ITEMS = [
   { to: "/", label: "New Test", end: true },
   { to: "/results", label: "Results", end: false },
+  { to: "/calibration", label: "Calibration", end: false },
   { to: "/test-chat", label: "Test Chat", end: false },
   { to: "/settings", label: "Settings", end: false },
 ];
