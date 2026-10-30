@@ -21,7 +21,11 @@ a safety section, the judge that scored it, and an exportable report.
   a Celery worker with live progress and cancel. A run snapshots its settings, so
   changing a provider later never rewrites history.
 - **Scoring:** criteria profiles with weights, thresholds and hard gates; metrics that
-  were not measured are reported as **not instrumented**, never as zero.
+  were not measured are reported as **not instrumented**, never as zero. **Settings →
+  Criteria** shows the engine's real numbers read-only: a No-Go / Review / Go scale built
+  from the 0.60 and 0.80 thresholds, every metric with its weight, group and hard-gate
+  bar, the five decision rules in the order they run, and the not-instrumented rule.
+  Editing criteria is not supported yet.
 - **Operations:** every run also reports p50/p95 latency, error and timeout rates and
   token totals, on the verdict card and in the exports. An estimate of cost is shown only
   when token prices are configured for the provider; otherwise it says "not configured".

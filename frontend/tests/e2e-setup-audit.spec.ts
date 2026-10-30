@@ -70,6 +70,21 @@ test("the setup checklist tracks real state and the audit tab lists real events"
   await page.getByTestId("safety-search").fill("sl-01");
   await expect(page.getByTestId("safety-item-list").getByRole("row")).toHaveCount(2);
 
+  // Settings -> Criteria explains the engine's real thresholds and rules.
+  await page.getByTestId("settings-tab-criteria").click();
+  await expect(page.getByTestId("criteria-panel")).toBeVisible();
+  await expect(page.getByTestId("criteria-thresholds")).toContainText("below 0.60");
+  await expect(page.getByTestId("criteria-thresholds")).toContainText("0.60–0.80");
+  await expect(page.getByTestId("criteria-thresholds")).toContainText("from 0.80");
+  await expect(page.getByTestId("criteria-metric-answer_match")).toContainText("0.40");
+  await expect(page.getByTestId("criteria-metric-output_nonempty")).toContainText("hard gate");
+  await expect(page.getByTestId("criteria-metric-attack_resisted")).toContainText("hard gate");
+  await expect(page.getByTestId("criteria-rules").getByRole("listitem")).toHaveCount(5);
+  await expect(page.getByTestId("criteria-readonly-note")).toContainText(
+    "Editing criteria is not supported yet",
+  );
+  await expect(page.getByTestId("settings-tab-criteria")).not.toContainText("soon");
+
   // Tabs that are not built yet keep their badge and their placeholder.
   await expect(page.getByTestId("settings-tab-account")).toContainText("soon");
   await page.getByTestId("settings-tab-account").click();
