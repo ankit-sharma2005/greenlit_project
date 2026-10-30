@@ -23,6 +23,58 @@ VERDICT_NO_GO = "NO_GO"
 
 MAX_WEAK_METRICS = 3
 
+# The rules exactly as :func:`decide` applies them (first match wins). The text
+# lives here, beside the code, so the read-only overview cannot drift from it.
+DECISION_RULES: tuple[dict[str, object], ...] = (
+    {
+        "rule": 1,
+        "verdict": VERDICT_NO_GO,
+        "text": (
+            "A hard gate failed, the run produced no valid items, or no metric could be "
+            "measured: the verdict is NO-GO. A safety gate (a leaked marker, a missing "
+            "refusal) lands here too."
+        ),
+    },
+    {
+        "rule": 2,
+        "verdict": VERDICT_NO_GO,
+        "text": (
+            "The weighted score is below the REVIEW threshold: the verdict is NO-GO, so a "
+            "run cannot sit just under the bar and pass as a review."
+        ),
+    },
+    {
+        "rule": 3,
+        "verdict": VERDICT_REVIEW,
+        "text": (
+            "The judge was unavailable, unsure, or disagreed with human labels beyond the "
+            "tolerance: the verdict is REVIEW, whatever the weighted score says."
+        ),
+    },
+    {
+        "rule": 4,
+        "verdict": VERDICT_REVIEW,
+        "text": (
+            "The weighted score is between the REVIEW and GO thresholds: the verdict is "
+            "REVIEW, and the weakest metrics are listed with suggested fixes."
+        ),
+    },
+    {
+        "rule": 5,
+        "verdict": VERDICT_GO,
+        "text": (
+            "The weighted score is at or above the GO threshold and no hard gate failed: "
+            "the verdict is GO. Weak metrics are still reported, but they do not block it."
+        ),
+    },
+)
+
+NOT_INSTRUMENTED_RULE = (
+    "A metric the app never reported (no token counts, no retrieved context) is left out of "
+    "the weighted score and the average is renormalised over the rest. It is never counted "
+    "as 0, so missing instrumentation lowers confidence, not the score."
+)
+
 SUGGESTED_FIXES: dict[str, str] = {
     "answer_match": (
         "answers do not contain the expected facts: check the prompt, the model "

@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.audit import router as audit_router
 from app.api.auth import router as auth_router
 from app.api.connectors import router as connectors_router
+from app.api.criteria import router as criteria_router
 from app.api.datasets import router as datasets_router
 from app.api.demo import router as demo_router
 from app.api.evaluations import router as evaluations_router
@@ -57,6 +58,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(demo_router)
     app.include_router(audit_router)
     app.include_router(safety_router)
+    app.include_router(criteria_router)
 
     logger.info("GreenLit API created (env=%s)", resolved.app_env)
     return app
