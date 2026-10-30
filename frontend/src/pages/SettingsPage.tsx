@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { AuditPanel } from "../components/AuditPanel";
 import { ComingSoon } from "../components/ComingSoon";
+import { CriteriaPanel } from "../components/CriteriaPanel";
 import { DatasetsPanel } from "../components/DatasetsPanel";
 import { JudgePanel } from "../components/JudgePanel";
 import { ProvidersPanel } from "../components/ProvidersPanel";
@@ -20,7 +21,14 @@ const SECTIONS = [
 ];
 
 // Only tabs with a working panel are listed here; everything else keeps "soon".
-const AVAILABLE = new Set(["Datasets", "Providers and models", "Judge", "Safety", "Audit log"]);
+const AVAILABLE = new Set([
+  "Datasets",
+  "Providers and models",
+  "Criteria",
+  "Judge",
+  "Safety",
+  "Audit log",
+]);
 
 export function SettingsPage() {
   const [active, setActive] = useState("Datasets");
@@ -88,6 +96,15 @@ export function SettingsPage() {
                 confidence handling that decide when a verdict needs a human.
               </p>
               <JudgePanel />
+            </>
+          ) : active === "Criteria" ? (
+            <>
+              <h2>Criteria</h2>
+              <p className="page__description" style={{ marginBottom: "var(--space-4)" }}>
+                How a run is scored and how its verdict is decided: the weights, the hard gates and
+                the two thresholds, straight from the decision engine.
+              </p>
+              <CriteriaPanel />
             </>
           ) : active === "Safety" ? (
             <>
