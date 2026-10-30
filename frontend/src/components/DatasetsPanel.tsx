@@ -5,6 +5,7 @@ import {
   approveVersion,
   deleteDataset,
   generateVersion,
+  generateVersionFromSource,
   listDatasets,
   listItems,
   listProviders,
@@ -40,6 +41,7 @@ export function DatasetsPanel() {
   const [generateProviderId, setGenerateProviderId] = useState("");
   const [generateCount, setGenerateCount] = useState(20);
   const [sourceText, setSourceText] = useState("");
+  const [sourceFile, setSourceFile] = useState<File | null>(null);
 
   const [preview, setPreview] = useState<{ versionNo: number; items: DatasetItem[] } | null>(null);
 
@@ -121,16 +123,26 @@ export function DatasetsPanel() {
     }
     setError(null);
     setNotice(null);
+    if (sourceFile && sourceFile.size > 5 * 1024 * 1024) {
+      setError("Source files must be 5 MB or smaller.");
+      return;
+    }
     setBusy(true);
     try {
-      const version = await generateVersion(selected.id, {
+      const request = {
         provider_id: generateProviderId,
         count: generateCount,
         source_text: sourceText.trim() ? sourceText.trim() : undefined,
-      });
+      };
+      const version = sourceFile
+        ? await generateVersionFromSource(selected.id, request, sourceFile)
+        : await generateVersion(selected.id, request);
       setNotice(
         `Draft version ${version.version_no} generated with ${version.row_count} cases. ` +
-          "Review the preview, then approve it to make it usable in runs.",
+          "Review the preview, then approve it to make it usable in runs." +
+          (version.columns_snapshot?.source_truncated === true
+            ? " The source was longer than the passage limit, so later text was omitted."
+            : ""),
       );
       setVersions(await listVersions(selected.id));
       const items = await listItems(selected.id, version.version_no);
@@ -234,7 +246,12 @@ export function DatasetsPanel() {
         </p>
       )}
       {notice && (
-        <div className="notice" role="status" style={{ marginTop: "var(--space-4)" }}>
+        <div
+          className="notice"
+          role="status"
+          data-testid="datasets-notice"
+          style={{ marginTop: "var(--space-4)" }}
+        >
           {notice}
         </div>
       )}
@@ -279,7 +296,11 @@ export function DatasetsPanel() {
                   </td>
                   <td>
                     <div className="datasets__actions">
-                      <Button variant="secondary" onClick={() => void openDataset(dataset)}>
+                      <Button
+                        variant="secondary"
+                        onClick={() => void openDataset(dataset)}
+                        data-testid="open-dataset"
+                      >
                         Open
                       </Button>
                       <Button variant="secondary" onClick={() => void handleDelete(dataset)}>
@@ -365,6 +386,7 @@ export function DatasetsPanel() {
               </label>
               <select
                 id="generate-provider"
+                data-testid="generate-provider"
                 value={generateProviderId}
                 onChange={(e) => setGenerateProviderId(e.target.value)}
                 disabled={busy}
@@ -382,6 +404,7 @@ export function DatasetsPanel() {
               </label>
               <input
                 id="generate-count"
+                data-testid="generate-count"
                 type="number"
                 min={1}
                 max={100}
@@ -390,22 +413,53 @@ export function DatasetsPanel() {
                 disabled={busy}
               />
               <label className="form__label" htmlFor="generate-source">
-                Optional source text (helps the model write better questions):
+                Optional source text (up to 50,000 characters):
               </label>
               <textarea
                 id="generate-source"
+                data-testid="generate-source"
                 rows={3}
                 value={sourceText}
-                onChange={(e) => setSourceText(e.target.value)}
+                maxLength={50_000}
+                onChange={(e) => {
+                  setSourceText(e.target.value);
+                  if (e.target.value) {
+                    setSourceFile(null);
+                    const fileInput = document.getElementById(
+                      "generate-source-file",
+                    ) as HTMLInputElement | null;
+                    if (fileInput) fileInput.value = "";
+                  }
+                }}
                 placeholder="Paste notes, a policy, or a product description…"
                 disabled={busy}
               />
+              <label className="form__label" htmlFor="generate-source-file">
+                Or upload a source file (PDF, TXT or MD; 5 MB maximum):
+              </label>
+              <input
+                id="generate-source-file"
+                data-testid="generate-source-file"
+                type="file"
+                accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
+                onChange={(e) => {
+                  const picked = e.target.files?.[0] ?? null;
+                  setSourceFile(picked);
+                  if (picked) setSourceText("");
+                }}
+                disabled={busy}
+              />
+              <p className="card__hint">
+                Sources are split into at most 20 passages. Text beyond that limit is omitted and
+                reported after generation. Scanned PDFs without selectable text cannot be used.
+              </p>
               <div className="datasets__actions" style={{ marginTop: "var(--space-3)" }}>
                 <Button
                   type="submit"
                   variant="primary"
                   loading={busy}
                   disabled={!generateProviderId}
+                  data-testid="generate-submit"
                 >
                   {busy ? <Spinner size="sm" label="Generating" /> : "Generate draft"}
                 </Button>
@@ -463,6 +517,7 @@ export function DatasetsPanel() {
                         <Button
                           variant="primary"
                           onClick={() => void handleApprove(version.version_no)}
+                          data-testid="approve-version"
                         >
                           Approve
                         </Button>
@@ -475,7 +530,7 @@ export function DatasetsPanel() {
           </table>
 
           {preview && (
-            <div style={{ marginTop: "var(--space-5)" }}>
+            <div style={{ marginTop: "var(--space-5)" }} data-testid="dataset-preview">
               <h4>Preview — version {preview.versionNo}</h4>
               {preview.items.length === 0 ? (
                 <p className="card__hint">This version has no items.</p>
@@ -486,7 +541,7 @@ export function DatasetsPanel() {
                       <th scope="col">#</th>
                       <th scope="col">Question</th>
                       <th scope="col">Answer</th>
-                      <th scope="col">Context</th>
+                      <th scope="col">Context / reference passage</th>
                       <th scope="col">Category</th>
                     </tr>
                   </thead>
@@ -496,7 +551,13 @@ export function DatasetsPanel() {
                         <td>{item.row_index}</td>
                         <td>{String(item.data.question ?? "—")}</td>
                         <td>{String(item.data.answer ?? "—")}</td>
-                        <td>{item.data.context ? String(item.data.context) : "—"}</td>
+                        <td data-testid="preview-passage">
+                          {item.data.reference_context
+                            ? String(item.data.reference_context)
+                            : item.data.context
+                              ? String(item.data.context)
+                              : "—"}
+                        </td>
                         <td>{item.data.category ? String(item.data.category) : "—"}</td>
                       </tr>
                     ))}

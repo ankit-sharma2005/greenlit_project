@@ -128,6 +128,8 @@ export interface FakeProviderOptions {
   answers?: Record<string, string>;
   /** What to reply when the request is the judge's rubric prompt. */
   judgeReply?: { score: number; reason: string; confidence: number };
+  /** What to reply when Dataset Studio asks for generated cases. */
+  generationReply?: string;
 }
 
 /**
@@ -170,9 +172,12 @@ export function startFakeProvider(options: FakeProviderOptions = {}): Promise<Fa
         const userMessages = messages.filter((message) => message.role === "user");
         const question = userMessages[userMessages.length - 1]?.content ?? "";
         const isJudge = system.includes("Reply with ONLY a JSON object");
+        const isGeneration = system.includes("You write evaluation test cases");
         let content: string;
         if (isJudge) {
           content = JSON.stringify(judgeReply);
+        } else if (isGeneration && options.generationReply !== undefined) {
+          content = options.generationReply;
         } else if (isDisallowed(question)) {
           content = GUARDED_REFUSAL;
         } else {

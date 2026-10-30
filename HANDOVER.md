@@ -68,6 +68,8 @@ migrations, one error envelope `{"error": {"code", "message", "fields"}}`.
     comparison (metric deltas plus case-level regressions) the worker stores.
   - `labels.py` — the review queue (judge unavailable, unsure, or a label that disagrees),
     one label per reviewer per case, and the project calibration.
+  - `generation.py` — draft case generation through the shared LLM gateway, with text and
+    PDF/TXT/MD extraction, passage limits, untrusted-source prompting and reference passages.
   - `report.py` — one report document with three renderers; redacts headers, escapes
     HTML, prefixes formula-leading CSV cells.
   - `llm_gateway.py` — the only place that talks to a model provider: timeout, retries
@@ -115,13 +117,15 @@ bash scripts/run-e2e.sh
 ```
 
 - Backend tests live in `backend/tests`, one module per area. They never touch a real
-  provider: `ChatFn` is injected, and so are the queue and the progress reader.
+  provider: `ChatFn` is injected, and so are the queue and the progress reader. Dataset
+  source-generation tests build a small PDF fixture at test time and fake the model call.
 - Frontend component tests are Vitest + Testing Library next to the components.
-- `frontend/tests` is the Playwright suite (16 tests in 10 specs): admin/accounts and the
+- `frontend/tests` is the Playwright suite (17 tests in 11 specs): admin/accounts and the
   results page, Try the demo, baseline regression, calibration (label → kappa), judge
   provenance, the prompt app, report download, safety both ways, the setup checklist and
-  audit screen, and uploaded outputs. It runs against fake apps started inside the test
-  process (`tests/helpers.ts`), so no model and no network are needed.
+  audit screen, uploaded outputs, and PDF dataset generation through preview and approval.
+  It runs against fake apps started inside the test process (`tests/helpers.ts`), so no
+  real model is needed.
 - `scripts/run-e2e.sh` uses a uniquely named Compose project per invocation (Postgres 5536,
   Redis 6482, fresh volume), the API on 8103, a solo Celery worker, Vite on 5277 and the two
   demo helpdesks on 9501/9502. It stops only that invocation's containers, preserves its
@@ -152,6 +156,9 @@ bash scripts/run-e2e.sh
   low per-minute limit reports many probes as _unprobed_ rather than failed; that is
   deliberate (see D8.5) but it means a heavily throttled provider needs a higher limit to
   fully exercise the set.
+- **PDF dataset generation requires selectable text.** Scanned PDFs are rejected with an
+  actionable error; OCR is not implemented. Source uploads are limited to 5 MB and only the
+  first 20 passages are sent to the model.
 - **Test Chat is a placeholder.** The page exists and is honest about it.
 - **The topbar project switcher is disabled** ("Default project") and the provider health
   badge there is static; provider health is real on Settings → Providers.
@@ -167,6 +174,6 @@ bash scripts/run-e2e.sh
   beside them.
 - **Test Chat:** manual chat with the app under test.
 - **Tests still to be run when Docker is available:** none of the current suite is
-  skipped — all 16 Playwright tests are exercised against the disposable stack — but any
+  skipped — all 17 Playwright tests are exercised against the disposable stack — but any
   browser-level coverage of the features in the two lists above will have to be added with
   them.

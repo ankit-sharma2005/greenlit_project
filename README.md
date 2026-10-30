@@ -12,8 +12,11 @@ a safety section, the judge that scored it, and an exportable report.
   The first account to register becomes the admin.
 - **Providers:** Ollama and any OpenAI-compatible endpoint, with a connection test,
   encrypted keys and rate limits.
-- **Datasets:** upload a CSV/JSON golden set (or have the model generate one), then
-  approve a version. Every version stores a hash.
+- **Datasets:** upload a CSV/JSON golden set, then approve a version. Dataset Studio can
+  also generate draft cases from pasted text or PDF/TXT/MD sources (up to 5 MB); source
+  text is split into at most 20 passages and each generated case stores its supporting
+  passage as `reference_context`. Review and approve generated versions before running them.
+  Every version stores a hash.
 - **Runs:** three entry points (HTTP endpoint, prompt app, uploaded outputs), executed in
   a Celery worker with live progress and cancel. A run snapshots its settings, so
   changing a provider later never rewrites history.
@@ -101,6 +104,8 @@ changing a role is an admin API call for now (`PATCH /api/v1/users/{id}/role`, s
 - **Free-tier model providers see what you send them.** Dataset generation, the prompt-app
   entry point and the judge all send prompts (and case text) to the provider you configure,
   and free tiers may train on it — do not paste private or customer data into a test set.
+  Source files are treated as untrusted prompt data; scanned PDFs without selectable text
+  are rejected rather than OCR'd.
 - **One old dev session jar was committed once.** `cookies.txt` (added in commit `d953cff`,
   removed later) held expired local session tokens; the file is gone from the tree but still
   in that commit's history. If this repo is ever made public, rewrite the history with
@@ -219,8 +224,8 @@ project and therefore a fresh database:
   the disposable stack runs the API on the host and "Try the demo" needs somewhere to
   point;
 - Playwright runs the whole suite in `frontend/tests` (`e2e-admin`, `e2e-baseline`,
-  `e2e-calibration`, `e2e-demo`, `e2e-judge`, `e2e-prompt-app`, `e2e-report`,
-  `e2e-safety`, `e2e-setup-audit`, `e2e-upload-outputs`) against
+  `e2e-calibration`, `e2e-dataset-generation`, `e2e-demo`, `e2e-judge`, `e2e-prompt-app`,
+  `e2e-report`, `e2e-safety`, `e2e-setup-audit`, `e2e-upload-outputs`) against
   `http://localhost:5277` (`E2E_BASE_URL`), then stops only that project with
   `docker compose down`; its volume is preserved.
 

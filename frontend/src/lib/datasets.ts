@@ -106,6 +106,18 @@ export function generateVersion(id: string, body: GenerationRequest): Promise<Da
   return apiRequest(`/api/v1/datasets/${id}/generate`, { method: "POST", body });
 }
 
+export function generateVersionFromSource(
+  id: string,
+  body: Omit<GenerationRequest, "source_text">,
+  file: File,
+): Promise<DatasetVersion> {
+  const form = new FormData();
+  form.set("provider_id", body.provider_id);
+  form.set("count", String(body.count));
+  form.set("source_file", file);
+  return apiUpload(`/api/v1/datasets/${id}/generate-from-source`, form);
+}
+
 export function deleteDataset(id: string): Promise<void> {
   return apiRequest(`/api/v1/datasets/${id}`, { method: "DELETE" });
 }

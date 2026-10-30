@@ -46,6 +46,7 @@ export function SettingsPage() {
               key={section.name}
               type="button"
               aria-current={active === section.name}
+              data-testid={`settings-tab-${section.name.toLowerCase().replace(/[^a-z]+/g, "-")}`}
               onClick={() => setActive(section.name)}
             >
               {section.name}
