@@ -131,7 +131,8 @@ bash scripts/run-e2e.sh
   suite is currently 115 tests in 22 files.
 - `frontend/tests` is the Playwright suite (17 tests in 11 specs): admin/accounts and the
   results page, Try the demo, baseline regression, calibration (label → kappa), judge
-  provenance, the prompt app (including the priced cost estimate on the verdict),
+  provenance, the prompt app (prices typed into the provider's row in Settings, then
+  the priced cost estimate on the verdict),
   report download, safety both ways, the setup checklist and audit screen, uploaded
   outputs, and PDF dataset generation through preview and approval.
   It runs against fake apps started inside the test process (`tests/helpers.ts`), so no

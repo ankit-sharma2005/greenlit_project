@@ -174,13 +174,23 @@ test("prompt app entry point runs a prompt to a verdict", async ({ page }) => {
     });
     await selectJudgeProfile(page, judgeProfileId);
 
-    // Token prices make the verdict show a cost estimate instead of "not configured".
-    const priced = await page.request.patch(`${API}/api/v1/providers/${providerId}`, {
-      data: {
-        metadata: { price_per_1k_tokens_in: 0.01, price_per_1k_tokens_out: 0.02 },
-      },
-    });
-    expect(priced.status(), await priced.text()).toBe(200);
+    // Token prices are set where a user sets them: the provider's own row in
+    // Settings. They make the verdict show a cost estimate, not "not configured".
+    await page.goto(`${WEB}/settings`);
+    await page.getByTestId("settings-tab-providers-and-models").click();
+    const priceRow = page.getByRole("row").filter({ hasText: "Fake Prompt App Provider" });
+    // A provider nobody priced says so, rather than claiming the run was free.
+    await expect(priceRow.getByTestId("provider-price-summary")).toHaveText("Tokens: not set");
+    await priceRow.getByTestId("provider-price-edit").click();
+    await page.getByTestId("provider-price-edit-in").fill("not-a-number");
+    await page.getByTestId("provider-price-save").click();
+    await expect(page.getByTestId("provider-price-error")).toContainText("Enter a number");
+    await page.getByTestId("provider-price-edit-in").fill("0.01");
+    await page.getByTestId("provider-price-edit-out").fill("0.02");
+    await page.getByTestId("provider-price-save").click();
+    await expect(priceRow.getByTestId("provider-price-summary")).toHaveText(
+      "Tokens: in 0.01 / out 0.02 per 1K",
+    );
 
     const datasetName = `Prompt Golden ${Date.now()}`;
     await uploadApprovedDataset(page, datasetName);
