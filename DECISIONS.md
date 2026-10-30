@@ -510,3 +510,14 @@ Criteria, Safety, Account, Preferences) keep the "soon" badge.
 `bash scripts/run-e2e.sh tests/e2e-baseline.spec.ts` runs one spec on the same disposable
 stack, for machines where the full 16-test suite takes longer than one command. This is a
 developer convenience: the suite still runs whole in CI.
+
+### D9.8 The one-click demo measures quality, not host latency
+Try the demo runs the quality test type only. Its purpose is to show a reproducible GO and
+NO-GO with the shipped answers; measuring host timing made the sample score depend on machine
+load. Safety and operations remain selectable on normal runs and have their own coverage.
+
+### D9.9 The CI runner uses the standard library and an explicit live demo check
+`scripts/greenlit_ci.py` stores the login cookies in a standard-library cookie jar, submits
+`/quick-test`, polls `/runs/{id}` to a terminal verdict and maps GO/NO_GO/REVIEW and request
+errors to the documented exit codes. Unit tests use a local fake HTTP server; the disposable
+e2e runner invokes the CLI against its healthy demo app after Playwright.

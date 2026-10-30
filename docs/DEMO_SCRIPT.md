@@ -32,10 +32,12 @@ with that account instead; the demo does not need the admin role except for step
 
 1. On **New Test**, press **Try the demo**.
 
-**Expected after ~30–60 s, side by side:** the healthy app shows **Go**, score **1.00**, reason
-naming *"GO threshold 0.80"*; the broken app shows **No-Go** with a score below 1.00 and a
-reason that names the **weighted score** and the **REVIEW threshold 0.60**. No provider and
-no key are involved.
+**Expected after ~30–60 s, side by side:** the demo runs the quality checks only, so the score
+is not reduced solely by the operations latency metric (very slow calls can still time out).
+The healthy app shows **Go**, score **1.00**, reason naming *"GO threshold 0.80"*; the broken
+app shows **No-Go** with a score below 1.00 and a reason that names the **weighted score**
+and the **REVIEW threshold 0.60**. No provider and no key are involved. Safety and operations
+checks are available when starting a normal test.
 
 *If it goes wrong:* a red **demo app not reachable** banner means the two demo containers are
 down — `docker compose --profile demo up -d` and press **Try the demo** again.

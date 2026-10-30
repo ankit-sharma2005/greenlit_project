@@ -3,8 +3,8 @@
 #
 # Disposable end-to-end stack for the GreenLit Playwright suite. It brings up a
 # fresh Postgres + Redis, applies migrations, starts the API, worker and web on
-# host ports, then runs the whole suite against that stack and tears everything
-# down afterwards. The suite's own Playwright process is `npm run e2e`.
+# host ports, runs Playwright and the live CI-runner check, then stops the
+# containers while preserving the database volume.
 #
 # Host targets (used by the fake apps the tests start on the host):
 #   E2E_API_BIND  - "localhost" / "0.0.0.0" (API listen address)
@@ -181,12 +181,22 @@ if [ -z "${SKIP_STACK:-}" ]; then
   fi
 fi
 
-log "Running the whole Playwright suite against ${E2E_BASE_URL} (fresh database)"
+log "Running Playwright tests (${TESTS}) against ${E2E_BASE_URL} (fresh database)"
 cd frontend
 if [ "$TESTS" = "." ]; then
   npm run e2e
 else
   npm run e2e -- "$TESTS"
+fi
+
+if [ -z "${SKIP_STACK:-}" ]; then
+  log "Checking the GreenLit CI runner against the healthy demo app"
+  (
+    cd "${ROOTDIR}/backend"
+    GREENLIT_CI_E2E_API_URL="$E2E_API_URL" \
+      GREENLIT_CI_E2E_TARGET="$DEMO_APP_URL" \
+      "$PYTHON" -m pytest -q tests/test_greenlit_ci_e2e.py
+  )
 fi
 
 log "E2E suite finished. Logs:"

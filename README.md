@@ -118,8 +118,10 @@ docker compose --profile demo up -d
 Open the app, sign in, and press **Try the demo** on the New Test page. It runs the
 golden set against both apps through the normal runs API and shows both verdicts side by
 side: **GO** for the healthy app, **NO-GO** for the broken one with the weighted score
-and the REVIEW threshold in the reason. Nothing is precomputed, and no provider is
-involved.
+and the REVIEW threshold in the reason. The demo scores quality only, so it is not penalized
+solely by the operations latency metric; very slow calls can still time out. Safety and
+operations are available on normal runs.
+Nothing is precomputed, and no provider is involved.
 
 To see regression: open the healthy run in **Results**, press **Set as baseline**, then
 run the broken app on the same dataset. Its verdict card reports **BLOCK** and names the
@@ -242,32 +244,30 @@ CI runs the same commands on every push (see `.github/workflows/ci.yml`).
 Everything works through the API alone. `POST /api/v1/quick-test` creates what a test needs
 (connector settings, dataset, approved version and the run) and returns the run id at once;
 the Celery worker executes the cases and `GET /api/v1/runs/{id}` returns the stored verdict.
+The standard-library runner logs in with `GREENLIT_EMAIL` and `GREENLIT_PASSWORD`, polls the
+run to completion, and reports the verdict, weighted score, and failed instrumented metrics.
+Exit codes are 0 for GO, 1 for NO_GO, 2 for REVIEW, and 3 for request errors or timeouts;
+`--fail-on review` maps REVIEW to exit 1. A copyable, inactive GitHub Actions example is at
+`.github/workflows/greenlit-example.yml.disabled`.
 
 ```bash
-API=http://localhost:8003
-JAR=$(mktemp)
+export GREENLIT_API_URL=http://localhost:8003
+export GREENLIT_EMAIL=ci@example.com
+export GREENLIT_PASSWORD='use-a-provisioned-ci-password'
 
-# 1. Sign in (register first on a fresh database).
-curl -sS -c "$JAR" -H 'Content-Type: application/json' \
-  -d '{"email":"ci@example.com","password":"correct horse battery"}' \
-  "$API/api/v1/auth/login"
-
-# 2. Start a test. Send `csv` (question,answer columns) or `dataset_id` to skip generation.
-RUN=$(curl -sS -b "$JAR" -H 'Content-Type: application/json' \
-  -d '{"entry_point":"http_endpoint","target":"http://localhost:9000/chat","tests":["quality","operations"],"csv":"question,answer\nHow do I reset my password?,Use the reset link on the sign-in page.\n"}' \
-  "$API/api/v1/quick-test" | python -c 'import json,sys; print(json.load(sys.stdin)["run"]["id"])')
-
-# 3. Poll until the worker finishes (live counters: /api/v1/runs/$RUN/progress).
-for _ in $(seq 1 120); do
-  curl -sS -b "$JAR" "$API/api/v1/runs/$RUN" > /tmp/greenlit-run.json
-  grep -qE '"state":"(completed|cancelled|failed)"' /tmp/greenlit-run.json && break
-  sleep 1
-done
-
-# 4. Fail the pipeline on anything but GO, and keep the report as an artifact.
-python -c 'import json,sys; run=json.load(open("/tmp/greenlit-run.json")); print(run["verdict"], run["score"], run["verdict_reason"]); sys.exit(0 if run["verdict"] == "GO" else 1)'
-curl -sS -b "$JAR" "$API/api/v1/runs/$RUN/report?format=html" -o greenlit-report.html
+python scripts/greenlit_ci.py \
+  --entry-point http_endpoint \
+  --target http://host.docker.internal:9301/chat \
+  --csv-file demo/helpdesk_golden.csv \
+  --tests quality \
+  --allow-private-targets \
+  --timeout 180
 ```
+
+The example assumes the API user has already been registered and the demo profile is
+running (`docker compose --profile demo up -d`). Use `--dataset-id` instead of `--csv-file`
+to select an existing approved dataset. Only enable `--allow-private-targets` for a target
+you trust. To use the runner against your own application, replace the target and dataset.
 
 ## Repository layout
 
@@ -276,7 +276,7 @@ backend/    FastAPI app, SQLAlchemy, Alembic migrations, worker, tests
 frontend/   React + TypeScript + Vite UI, Vitest components, Playwright suite
 demo/       Shipped demo dataset (the demo app itself lives in backend/app/demo_server.py)
 docs/       Documentation and brand assets
-scripts/    Developer utilities (brand asset generation, the disposable e2e stack)
+scripts/    Developer utilities (brand assets, disposable e2e stack, CI runner)
 ```
 
 See [HANDOVER.md](HANDOVER.md) for the architecture, how the tests are organised and the

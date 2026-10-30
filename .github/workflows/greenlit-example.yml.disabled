@@ -1,0 +1,49 @@
+# Example only. GitHub Actions ignores this file because its suffix is .disabled.
+# Review ports, secrets, and the target before renaming it to .yml.
+name: GreenLit example (disabled)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  greenlit:
+    runs-on: ubuntu-latest
+    env:
+      GREENLIT_API_URL: http://localhost:8003
+      GREENLIT_EMAIL: ${{ secrets.GREENLIT_EMAIL }}
+      GREENLIT_PASSWORD: ${{ secrets.GREENLIT_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Start GreenLit and the demo app
+        run: docker compose --profile demo up -d --build
+
+      - name: Wait for GreenLit and the demo app
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent "$GREENLIT_API_URL/readyz" \
+              && curl --fail --silent http://localhost:9301/healthz; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "GreenLit or the demo app did not become ready" >&2
+          exit 1
+
+      - name: Register the CI API user
+        run: |
+          python -c 'import json, os, urllib.request; payload = {"name": "CI", "email": os.environ["GREENLIT_EMAIL"], "password": os.environ["GREENLIT_PASSWORD"]}; request = urllib.request.Request(os.environ["GREENLIT_API_URL"] + "/api/v1/auth/register", data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"}); response = urllib.request.urlopen(request, timeout=10); print("Registered CI API user:", response.status)'
+
+      - name: Run GreenLit
+        run: |
+          python scripts/greenlit_ci.py \
+            --entry-point http_endpoint \
+            --target http://host.docker.internal:9301/chat \
+            --csv-file demo/helpdesk_golden.csv \
+            --tests quality \
+            --allow-private-targets \
+            --timeout 180

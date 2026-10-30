@@ -67,6 +67,7 @@ export function DemoPanel() {
           body_template: '{"question": {{input}}}',
           answer_path: "answer",
           context_path: "context",
+          test_types: ["quality"],
           timeout_seconds: 60,
           allow_private_targets: true,
           dataset_version_id: setup.dataset_version_id,

@@ -110,7 +110,7 @@ cd backend && ruff check . && ruff format --check . && mypy && pytest
 # frontend: lint, format, types, component tests, production build
 cd frontend && npm run lint && npm run format:check && npm run typecheck && npm test && npm run build
 
-# end to end: a disposable stack, dropped afterwards (needs Docker Desktop)
+# end to end: a disposable stack (needs Docker Desktop)
 bash scripts/run-e2e.sh
 ```
 
@@ -122,9 +122,15 @@ bash scripts/run-e2e.sh
   provenance, the prompt app, report download, safety both ways, the setup checklist and
   audit screen, and uploaded outputs. It runs against fake apps started inside the test
   process (`tests/helpers.ts`), so no model and no network are needed.
-- `scripts/run-e2e.sh` uses its own Compose project `greenlit-e2e` (Postgres 5536, Redis
-  6482, fresh volume), the API on 8103, a solo Celery worker, Vite on 5277 and the two
-  demo helpdesks on 9501/9502. It never touches the stack you use in the browser.
+- `scripts/run-e2e.sh` uses a uniquely named Compose project per invocation (Postgres 5536,
+  Redis 6482, fresh volume), the API on 8103, a solo Celery worker, Vite on 5277 and the two
+  demo helpdesks on 9501/9502. It stops only that invocation's containers, preserves its
+  volume, and never touches the stack you use in the browser. After Playwright it runs the
+  CI runner against the healthy demo app.
+- `scripts/greenlit_ci.py` uses only the Python standard library: it logs in with
+  `GREENLIT_EMAIL`/`GREENLIT_PASSWORD`, creates a quick test, polls to completion, prints the
+  verdict, weighted score and failed instrumented metrics, and returns documented CI exit
+  codes. Fake-server tests cover GO, NO_GO, REVIEW, timeout and authentication failure.
 
 ## Known limitations
 

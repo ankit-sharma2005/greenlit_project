@@ -136,9 +136,20 @@ describe("DemoPanel", () => {
     const rendered = render(<DemoPanel />);
 
     await user.click(rendered.getByTestId("try-demo"));
+    await waitFor(() => expect(startRunMock).toHaveBeenCalledTimes(2), {
+      timeout: 60_000,
+    });
     await waitFor(() => expect(rendered.getByTestId("demo-good-verdict")).toHaveTextContent("Go"), {
       timeout: 60_000,
     });
+    expect(startRunMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ test_types: ["quality"] }),
+    );
+    expect(startRunMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ test_types: ["quality"] }),
+    );
     expect(rendered.getByTestId("demo-good-score")).toHaveTextContent("0.95");
     expect(rendered.getByTestId("demo-broken-verdict")).toHaveTextContent("No-Go");
     expect(rendered.getByTestId("demo-broken-score")).toHaveTextContent("0.42");
