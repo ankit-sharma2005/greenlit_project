@@ -5,6 +5,7 @@ import { ComingSoon } from "../components/ComingSoon";
 import { DatasetsPanel } from "../components/DatasetsPanel";
 import { JudgePanel } from "../components/JudgePanel";
 import { ProvidersPanel } from "../components/ProvidersPanel";
+import { SafetyPanel } from "../components/SafetyPanel";
 
 const SECTIONS = [
   { name: "Providers and models", detail: "Ollama by default, plus OpenAI-compatible providers." },
@@ -19,7 +20,7 @@ const SECTIONS = [
 ];
 
 // Only tabs with a working panel are listed here; everything else keeps "soon".
-const AVAILABLE = new Set(["Datasets", "Providers and models", "Judge", "Audit log"]);
+const AVAILABLE = new Set(["Datasets", "Providers and models", "Judge", "Safety", "Audit log"]);
 
 export function SettingsPage() {
   const [active, setActive] = useState("Datasets");
@@ -87,6 +88,15 @@ export function SettingsPage() {
                 confidence handling that decide when a verdict needs a human.
               </p>
               <JudgePanel />
+            </>
+          ) : active === "Safety" ? (
+            <>
+              <h2>Safety</h2>
+              <p className="page__description" style={{ marginBottom: "var(--space-4)" }}>
+                The built-in attack set and harmless prompts every Safety run sends, with the rule
+                that turns a leak into a hard NO-GO.
+              </p>
+              <SafetyPanel />
             </>
           ) : active === "Audit log" ? (
             <>
