@@ -457,3 +457,98 @@ def test_report_carries_the_operations_block(
         "cost_estimate",
     ):
         assert column in header
+
+
+def _all_failed_run(
+    session_factory: sessionmaker[Session], dataset: dict[str, object]
+) -> uuid.UUID:
+    """A completed run where every request failed before the app answered."""
+    owner = _user_id(session_factory)
+    snapshot: dict[str, object] = {
+        "entry_point": "http_endpoint",
+        "test_types": ["quality"],
+        "dataset_version_id": str(dataset["versions"][0]["id"]),  # type: ignore[index]
+        "timeout_seconds": 30,
+        "url": "http://127.0.0.1:9099/ask",
+        "method": "POST",
+        "body_template": '{"question": {{input}}}',
+        "answer_path": "answer",
+    }
+    failure = {
+        "kind": "http_error",
+        "status": 422,
+        "target": "127.0.0.1:9099/ask",
+        "snippet": '{"detail":"question is required"}',
+        "message": "target returned HTTP 422",
+        "summary": (
+            'Target returned HTTP 422 at 127.0.0.1:9099/ask — {"detail":"question is required"}'
+        ),
+    }
+    with session_factory() as session:
+        run = create_run(
+            session,
+            owner_id=owner,
+            name="All errors",
+            settings_snapshot=snapshot,
+            dataset_id=uuid.UUID(str(dataset["id"])),
+            dataset_version_id=uuid.UUID(str(dataset["versions"][0]["id"])),  # type: ignore[index]
+            criteria_profile="plain_chatbot",
+        )
+        for index, question in enumerate(("What is GreenLit?", "Is it fast?"), start=1):
+            item = create_run_item(session, run, row_index=index, input_text=question)
+            session.commit()
+            update_run_item(
+                session,
+                item,
+                state="failed",
+                error="target returned HTTP 422",
+                trace={"error_kind": "http_error", "error_detail": failure},
+            )
+        update_run(
+            session,
+            run,
+            state="completed",
+            verdict="REVIEW",
+            score=None,
+            verdict_reason="No metric could be measured, so the run cannot be scored.",
+            started_at=utcnow(),
+            completed_at=utcnow(),
+        )
+        session.commit()
+        return run.id
+
+
+def test_an_all_errors_report_says_it_is_a_setup_problem(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    """Nothing was scored, so no 0 and no pass rate may be presented as a result."""
+    _register(client)
+    dataset = _upload_and_approve(client)
+    run_id = _all_failed_run(session_factory, dataset)
+
+    body = client.get(f"/api/v1/runs/{run_id}/report?format=html").text
+    assert "Setup problem: 2 of 2 requests failed (HTTP 422 at 127.0.0.1:9099/ask)" in body
+    assert "This is not a quality result." in body
+    # The score is not a zero: nothing produced a scored answer.
+    assert "not measured (no case produced a scored answer)" in body
+    assert "question is required" in body
+
+    document = client.get(f"/api/v1/runs/{run_id}/report?format=json").json()
+    assert document["setup_problem"]["failed"] == 2
+    assert document["setup_problem"]["total"] == 2
+    assert document["verdict"]["score"] is None
+    assert document["failed_cases"][0]["http_status"] == 422
+
+
+def test_a_normal_run_has_no_setup_problem_banner(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    _register(client)
+    dataset = _upload_and_approve(client)
+    run_id = _finished_run(session_factory, dataset)
+
+    body = client.get(f"/api/v1/runs/{run_id}/report?format=html").text
+    assert "setup-problem" not in body
+    assert "Setup problem" not in body
+    # A measured run still shows its real weighted score.
+    assert "0.42" in body

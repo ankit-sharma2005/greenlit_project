@@ -268,6 +268,41 @@ def _case_rows(session: Session, run: Run, items: list[RunItem]) -> list[dict[st
     return cases
 
 
+def _setup_problem(cases: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """A run where every case failed is a setup problem, not a quality result.
+
+    Returning this as its own block lets every format say the same thing first:
+    nothing was scored, so a score of 0 would be a lie about the app.
+    """
+    if not cases:
+        return None
+    failed = [case for case in cases if case["state"] == "failed"]
+    if len(failed) != len(cases):
+        return None
+    statuses = sorted(
+        {int(case["http_status"]) for case in failed if isinstance(case.get("http_status"), int)}
+    )
+    kinds = sorted({str(case.get("error_kind")) for case in failed if case.get("error_kind")})
+    if statuses:
+        detail = ", ".join(f"HTTP {status}" for status in statuses)
+    elif kinds:
+        detail = ", ".join(kinds)
+    else:
+        detail = "no status was recorded"
+    target = next((case["target"] for case in failed if case.get("target")), None)
+    where = f" at {target}" if target else ""
+    return {
+        "failed": len(failed),
+        "total": len(cases),
+        "detail": detail,
+        "target": target,
+        "line": (
+            f"Setup problem: {len(failed)} of {len(cases)} requests failed ({detail}{where}). "
+            "This is not a quality result."
+        ),
+    }
+
+
 def _metric_block(session: Session, run: Run) -> list[dict[str, Any]]:
     rows = get_metric_results(session, run.id)
     metrics: list[dict[str, Any]] = []
@@ -425,6 +460,7 @@ def build_report(session: Session, run: Run) -> dict[str, Any]:
         "metrics": metrics,
         "cases": cases,
         "failed_cases": [case for case in cases if case["state"] == "failed"],
+        "setup_problem": _setup_problem(cases),
         "safety": _safety_block(metrics),
         "judge": judged,
         "judge_skipped_reason": snapshot.get("judge_skipped_reason"),
@@ -577,7 +613,11 @@ def render_html(document: dict[str, Any]) -> str:
     safety = document["safety"]
     judge = document["judge"]
 
-    score = "—" if verdict["score"] is None else f"{float(verdict['score']):.2f}"
+    setup = document.get("setup_problem")
+    if verdict["score"] is None:
+        score = "not measured (no case produced a scored answer)"
+    else:
+        score = f"{float(verdict['score']):.2f}"
 
     parts: list[str] = []
     parts.append(
@@ -595,6 +635,10 @@ def render_html(document: dict[str, Any]) -> str:
 <p class="muted">{_esc(document["project"])} · run {_esc(run["id"])} · {_esc(run["created_at"])}</p>
 """
     )
+
+    # When nothing could be answered, the first line says so, before any score.
+    if setup is not None:
+        parts.append(f'<p class="fail" data-testid="setup-problem">{_esc(setup["line"])}</p>')
 
     # Verdict and the rule that produced it.
     verdict_class = {"GO": "go", "REVIEW": "review", "NO_GO": "no-go"}.get(
@@ -649,7 +693,18 @@ def render_html(document: dict[str, Any]) -> str:
         parts.append(f"<dt>{_esc(key)}</dt><dd>{rendered}</dd>")
     parts.append("</dl>")
 
-    # Metrics, with "not instrumented" spelled out rather than a 0.
+    # Metrics, with "not instrumented" spelled out rather than a 0. One line
+    # summarises them so a report never reads like a wall of missing metrics.
+    missing = [metric for metric in document["metrics"] if not metric["instrumented"]]
+    if missing:
+        reasons = list(dict.fromkeys(str(metric["explanation"]) for metric in missing))
+        first = reasons[0]
+        more = f" and {len(reasons) - 1} more reason(s)" if len(reasons) > 1 else ""
+        parts.append(
+            f'<p class="muted" data-testid="not-measured">'
+            f"{len(missing)} of {len(document['metrics'])} metrics were not measured: "
+            f"{_esc(first)}{_esc(more)}.</p>"
+        )
     parts.append(
         "<h2>Metrics</h2><table><thead><tr>"
         "<th>Metric</th><th>Score</th><th>State</th><th>Weight</th><th>Why</th>"
