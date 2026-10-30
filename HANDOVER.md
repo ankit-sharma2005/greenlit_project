@@ -123,16 +123,20 @@ bash scripts/run-e2e.sh
 - Backend tests live in `backend/tests`, one module per area. They never touch a real
   provider: `ChatFn` is injected, and so are the queue and the progress reader. Dataset
   source-generation tests build a small PDF fixture at test time and fake the model call.
-  The suite is currently 435 passed and 1 skipped; `tests/test_operations.py` covers the
-  percentile edge cases (one case, even and odd counts, all failures).
+  The suite is currently 455 passed and 1 skipped; `tests/test_operations.py` covers the
+  percentile edge cases (one case, even and odd counts, all failures), and
+  `tests/test_error_kind_timeout.py` proves a real timeout against a local slow server
+  (plus connection-refused and the old-run text fallback).
 - Frontend component tests are Vitest + Testing Library next to the components; the
-  suite is currently 107 tests in 21 files.
+  suite is currently 115 tests in 22 files.
 - `frontend/tests` is the Playwright suite (17 tests in 11 specs): admin/accounts and the
   results page, Try the demo, baseline regression, calibration (label → kappa), judge
-  provenance, the prompt app, report download, safety both ways, the setup checklist and
-  audit screen, uploaded outputs, and PDF dataset generation through preview and approval.
+  provenance, the prompt app (including the priced cost estimate on the verdict),
+  report download, safety both ways, the setup checklist and audit screen, uploaded
+  outputs, and PDF dataset generation through preview and approval.
   It runs against fake apps started inside the test process (`tests/helpers.ts`), so no
-  real model is needed.
+  real model is needed. The last full run from a clean stack passed all of them:
+  `17 passed (7.1m)`, exit code 0.
 - `scripts/run-e2e.sh` uses a uniquely named Compose project per invocation (Postgres 5536,
   Redis 6482, fresh volume), the API on 8103, a solo Celery worker, Vite on 5277 and the two
   demo helpdesks on 9501/9502. It stops only that invocation's containers, preserves its

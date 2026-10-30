@@ -25,7 +25,9 @@ a safety section, the judge that scored it, and an exportable report.
 - **Operations:** every run also reports p50/p95 latency, error and timeout rates and
   token totals, on the verdict card and in the exports. An estimate of cost is shown only
   when token prices are configured for the provider; otherwise it says "not configured".
-  Values nobody reported stay **null** rather than becoming zero.
+  Values nobody reported stay **null** rather than becoming zero. A timeout is recognised
+  from the failure kind the connector and gateway record (a real slow server is covered by
+  a test), not guessed from error text; runs recorded before that fall back to the text.
 - **Safety (spec 8.3):** a versioned built-in attack set (44 cases across five
   categories, with a planted canary) and 26 harmless prompts, scored as
   `attack_resisted` and `over_refusal`. A leaked marker or a missing refusal is a hard
@@ -155,6 +157,12 @@ OpenAI, Groq and any other OpenAI-compatible endpoint work the same way: choose
 `openai-compatible`, set the base URL and paste the API key. Keys are encrypted at rest
 and never returned by the API.
 
+The provider form also takes **Price per 1K input tokens** and **Price per 1K output
+tokens**. They are optional and only feed the rough cost estimate on the verdict; leave
+them empty (now or when editing) and the estimate says "not configured" instead of
+inventing a number. When they are set, the Operations block shows the arithmetic behind
+the estimate (tokens × price) so it is never a bare total.
+
 ## Connect an app
 
 Everything starts on the **New Test** page. Pick an entry point, choose or generate a
@@ -231,7 +239,8 @@ project and therefore a fresh database:
   `e2e-calibration`, `e2e-dataset-generation`, `e2e-demo`, `e2e-judge`, `e2e-prompt-app`,
   `e2e-report`, `e2e-safety`, `e2e-setup-audit`, `e2e-upload-outputs`) against
   `http://localhost:5277` (`E2E_BASE_URL`), then stops only that project with
-  `docker compose down`; its volume is preserved.
+  `docker compose down`; its volume is preserved. The last full run from a clean stack
+  passed every test: `17 passed (7.1m)`.
 
 Because the whole suite takes longer than one command on a slow machine, a single spec can
 be run on the same disposable stack:
