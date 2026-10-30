@@ -5,6 +5,7 @@ M3 additions: HTTP endpoint, prompt_app, and upload_outputs connectors.
 
 from __future__ import annotations
 
+import httpx
 import sqlalchemy
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -302,3 +303,182 @@ def test_create_provider_endpoint_reads_the_provider_body(client: TestClient) ->
     )
     assert created.status_code == 201, created.text
     assert created.json()["name"] == "Fake Prompt App Provider"
+
+
+def _admin_with_provider(client: TestClient) -> dict[str, object]:
+    """Register the first (admin) account and create one provider."""
+    registered = client.post(
+        "/api/v1/auth/register",
+        json={
+            "name": "Price Admin",
+            "email": "prices@example.com",
+            "password": "password123456",
+        },
+    )
+    assert registered.status_code == 201, registered.text
+    created = client.post(
+        "/api/v1/providers",
+        json={
+            "name": "Priced provider",
+            "kind": "openai-compatible",
+            "model_name": "gpt-4o-mini",
+            "base_url": "http://127.0.0.1:9999/v1",
+        },
+    )
+    assert created.status_code == 201, created.text
+    return created.json()
+
+
+def test_prices_are_saved_in_metadata(client: TestClient) -> None:
+    """A price is stored in the metadata bag, where operations.py reads it."""
+    provider = _admin_with_provider(client)
+
+    patched = client.patch(
+        f"/api/v1/providers/{provider['id']}",
+        json={"metadata": {"price_per_1k_tokens_in": 0.15, "price_per_1k_tokens_out": 0.6}},
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["provider_config"] == {
+        "price_per_1k_tokens_in": 0.15,
+        "price_per_1k_tokens_out": 0.6,
+    }
+
+    # And it survives a round trip through the list endpoint the UI reads.
+    listed = client.get("/api/v1/providers").json()
+    assert listed[0]["provider_config"]["price_per_1k_tokens_in"] == 0.15
+
+
+def test_clearing_a_price_removes_the_key(client: TestClient) -> None:
+    """null means unset: the key is removed, never stored as 0."""
+    provider = _admin_with_provider(client)
+    client.patch(
+        f"/api/v1/providers/{provider['id']}",
+        json={"metadata": {"price_per_1k_tokens_in": 0.15, "price_per_1k_tokens_out": 0.6}},
+    )
+
+    cleared = client.patch(
+        f"/api/v1/providers/{provider['id']}",
+        json={"metadata": {"price_per_1k_tokens_in": None}},
+    )
+    assert cleared.status_code == 200, cleared.text
+    config = cleared.json()["provider_config"]
+    assert "price_per_1k_tokens_in" not in config
+    # The other price is untouched.
+    assert config["price_per_1k_tokens_out"] == 0.6
+
+
+def test_metadata_merge_keeps_unrelated_keys(client: TestClient) -> None:
+    """Editing prices must not drop metadata keys this form knows nothing about."""
+    provider = _admin_with_provider(client)
+    client.patch(
+        f"/api/v1/providers/{provider['id']}",
+        json={"metadata": {"region": "eu-west", "price_per_1k_tokens_in": 1.0}},
+    )
+
+    patched = client.patch(
+        f"/api/v1/providers/{provider['id']}",
+        json={"metadata": {"price_per_1k_tokens_out": 2.0}},
+    )
+    assert patched.status_code == 200, patched.text
+    config = patched.json()["provider_config"]
+    assert config["region"] == "eu-west"
+    assert config["price_per_1k_tokens_in"] == 1.0
+    assert config["price_per_1k_tokens_out"] == 2.0
+
+
+def test_negative_price_is_rejected(client: TestClient) -> None:
+    """A negative price is a 422 and changes nothing."""
+    provider = _admin_with_provider(client)
+
+    rejected = client.patch(
+        f"/api/v1/providers/{provider['id']}",
+        json={"metadata": {"price_per_1k_tokens_in": -1}},
+    )
+    assert rejected.status_code == 422, rejected.text
+
+    # The stored value is unchanged, so a bad edit cannot corrupt a provider.
+    listed = client.get("/api/v1/providers").json()
+    assert "price_per_1k_tokens_in" not in (listed[0]["provider_config"] or {})
+
+
+def test_negative_price_rejected_on_create(client: TestClient) -> None:
+    registered = client.post(
+        "/api/v1/auth/register",
+        json={"name": "Create Admin", "email": "create@example.com", "password": "password123456"},
+    )
+    assert registered.status_code == 201, registered.text
+
+    rejected = client.post(
+        "/api/v1/providers",
+        json={
+            "name": "Bad price provider",
+            "kind": "openai-compatible",
+            "model_name": "gpt-4o-mini",
+            "metadata": {"price_per_1k_tokens_out": -0.5},
+        },
+    )
+    assert rejected.status_code == 422, rejected.text
+
+
+def test_non_numeric_price_is_rejected(client: TestClient) -> None:
+    provider = _admin_with_provider(client)
+    rejected = client.patch(
+        f"/api/v1/providers/{provider['id']}",
+        json={"metadata": {"price_per_1k_tokens_in": "free"}},
+    )
+    assert rejected.status_code == 422, rejected.text
+
+
+def _reply(content: str, usage: object) -> httpx.Response:
+    """A minimal chat-completions response with an optional usage block."""
+    body: dict[str, object] = {"choices": [{"message": {"content": content}}]}
+    if usage is not None:
+        body["usage"] = usage
+    return httpx.Response(200, json=body, request=httpx.Request("POST", "http://test"))
+
+
+def test_gateway_records_token_usage() -> None:
+    """The gateway keeps the replied usage so operations can price a run."""
+    from app.services.llm_gateway import LLMGateway
+
+    provider = Provider(
+        name="usage-test",
+        kind="openai-compatible",
+        model_name="gpt-4o-mini",
+        base_url="http://127.0.0.1:9999/v1",
+        is_active=True,
+        max_retries=0,
+        timeout_seconds=5,
+    )
+    gateway = LLMGateway(
+        post=lambda *a, **k: _reply("hello", {"prompt_tokens": 11, "completion_tokens": 7})
+    )
+
+    assert gateway.chat(provider, [{"role": "user", "content": "hi"}]) == "hello"
+    assert gateway.last_usage == {"prompt_tokens": 11, "completion_tokens": 7}
+
+
+def test_gateway_ignores_missing_or_bad_usage() -> None:
+    """A provider that reports nothing usable must not crash the call."""
+    from app.services.llm_gateway import LLMGateway
+
+    provider = Provider(
+        name="usage-test-2",
+        kind="openai-compatible",
+        model_name="gpt-4o-mini",
+        base_url="http://127.0.0.1:9999/v1",
+        is_active=True,
+        max_retries=0,
+        timeout_seconds=5,
+    )
+
+    gateway = LLMGateway(post=lambda *a, **k: _reply("hello", None))
+    gateway.chat(provider, [{"role": "user", "content": "hi"}])
+    assert gateway.last_usage == {}
+
+    gateway = LLMGateway(
+        post=lambda *a, **k: _reply("hello", {"prompt_tokens": "many", "completion_tokens": 3})
+    )
+    gateway.chat(provider, [{"role": "user", "content": "hi"}])
+    # Only the usable number is kept.
+    assert gateway.last_usage == {"completion_tokens": 3}

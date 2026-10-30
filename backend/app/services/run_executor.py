@@ -231,10 +231,18 @@ def _prompt_app_sender(
         messages: list[dict[str, str]],
         model: str | None = None,
         params: dict[str, Any] | None = None,
-    ) -> str:
+    ) -> dict[str, Any]:
         # LLMGateway applies the provider's timeout, retries and request rate limit.
         value = (params or {}).get("temperature", temperature)
-        return gateway.chat(provider, messages, float(value), model=model or model_name)
+        content = gateway.chat(provider, messages, float(value), model=model or model_name)
+        # The connector records tokens when it gets a mapping, which is what the
+        # operations block and the cost estimate need.
+        usage = dict(gateway.last_usage)
+        return {
+            "content": content,
+            "tokens_in": usage.get("prompt_tokens"),
+            "tokens_out": usage.get("completion_tokens"),
+        }
 
     connector = PromptAppConnector(chat=chat)
 

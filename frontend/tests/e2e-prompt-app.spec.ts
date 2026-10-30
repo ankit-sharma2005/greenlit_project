@@ -80,6 +80,7 @@ function startFakeProvider(): Promise<FakeProvider> {
                     finish_reason: "stop",
                   },
                 ],
+                usage: { prompt_tokens: 120, completion_tokens: 40, total_tokens: 160 },
               }),
             );
             return;
@@ -103,6 +104,8 @@ function startFakeProvider(): Promise<FakeProvider> {
             choices: [
               { index: 0, message: { role: "assistant", content: answer }, finish_reason: "stop" },
             ],
+            // A real provider reports usage, and the operations block prices it.
+            usage: { prompt_tokens: 120, completion_tokens: 40, total_tokens: 160 },
           }),
         );
       });
@@ -170,6 +173,15 @@ test("prompt app entry point runs a prompt to a verdict", async ({ page }) => {
       model: MODEL,
     });
     await selectJudgeProfile(page, judgeProfileId);
+
+    // Token prices make the verdict show a cost estimate instead of "not configured".
+    const priced = await page.request.patch(`${API}/api/v1/providers/${providerId}`, {
+      data: {
+        metadata: { price_per_1k_tokens_in: 0.01, price_per_1k_tokens_out: 0.02 },
+      },
+    });
+    expect(priced.status(), await priced.text()).toBe(200);
+
     const datasetName = `Prompt Golden ${Date.now()}`;
     await uploadApprovedDataset(page, datasetName);
 
@@ -205,6 +217,15 @@ test("prompt app entry point runs a prompt to a verdict", async ({ page }) => {
     await expect(page.getByTestId("run-state")).toHaveText("Completed");
     // The prompt-app connector really answered through the provider.
     await expect(page.getByTestId("run-metrics")).toContainText("answer match");
+
+    // Operations carries the real tokens, and the price makes a real estimate.
+    await expect(page.getByTestId("run-operations")).toBeVisible();
+    await expect(page.getByTestId("ops-tokens-in")).not.toHaveText("not reported");
+    await expect(page.getByTestId("ops-cost")).not.toHaveText("not configured");
+    await expect(page.getByTestId("ops-cost")).toContainText("$");
+    // Never a bare number: the arithmetic behind the estimate is shown.
+    await expect(page.getByTestId("ops-cost-breakdown")).toContainText("per 1K tokens (estimate)");
+    await expect(page.getByTestId("ops-cost-breakdown")).toContainText("×");
   } finally {
     await provider.close();
   }

@@ -30,6 +30,20 @@ function cost(operations: RunOperations): string {
   return `~$${operations.cost_estimate.toFixed(4)}`;
 }
 
+/** How the estimate was reached, so the number is never a bare total. */
+function costBreakdown(operations: RunOperations): string | null {
+  if (!operations.cost_configured || operations.cost_estimate === null) {
+    return null;
+  }
+  const tokens = (value: number | null) =>
+    value === null ? "no tokens reported" : value.toLocaleString("en-US");
+  return (
+    `${tokens(operations.tokens_in_total)} in × ${String(operations.price_per_1k_tokens_in)} ` +
+    `+ ${tokens(operations.tokens_out_total)} out × ${String(operations.price_per_1k_tokens_out)} ` +
+    "per 1K tokens (estimate)"
+  );
+}
+
 export interface OperationsPanelProps {
   operations: RunOperations | null | undefined;
 }
@@ -71,6 +85,11 @@ export function OperationsPanel({ operations }: OperationsPanelProps) {
           </div>
         ))}
       </dl>
+      {costBreakdown(operations) !== null && (
+        <p className="card__hint" data-testid="ops-cost-breakdown">
+          {costBreakdown(operations)}
+        </p>
+      )}
       {operations.latency_samples > 0 && (
         <p className="card__hint" data-testid="ops-samples">
           Based on {operations.latency_samples} measured{" "}

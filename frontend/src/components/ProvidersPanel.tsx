@@ -2,15 +2,19 @@ import { useCallback, useEffect, useState } from "react";
 
 import { ApiError } from "../lib/api";
 import {
+  PRICE_IN_KEY,
+  PRICE_OUT_KEY,
   createProvider,
   deleteProvider,
   listProviders,
+  parsePrice,
   testProvider,
   updateProvider,
   type Provider,
   type ProviderTestResult,
 } from "../lib/providers";
 import { Button } from "./Button";
+import { ProviderPrices } from "./ProviderPrices";
 import { Spinner } from "./Spinner";
 
 function healthBadge(result: ProviderTestResult | null) {
@@ -32,6 +36,9 @@ export function ProvidersPanel() {
   const [baseUrl, setBaseUrl] = useState("http://host.docker.internal:11434/v1");
   const [apiKey, setApiKey] = useState("");
   const [isActive] = useState(true);
+  const [priceIn, setPriceIn] = useState("");
+  const [priceOut, setPriceOut] = useState("");
+  const [priceError, setPriceError] = useState<string | null>(null);
 
   const [testResults, setTestResults] = useState<Record<string, ProviderTestResult>>({});
 
@@ -62,6 +69,20 @@ export function ProvidersPanel() {
     event.preventDefault();
     setError(null);
     setNotice(null);
+    setPriceError(null);
+
+    // Prices are optional; an empty field means "not set", never 0.
+    const parsedIn = parsePrice(priceIn);
+    const parsedOut = parsePrice(priceOut);
+    const problem = parsedIn.error ?? parsedOut.error;
+    if (problem !== null) {
+      setPriceError(problem);
+      return;
+    }
+    const metadata: Record<string, number> = {};
+    if (parsedIn.value !== null) metadata[PRICE_IN_KEY] = parsedIn.value;
+    if (parsedOut.value !== null) metadata[PRICE_OUT_KEY] = parsedOut.value;
+
     setBusy(true);
     try {
       await createProvider({
@@ -71,9 +92,12 @@ export function ProvidersPanel() {
         base_url: baseUrl.trim() || null,
         api_key: apiKey.trim() || null,
         is_active: isActive,
+        metadata,
       });
       setNotice(`Provider “${name.trim()}” created.`);
       setApiKey("");
+      setPriceIn("");
+      setPriceOut("");
       await refresh();
     } catch (caught) {
       showError(caught);
@@ -210,6 +234,41 @@ export function ProvidersPanel() {
               </p>
             </>
           )}
+          <label className="form__label" htmlFor="provider-price-in">
+            Price per 1K input tokens (optional):
+          </label>
+          <input
+            id="provider-price-in"
+            data-testid="provider-price-in"
+            type="text"
+            inputMode="decimal"
+            value={priceIn}
+            onChange={(e) => setPriceIn(e.target.value)}
+            placeholder="e.g. 0.15"
+            disabled={busy}
+          />
+          <label className="form__label" htmlFor="provider-price-out">
+            Price per 1K output tokens (optional):
+          </label>
+          <input
+            id="provider-price-out"
+            data-testid="provider-price-out"
+            type="text"
+            inputMode="decimal"
+            value={priceOut}
+            onChange={(e) => setPriceOut(e.target.value)}
+            placeholder="e.g. 0.60"
+            disabled={busy}
+          />
+          <p className="card__hint">
+            Used only for the rough cost estimate on the verdict; leave empty if unknown. A price
+            nobody sets is reported as “not configured”, not as free.
+          </p>
+          {priceError !== null && (
+            <p className="form-error" role="alert" data-testid="provider-price-error">
+              {priceError}
+            </p>
+          )}
           <div className="datasets__actions" style={{ marginTop: "var(--space-3)" }}>
             <Button type="submit" variant="primary" loading={busy}>
               {busy ? <Spinner size="sm" label="Creating" /> : "Add provider"}
@@ -252,6 +311,7 @@ export function ProvidersPanel() {
                 <th scope="col">Model</th>
                 <th scope="col">Base URL</th>
                 <th scope="col">Status</th>
+                <th scope="col">Token prices</th>
                 <th scope="col">Health</th>
                 <th scope="col">Actions</th>
               </tr>
@@ -269,6 +329,9 @@ export function ProvidersPanel() {
                     ) : (
                       <span className="badge badge--neutral">inactive</span>
                     )}
+                  </td>
+                  <td>
+                    <ProviderPrices provider={provider} onSaved={refresh} />
                   </td>
                   <td>{healthBadge(testResults[provider.id] || null)}</td>
                   <td>

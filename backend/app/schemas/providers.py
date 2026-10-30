@@ -6,7 +6,48 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+# The two optional prices the rough cost estimate reads. They live in the
+# provider's metadata bag so no migration was needed to introduce them.
+PRICE_IN_KEY = "price_per_1k_tokens_in"
+PRICE_OUT_KEY = "price_per_1k_tokens_out"
+PRICE_KEYS: tuple[str, str] = (PRICE_IN_KEY, PRICE_OUT_KEY)
+
+
+def normalize_provider_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    """Drop keys whose value is explicitly ``None``.
+
+    ``None`` means "unset" for this bag, so a cleared price removes the key
+    rather than storing a zero that would look like a free model.
+    """
+    if not metadata:
+        return {}
+    return {key: value for key, value in metadata.items() if value is not None}
+
+
+def check_prices(metadata: dict[str, Any] | None) -> None:
+    """Reject a price that is not a non-negative number.
+
+    Raising ``ValueError`` here turns into the API's normal 422 with the field
+    named, so the form can show the problem next to the input.
+    """
+    if not metadata:
+        return
+    for key in PRICE_KEYS:
+        if key not in metadata:
+            continue
+        raw = metadata[key]
+        if raw is None:
+            continue
+        if isinstance(raw, bool):
+            raise ValueError(f"{key} must be a number, not a true/false value")
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f"{key} must be a number") from None
+        if value < 0:
+            raise ValueError(f"{key} must be zero or greater")
 
 
 class ProviderBase(BaseModel):
@@ -32,6 +73,11 @@ class ProviderBase(BaseModel):
         description="Connector type for test configuration",
     )
 
+    @model_validator(mode="after")
+    def _validate_prices(self) -> ProviderBase:
+        check_prices(self.metadata)
+        return self
+
 
 class ProviderCreate(ProviderBase):
     pass
@@ -54,6 +100,11 @@ class ProviderUpdate(BaseModel):
     metadata: dict[str, Any] | None = None
     connector: str | None = None
 
+    @model_validator(mode="after")
+    def _validate_prices(self) -> ProviderUpdate:
+        check_prices(self.metadata)
+        return self
+
 
 class ProviderRead(BaseModel):
     model_config = ConfigDict(extra="forbid", from_attributes=True)
@@ -73,6 +124,9 @@ class ProviderRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     connector: str | None = None  # M3: stored per-provider
+    # The metadata bag, which is where the optional token prices live. It holds
+    # no secrets: the API key is a separate column and is never returned.
+    provider_config: dict[str, Any] | None = None
 
 
 class ProviderTestConnection(BaseModel):

@@ -16,6 +16,7 @@ from app.schemas.providers import (
     ProviderRead,
     ProviderTestResult,
     ProviderUpdate,
+    normalize_provider_metadata,
 )
 from app.services.providers import test_provider_connection
 
@@ -66,7 +67,7 @@ def create_provider(
         rate_limit_per_minute=payload.rate_limit_per_minute,
         tokens_per_minute=payload.tokens_per_minute,
         is_active=payload.is_active,
-        provider_config=payload.metadata,
+        provider_config=normalize_provider_metadata(payload.metadata),
         connector=payload.connector,
     )
     db.add(provider)
@@ -127,7 +128,21 @@ def update_provider(
         from app.security.keys import encrypt_key
 
         provider.api_key_encrypted = encrypt_key(payload.api_key)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+
+    changes = payload.model_dump(exclude_unset=True)
+    incoming_metadata = changes.pop("metadata", None)
+    if incoming_metadata is not None:
+        # Merge rather than replace: a provider's metadata holds keys this form
+        # does not know about, and clearing a price must remove only that key.
+        merged = dict(provider.provider_config or {})
+        for key, value in incoming_metadata.items():
+            if value is None:
+                merged.pop(key, None)
+            else:
+                merged[key] = value
+        provider.provider_config = merged
+
+    for field, value in changes.items():
         setattr(provider, field, value)
     db.commit()
     db.refresh(provider)

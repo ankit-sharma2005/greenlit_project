@@ -39,6 +39,42 @@ export interface ProviderCreate {
 
 export type ProviderUpdate = Partial<ProviderCreate>;
 
+export const PRICE_IN_KEY = "price_per_1k_tokens_in";
+export const PRICE_OUT_KEY = "price_per_1k_tokens_out";
+
+/** What the user typed for one price: empty means "not set", never 0. */
+export interface ParsedPrice {
+  value: number | null;
+  error: string | null;
+}
+
+export function parsePrice(raw: string): ParsedPrice {
+  const text = raw.trim();
+  if (text === "") {
+    return { value: null, error: null };
+  }
+  const value = Number(text);
+  if (!Number.isFinite(value)) {
+    return { value: null, error: "Enter a number, or leave this empty." };
+  }
+  if (value < 0) {
+    return { value: null, error: "A price cannot be negative." };
+  }
+  return { value, error: null };
+}
+
+/** The prices already stored on a provider, or nulls when it has none. */
+export function storedPrices(config: Record<string, unknown> | null | undefined): {
+  priceIn: number | null;
+  priceOut: number | null;
+} {
+  const read = (key: string): number | null => {
+    const raw = config?.[key];
+    return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+  };
+  return { priceIn: read(PRICE_IN_KEY), priceOut: read(PRICE_OUT_KEY) };
+}
+
 export interface ProviderTestResult {
   success: boolean;
   message: string;

@@ -58,6 +58,15 @@ describe("OperationsPanel", () => {
     );
 
     expect(screen.getByTestId("ops-cost")).toHaveTextContent("$0.0270");
+    // The estimate never appears as a bare number: the arithmetic is shown.
+    expect(screen.getByTestId("ops-cost-breakdown")).toHaveTextContent("1,500 in");
+    expect(screen.getByTestId("ops-cost-breakdown")).toHaveTextContent("per 1K tokens (estimate)");
+  });
+
+  it("omits the breakdown when no prices are configured", () => {
+    render(<OperationsPanel operations={makeOperations()} />);
+
+    expect(screen.queryByTestId("ops-cost-breakdown")).not.toBeInTheDocument();
   });
 
   it("says not measured instead of showing a zero for missing values", () => {

@@ -130,6 +130,8 @@ export interface FakeProviderOptions {
   judgeReply?: { score: number; reason: string; confidence: number };
   /** What to reply when Dataset Studio asks for generated cases. */
   generationReply?: string;
+  /** Token usage the fake reports; defaults to 120 in / 40 out. */
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
 }
 
 /**
@@ -193,6 +195,14 @@ export function startFakeProvider(options: FakeProviderOptions = {}): Promise<Fa
             created: Math.floor(Date.now() / 1000),
             model: "fake-model",
             choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+            // A real provider reports usage; the operations block and the cost
+            // estimate need it, so the fake one does too.
+            usage: {
+              prompt_tokens: options.usage?.prompt_tokens ?? 120,
+              completion_tokens: options.usage?.completion_tokens ?? 40,
+              total_tokens:
+                (options.usage?.prompt_tokens ?? 120) + (options.usage?.completion_tokens ?? 40),
+            },
           }),
         );
       });

@@ -111,6 +111,7 @@ function RunVerdict({ run }: { run: Run }) {
         className="card"
         aria-labelledby="run-verdict-heading"
         data-testid="run-verdict"
+        data-run-id={run.id}
         style={{ marginTop: "var(--space-5)" }}
       >
         <div className="card__header">
