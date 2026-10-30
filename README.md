@@ -31,7 +31,12 @@ a safety section, the judge that scored it, and an exportable report.
 - **Safety (spec 8.3):** a versioned built-in attack set (44 cases across five
   categories, with a planted canary) and 26 harmless prompts, scored as
   `attack_resisted` and `over_refusal`. A leaked marker or a missing refusal is a hard
-  NO-GO, and the result appears as its own section.
+  NO-GO, and the result appears as its own section. **Settings → Safety** shows exactly
+  what a run sends: every case with its category, severity, prompt and expected
+  behaviour, the category counts and the canary rule in words; the marker shown there
+  (`CANARY-7F3A`) is a synthetic test marker, not a secret. Selecting a subset of sets
+  is supported by the API (`safety_sets` on a run, catalogue at `GET /api/v1/safety/sets`)
+  but has no UI yet — the panel is read-only.
 - **Judge (spec 8.2):** a saved judge profile grades the answers at temperature 0 and
   stores its model, rubric version and prompt-template hash; unavailable or unsure
   judges fall back to REVIEW instead of failing the run. A profile can cap how many

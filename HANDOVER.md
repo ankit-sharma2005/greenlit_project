@@ -93,7 +93,7 @@ properties with a dark default and a light theme.
   (not built).
 - `components/` — the pieces the pages compose: `PromptAppPanel`, `UploadOutputsPanel`,
   `DemoPanel`, `RunProgressPanel` (progress → verdict card → exports), `BaselinePanel`
-  (baseline control and the regression table), `SafetySection`, `ReportExport`,
+  (baseline control and the regression table), `SafetySection`, `SafetyPanel`, `ReportExport`,
   `RunHistory`, `JudgePanel`, `ProvidersPanel`, `DatasetsPanel`, `ReviewQueue`,
   `CalibrationSummary`, `SetupChecklist`, `AuditPanel`.
 - `lib/` — typed API clients, one module per area, all going through `lib/api.ts` so the
@@ -123,12 +123,12 @@ bash scripts/run-e2e.sh
 - Backend tests live in `backend/tests`, one module per area. They never touch a real
   provider: `ChatFn` is injected, and so are the queue and the progress reader. Dataset
   source-generation tests build a small PDF fixture at test time and fake the model call.
-  The suite is currently 455 passed and 1 skipped; `tests/test_operations.py` covers the
+  The suite is currently 481 passed and 1 skipped; `tests/test_operations.py` covers the
   percentile edge cases (one case, even and odd counts, all failures), and
   `tests/test_error_kind_timeout.py` proves a real timeout against a local slow server
   (plus connection-refused and the old-run text fallback).
 - Frontend component tests are Vitest + Testing Library next to the components; the
-  suite is currently 115 tests in 22 files.
+  suite is currently 119 tests in 23 files.
 - `frontend/tests` is the Playwright suite (17 tests in 11 specs): admin/accounts and the
   results page, Try the demo, baseline regression, calibration (label → kappa), judge
   provenance, the prompt app (prices typed into the provider's row in Settings, then
@@ -186,8 +186,11 @@ bash scripts/run-e2e.sh
 
 ## Still marked "Coming soon"
 
-- **Settings sections:** Connectors (saved targets), Criteria (weight editing), Safety
-  (set selection), Account, Preferences.
+- **Settings sections:** Connectors (saved targets), Criteria (weight editing), Account,
+  Preferences. (Safety is no longer a placeholder: the tab lists the built-in sets
+  read-only. Editing the set, and choosing a subset for a run in the UI, are not built —
+  only the backend/API support exists: `safety_sets` on a run request, validated when the
+  run is created, plus the read-only catalogue at `GET /api/v1/safety/sets`.)
 - **Entry points on New Test:** Python function (traced), Built-in RAG app, Python SDK
   (traced), Docker image, Git repository, CLI command, and the disabled optgroup options
   beside them.

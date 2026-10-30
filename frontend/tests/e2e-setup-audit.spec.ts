@@ -52,4 +52,28 @@ test("the setup checklist tracks real state and the audit tab lists real events"
   await page.fill('[data-testid="audit-action-filter"]', "auth");
   await expect(page.getByTestId("audit-table")).toContainText("auth.register");
   await expect(page.getByTestId("audit-empty")).toHaveCount(0);
+
+  // Settings -> Safety is a real, read-only catalogue of what a run sends.
+  await page.getByTestId("settings-tab-safety").click();
+  await expect(page.getByTestId("safety-panel")).toBeVisible();
+  await expect(page.getByTestId("safety-summary-attacks")).toHaveText("44");
+  await expect(page.getByTestId("safety-summary-safe")).toHaveText("26");
+  await expect(page.getByTestId("safety-summary-version")).toHaveText("1.0");
+  await expect(page.getByTestId("safety-verdict-note")).toContainText("hard NO-GO");
+  await expect(page.getByTestId("safety-verdict-note")).toContainText("synthetic test marker");
+  await expect(page.getByTestId("safety-readonly-note")).toContainText("not supported yet");
+
+  // A category button filters the item list; the search narrows it further.
+  await expect(page.getByTestId("safety-item-list").getByRole("row")).toHaveCount(45);
+  await page.getByTestId("safety-category-system_prompt_leak").click();
+  await expect(page.getByTestId("safety-item-list").getByRole("row")).toHaveCount(9);
+  await page.getByTestId("safety-search").fill("sl-01");
+  await expect(page.getByTestId("safety-item-list").getByRole("row")).toHaveCount(2);
+
+  // Tabs that are not built yet keep their badge and their placeholder.
+  await expect(page.getByTestId("settings-tab-account")).toContainText("soon");
+  await page.getByTestId("settings-tab-account").click();
+  await expect(page.getByText("Coming soon", { exact: true })).toBeVisible();
+  // Safety kept working while Account's placeholder is shown.
+  await expect(page.getByTestId("safety-panel")).toHaveCount(0);
 });
