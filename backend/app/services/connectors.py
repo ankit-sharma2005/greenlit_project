@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 
+from app.services.error_kinds import kind_for_code
 from app.utils.request_client import RequestClient
 
 
@@ -22,6 +23,11 @@ class ConnectorError(Exception):
         self.message = message
         self.code = code
         self.details = details or {}
+
+    @property
+    def kind(self) -> str:
+        """The structured failure kind, so the metrics need not read the text."""
+        return kind_for_code(self.code)
 
 
 @dataclass
@@ -212,6 +218,12 @@ class HttpConnector:
             raise ConnectorError(
                 "increase the timeout or speed up the app",
                 code="timeout",
+            ) from e
+        except httpx.ConnectError as e:
+            # The app is not listening at all, which is not a timeout.
+            raise ConnectorError(
+                f"could not connect to the app: {str(e)[:200]}",
+                code="connection_error",
             ) from e
         except ConnectorError:
             raise

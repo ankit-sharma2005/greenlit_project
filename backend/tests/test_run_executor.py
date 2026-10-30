@@ -350,6 +350,8 @@ def test_timeout_item_is_flagged_and_counted(
         items = list_run_items(session, run_id)
         assert all(item.state == "failed" for item in items)
         assert all(item.trace is not None and item.trace["timed_out"] is True for item in items)
+        # The kind is stored next to the code, so the metrics need not read text.
+        assert all(item.trace["error_kind"] == "timeout" for item in items if item.trace)
         timeout_rows = [
             row for row in get_metric_results(session, run_id) if row.name == "timeout_rate"
         ]
@@ -357,6 +359,37 @@ def test_timeout_item_is_flagged_and_counted(
         assert timeout_rows[0].instrumented is True
         assert timeout_rows[0].passed is False
         assert timeout_rows[0].score == 0.0
+
+
+def test_a_refusal_whose_text_says_timeout_is_not_counted_as_one(
+    session_factory: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    """The stored kind decides, not the message (the old text heuristic's bug)."""
+    run_id = seed_run(session_factory, owner)
+    sender = FakeSender(
+        answers=echo_answers(),
+        failures={
+            row["question"]: (
+                "could not connect to the app: connection timed out",
+                "connection_error",
+            )
+            for row in ROWS
+        },
+    )
+    report, _ = run_it(run_id, session_factory, sender)
+
+    assert report["status"] == "completed"
+    with session_factory() as session:
+        items = list_run_items(session, run_id)
+        assert all(item.trace["error_kind"] == "connection" for item in items if item.trace)
+        assert all(item.trace["timed_out"] is False for item in items if item.trace)
+        timeout_rows = [
+            row for row in get_metric_results(session, run_id) if row.name == "timeout_rate"
+        ]
+        assert len(timeout_rows) == 1
+        # No case actually timed out, so the metric passes with a full score.
+        assert timeout_rows[0].score == 1.0
+        assert timeout_rows[0].passed is True
 
 
 # ---- cancel ---------------------------------------------------------------

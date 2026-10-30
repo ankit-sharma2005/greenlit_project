@@ -17,6 +17,7 @@ import httpx
 from app.models import Provider
 from app.security.keys import decrypt_key
 from app.security.rate_limit import RateLimiter
+from app.services.error_kinds import CONNECTION, HTTP_ERROR, TIMEOUT, kind_for_code
 
 DEFAULT_REQUESTS_PER_MINUTE = 30
 DEFAULT_MAX_TOKENS = 2048
@@ -27,10 +28,13 @@ RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 class GatewayError(Exception):
     """An LLM call failed; ``code`` maps to an HTTP status in the API layer."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, kind: str | None = None) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
+        # The structured failure kind. Codes stay as they are (the API maps them
+        # to statuses); the kind is what the operations metrics read.
+        self.kind = kind or kind_for_code(code)
 
 
 class LLMGateway:
@@ -102,11 +106,13 @@ class LLMGateway:
                 last_error = GatewayError(
                     "provider_unavailable",
                     f"Provider '{provider.name}' timed out after {provider.timeout_seconds}s.",
+                    kind=TIMEOUT,
                 )
             except httpx.HTTPError as exc:
                 last_error = GatewayError(
                     "provider_unavailable",
                     f"Could not reach provider '{provider.name}': {str(exc)[:200]}",
+                    kind=CONNECTION,
                 )
             else:
                 if response.status_code == 200:
@@ -118,6 +124,7 @@ class LLMGateway:
                     "provider_unavailable",
                     f"Provider '{provider.name}' answered HTTP {response.status_code}: "
                     f"{response.text[:200]}",
+                    kind=HTTP_ERROR,
                 )
                 if response.status_code not in RETRYABLE_STATUS_CODES:
                     raise last_error

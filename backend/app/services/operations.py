@@ -19,9 +19,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-# Connector and gateway error strings that mean "the app did not answer in time".
-# Matching on text is the only signal available: a timeout is reported to us as
-# an error message, not as a distinct field.
+from app.services.error_kinds import TIMEOUT, kind_for_code
+
+# Fallback for runs recorded before connectors labelled their failures: these
+# error strings were the only signal available, so old runs stay readable.
 _TIMEOUT_MARKERS = ("timeout", "timed out")
 
 
@@ -34,6 +35,9 @@ class ItemSample:
     tokens_in: int | None = None
     tokens_out: int | None = None
     error: str | None = None
+    # The structured failure kind the connector/gateway recorded. ``None`` on
+    # runs recorded before it existed, which fall back to the text heuristic.
+    error_kind: str | None = None
 
 
 def percentile(values: Sequence[float], fraction: float) -> float | None:
@@ -67,11 +71,24 @@ def percentile(values: Sequence[float], fraction: float) -> float | None:
 
 
 def is_timeout(error: str | None) -> bool:
-    """True when an item's error text describes a timeout."""
+    """True when an item's error text describes a timeout (old-run fallback)."""
     if not error:
         return False
     lowered = error.lower()
     return any(marker in lowered for marker in _TIMEOUT_MARKERS)
+
+
+def sample_timed_out(sample: ItemSample) -> bool:
+    """Whether this case timed out.
+
+    The structured kind wins when present: a connection error whose message
+    happens to contain "timeout" is not a timeout, and a provider that says
+    "request aborted" still is one when the gateway labelled it so. Only the
+    absence of a kind (runs recorded before it) falls back to the text.
+    """
+    if sample.error_kind:
+        return sample.error_kind == TIMEOUT
+    return is_timeout(sample.error)
 
 
 def _share(count: int, total: int) -> float | None:
@@ -109,7 +126,7 @@ def compute_operations(
     attempted = total - cancelled
 
     timed_out = sum(
-        1 for sample in samples if sample.state == "failed" and is_timeout(sample.error)
+        1 for sample in samples if sample.state == "failed" and sample_timed_out(sample)
     )
     latencies = [float(sample.latency_ms) for sample in samples if sample.latency_ms is not None]
     tokens_in_total = _sum_or_none(
@@ -161,9 +178,29 @@ def samples_from_items(items: Sequence[Any]) -> list[ItemSample]:
             tokens_in=getattr(item, "tokens_in", None),
             tokens_out=getattr(item, "tokens_out", None),
             error=getattr(item, "error", None),
+            error_kind=_trace_error_kind(item),
         )
         for item in items
     ]
+
+
+def _trace_error_kind(item: Any) -> str | None:
+    """The structured failure kind recorded on an item, when there is one.
+
+    The worker stores ``error_kind`` directly; a run recorded between the two
+    changes may only have ``error_code``, so that is translated. ``None`` means
+    the run predates both, and the text heuristic takes over.
+    """
+    trace = getattr(item, "trace", None)
+    if not isinstance(trace, dict):
+        return None
+    kind = trace.get("error_kind")
+    if isinstance(kind, str) and kind:
+        return kind
+    code = trace.get("error_code")
+    if isinstance(code, str) and code:
+        return kind_for_code(code)
+    return None
 
 
 def prices_from_metadata(metadata: Any) -> tuple[float | None, float | None]:

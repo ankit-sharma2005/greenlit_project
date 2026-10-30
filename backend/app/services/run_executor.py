@@ -66,7 +66,7 @@ from app.services.judge import (
     prompt_template_hash,
 )
 from app.services.judge_profiles import effective_model
-from app.services.llm_gateway import LLMGateway
+from app.services.llm_gateway import GatewayError, LLMGateway
 from app.services.metrics import MetricResult, not_instrumented
 from app.services.operations import (
     compute_operations,
@@ -762,6 +762,8 @@ def execute_run(
         trace: Trace | None = None
         error: str | None = None
         error_code: str | None = None
+        # None when the case succeeded; otherwise one of error_kinds.ERROR_KINDS.
+        error_kind: str | None = None
         timed_out = False
         try:
             # upload_outputs: answers come from the file, nothing is called.
@@ -770,10 +772,18 @@ def execute_run(
         except ConnectorError as exc:
             error = exc.message
             error_code = exc.code
-            timed_out = exc.code == "timeout"
+            error_kind = exc.kind
+            timed_out = error_kind == "timeout"
+        except GatewayError as exc:
+            # The prompt-app path fails through the gateway, not a connector.
+            error = exc.message
+            error_code = exc.code
+            error_kind = exc.kind
+            timed_out = error_kind == "timeout"
         except Exception as exc:  # a single bad case never fails the run (spec 8.1)
             error = str(exc) or exc.__class__.__name__
             error_code = "unexpected_error"
+            error_kind = "other"
         elapsed_ms = int((time.monotonic() - call_started) * 1000)
         state = RunItemState.FAILED if error else RunItemState.COMPLETED
 
@@ -795,6 +805,7 @@ def execute_run(
                             "connector": entry,
                             "timed_out": timed_out,
                             "error_code": error_code,
+                            "error_kind": error_kind,
                             "elapsed_ms": elapsed_ms,
                             "raw": trace.raw if trace is not None else None,
                         },
