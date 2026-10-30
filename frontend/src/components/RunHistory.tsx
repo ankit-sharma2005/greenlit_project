@@ -99,11 +99,15 @@ export function RunHistory() {
   const handleOpen = async (run: Run) => {
     setOpenRunId(run.id);
     setOpenRun(run);
-    if (isTerminal(run.state)) return;
+    setError(null);
     try {
       setOpenRun(await getRun(run.id));
-    } catch {
-      /* the poll above keeps trying */
+    } catch (caught) {
+      setError(
+        caught instanceof ApiError
+          ? caught.message
+          : "Could not load this run’s full results. Try again.",
+      );
     }
   };
 

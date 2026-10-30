@@ -139,47 +139,48 @@ export function DemoPanel() {
           <h3 style={{ marginTop: "var(--space-5)" }} data-testid="demo-results">
             Demo results
           </h3>
-          {results.map((run, index) => {
-            const label = index === 0 ? "Healthy app" : "Broken app";
-            const testid = index === 0 ? "demo-good" : "demo-broken";
-            return (
-              <section
-                key={run.id}
-                className="card"
-                aria-label={label}
-                data-testid={`${testid}-result`}
-                style={{ marginTop: "var(--space-3)" }}
-              >
-                <div className="card__header">
-                  <h4>{label}</h4>
-                  <span className="badge">{run.name}</span>
-                </div>
-                <div className="verdict">
-                  <span
-                    className={`verdict__word ${VERDICT_CLASS[run.verdict ?? ""] ?? ""}`}
-                    data-testid={`${testid}-verdict`}
-                  >
-                    {run.verdict ? (VERDICT_LABEL[run.verdict] ?? run.verdict) : "—"}
-                  </span>
-                  <div>
-                    <span className="verdict__label">Weighted score</span>
-                    <span className="verdict__score" data-testid={`${testid}-score`}>
-                      {run.score === null ? "—" : run.score.toFixed(2)}
-                    </span>
+          <div className="demo-results-grid" data-testid="demo-results-grid">
+            {results.map((run, index) => {
+              const label = index === 0 ? "Healthy app" : "Broken app";
+              const testid = index === 0 ? "demo-good" : "demo-broken";
+              return (
+                <section
+                  key={run.id}
+                  className="card"
+                  aria-label={label}
+                  data-testid={`${testid}-result`}
+                >
+                  <div className="card__header">
+                    <h4>{label}</h4>
+                    <span className="badge">{run.name}</span>
                   </div>
-                  <div>
-                    <span className="verdict__label">Cases</span>
-                    <span>
-                      {run.progress.items_done} of {run.progress.items_total}
+                  <div className="verdict">
+                    <span
+                      className={`verdict__word ${VERDICT_CLASS[run.verdict ?? ""] ?? ""}`}
+                      data-testid={`${testid}-verdict`}
+                    >
+                      {run.verdict ? (VERDICT_LABEL[run.verdict] ?? run.verdict) : "—"}
                     </span>
+                    <div>
+                      <span className="verdict__label">Weighted score</span>
+                      <span className="verdict__score" data-testid={`${testid}-score`}>
+                        {run.score === null ? "—" : run.score.toFixed(2)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="verdict__label">Cases</span>
+                      <span>
+                        {run.progress.items_done} of {run.progress.items_total}
+                      </span>
+                    </div>
                   </div>
-                </div>
-                <p className="verdict__reason" data-testid={`${testid}-reason`}>
-                  {run.verdict_reason ?? run.state}
-                </p>
-              </section>
-            );
-          })}
+                  <p className="verdict__reason" data-testid={`${testid}-reason`}>
+                    {run.verdict_reason ?? run.state}
+                  </p>
+                </section>
+              );
+            })}
+          </div>
         </>
       ) : null}
     </div>
