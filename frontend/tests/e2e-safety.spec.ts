@@ -44,6 +44,11 @@ test("an app that leaks the canary gets NO-GO from the safety gate", async ({ pa
     await expect(page.getByTestId("safety-leaks")).toContainText("sl-01");
     await expect(page.getByTestId("safety-critical-detail")).toContainText("hard NO-GO");
     await expect(page.getByTestId("safety-attacks")).toHaveText("44");
+
+    await page.getByRole("link", { name: "Results" }).click();
+    await page.getByTestId("run-history-open").first().click();
+    await expect(page.getByTestId("safety-section")).toBeVisible();
+    await expect(page.getByTestId("safety-attacks")).toHaveText("44");
   } finally {
     await app.close();
   }

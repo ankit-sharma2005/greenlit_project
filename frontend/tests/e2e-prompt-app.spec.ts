@@ -3,10 +3,10 @@ import { createServer } from "http";
 import type { AddressInfo } from "net";
 
 import { GUARDED_REFUSAL, isDisallowed } from "./guard";
+import { ADMIN_EMAIL, createJudgeProfile, ensureAdmin, login, selectJudgeProfile } from "./helpers";
 
 const WEB = process.env.E2E_BASE_URL ?? "http://localhost:5177";
 const API = process.env.E2E_API_URL ?? "http://localhost:8003";
-const PASSWORD = "password123456";
 const MODEL = "fake-connector-model";
 
 const ANSWERS: Record<string, string> = {
@@ -50,9 +50,40 @@ function startFakeProvider(): Promise<FakeProvider> {
           const payload = JSON.parse(body) as {
             messages?: Array<{ role: string; content: string }>;
           };
-          const userMessages = (payload.messages ?? []).filter((m) => m.role === "user");
+          const messages = payload.messages ?? [];
+          const system = messages
+            .filter((message) => message.role === "system")
+            .map((message) => message.content)
+            .join("\n");
+          const userMessages = messages.filter((m) => m.role === "user");
           const last = userMessages[userMessages.length - 1];
           question = typeof last?.content === "string" ? last.content : "";
+          if (system.includes("Reply with ONLY a JSON object")) {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                id: "fake-chat",
+                object: "chat.completion",
+                created: Math.floor(Date.now() / 1000),
+                model: MODEL,
+                choices: [
+                  {
+                    index: 0,
+                    message: {
+                      role: "assistant",
+                      content: JSON.stringify({
+                        score: 1,
+                        reason: "The answer states the expected fact.",
+                        confidence: 0.95,
+                      }),
+                    },
+                    finish_reason: "stop",
+                  },
+                ],
+              }),
+            );
+            return;
+          }
         } catch {
           question = "";
         }
@@ -87,26 +118,12 @@ function startFakeProvider(): Promise<FakeProvider> {
   });
 }
 
-async function register(page: Page, name: string, email: string): Promise<void> {
-  await page.goto(`${WEB}/register`);
-  await page.fill('#register-name, input[name="name"]', name);
-  await page.fill('#register-email, input[type="email"], input[name="email"]', email);
-  await page.fill('#register-password, input[type="password"]', PASSWORD);
-  const registered = page.waitForResponse(
-    (response) => response.url().includes("/api/v1/auth/register") && response.status() === 201,
-  );
-  await page.click('button[type="submit"]');
-  await (await registered).json();
-  await page.waitForURL((url) => !url.pathname.includes("/register"), { timeout: 15_000 });
-}
-
 /**
  * Add the saved provider the prompt-app form picks up, pointed at the fake server.
  *
- * The signed-in session is used because providers are admin-only and the account
- * this spec registers is the first one on the fresh database, so it is the admin.
+ * The signed-in admin session is used because providers are admin-only.
  */
-async function createFakeProvider(page: Page, provider: FakeProvider): Promise<void> {
+async function createFakeProvider(page: Page, provider: FakeProvider): Promise<string> {
   const created = await page.request.post(`${API}/api/v1/providers`, {
     data: {
       name: "Fake Prompt App Provider",
@@ -122,6 +139,7 @@ async function createFakeProvider(page: Page, provider: FakeProvider): Promise<v
     },
   });
   expect(created.status(), await created.text()).toBe(201);
+  return ((await created.json()) as { id: string }).id;
 }
 
 /** Upload a CSV and approve version 1, using the signed-in session's cookies. */
@@ -143,9 +161,15 @@ async function uploadApprovedDataset(page: Page, name: string): Promise<void> {
 test("prompt app entry point runs a prompt to a verdict", async ({ page }) => {
   const provider = await startFakeProvider();
   try {
-    const email = `promptapp${Date.now()}@example.com`;
-    await register(page, "Prompt App Tester", email);
-    await createFakeProvider(page, provider);
+    await ensureAdmin();
+    await login(page, ADMIN_EMAIL);
+    const providerId = await createFakeProvider(page, provider);
+    const judgeProfileId = await createJudgeProfile(page, {
+      name: `Prompt app judge ${Date.now()}`,
+      providerId,
+      model: MODEL,
+    });
+    await selectJudgeProfile(page, judgeProfileId);
     const datasetName = `Prompt Golden ${Date.now()}`;
     await uploadApprovedDataset(page, datasetName);
 
@@ -168,6 +192,8 @@ test("prompt app entry point runs a prompt to a verdict", async ({ page }) => {
     await page.selectOption('[data-testid="prompt-app-dataset"]', {
       label: `${datasetName} · v1 (2 cases)`,
     });
+    await page.getByLabel("Safety").uncheck();
+    await page.getByLabel("Operations (latency, errors, tokens)").uncheck();
 
     // Start test itself creates the run through the runs API.
     await page.click('[data-testid="start-test"]');

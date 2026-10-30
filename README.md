@@ -203,11 +203,13 @@ cd frontend && npm run lint && npm run format:check && npm run typecheck && npm 
 bash scripts/run-e2e.sh
 ```
 
-The script creates a **disposable** stack and drops it afterwards, so it never restarts or
-rebuilds the docker stack you use in the browser:
+The script creates a uniquely named **disposable** stack and stops its containers afterwards,
+so it never restarts or rebuilds the Docker stack you use in the browser. It preserves the
+e2e stack's named volumes (it never uses `down -v`); each invocation gets a new Compose
+project and therefore a fresh database:
 
-- Postgres + Redis run in their own Compose project (`greenlit-e2e`) on ports 5536/6482
-  with a fresh volume — the e2e database is empty every run, so the first registered user
+- Postgres + Redis run in their own uniquely named Compose project (`greenlit-e2e-*`) on
+  ports 5536/6482 with a fresh volume — the e2e database is empty every run, so the first registered user
   is asserted to be `admin` on that clean database;
 - the API (8103), a solo Celery worker and the Vite dev server (5277) start as local
   processes and are killed on exit;
@@ -217,8 +219,8 @@ rebuilds the docker stack you use in the browser:
 - Playwright runs the whole suite in `frontend/tests` (`e2e-admin`, `e2e-baseline`,
   `e2e-calibration`, `e2e-demo`, `e2e-judge`, `e2e-prompt-app`, `e2e-report`,
   `e2e-safety`, `e2e-setup-audit`, `e2e-upload-outputs`) against
-  `http://localhost:5277` (`E2E_BASE_URL`), then tears the project down with
-  `docker compose down -v`.
+  `http://localhost:5277` (`E2E_BASE_URL`), then stops only that project with
+  `docker compose down`; its volume is preserved.
 
 Because the whole suite takes longer than one command on a slow machine, a single spec can
 be run on the same disposable stack:

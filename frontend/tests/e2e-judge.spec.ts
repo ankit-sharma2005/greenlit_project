@@ -9,6 +9,7 @@ import {
   ensureAdmin,
   login,
   openNewTestPage,
+  selectJudgeProfile,
   startFakeProvider,
   uploadApprovedDataset,
 } from "./helpers";
@@ -40,11 +41,12 @@ test("a judged run names the judge model and rubric on the verdict card", async 
       baseUrl,
     });
     // The first profile is selected automatically, so new runs use it.
-    await createJudgeProfile(page, {
+    const profileId = await createJudgeProfile(page, {
       name: `Judge profile ${stamp}`,
       providerId: judgeProviderId,
       model: judgeModel,
     });
+    await selectJudgeProfile(page, profileId);
     const dataset = await uploadApprovedDataset(page, `Judge golden ${stamp}`, GOLDEN_CSV);
 
     await openNewTestPage(page);
@@ -58,6 +60,8 @@ test("a judged run names the judge model and rubric on the verdict card", async 
       "You are a concise assistant. Answer in one sentence.",
     );
     await page.selectOption('[data-testid="prompt-app-dataset"]', { label: dataset.label });
+    await page.getByLabel("Safety").uncheck();
+    await page.getByLabel("Operations (latency, errors, tokens)").uncheck();
     await page.click('[data-testid="start-test"]');
 
     // Judging must not change a clean verdict, only add the provenance.

@@ -31,7 +31,7 @@ E2E_BASE_URL="${E2E_BASE_URL:-http://localhost:${WEB_PORT}}"
 E2E_API_URL="${E2E_API_URL:-http://localhost:${API_PORT}}"
 E2E_API_BIND="${E2E_API_BIND:-0.0.0.0}"
 E2E_WEB_BIND="${E2E_WEB_BIND:-0.0.0.0}"
-COMPOSE_PROJECT="greenlit-e2e"
+COMPOSE_PROJECT="greenlit-e2e-${$}-$(date +%s)"
 
 export E2E_BASE_URL
 export E2E_API_URL
@@ -56,9 +56,8 @@ PIDS=()
 
 log() { echo "==> $*" >&2; }
 
-# Only the e2e project is torn down, by name. The dev stack in
-# docker-compose.yml (project "greenlit") is never mentioned here, so its
-# containers and its volume survive a run untouched.
+# Only this invocation's uniquely named e2e project is stopped. Its named
+# volumes are intentionally preserved, and the dev stack is never mentioned.
 cleanup() {
   log "Stopping host processes"
   for pid in "${PIDS[@]:-}"; do
@@ -69,8 +68,8 @@ cleanup() {
   wait 2>/dev/null || true
 
   if [ -z "${SKIP_STACK:-}" ] && [ -n "${COMPOSE_FILE:-}" ]; then
-    log "Removing the disposable ${COMPOSE_PROJECT} stack"
-    docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" down -v --remove-orphans \
+    log "Stopping the disposable ${COMPOSE_PROJECT} stack (preserving volumes)"
+    docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" down --remove-orphans \
       >>"${ROOTDIR}/e2e-docker.log" 2>&1 || true
   fi
 }
@@ -88,11 +87,6 @@ if [ -z "${SKIP_STACK:-}" ]; then
     echo "Set SKIP_STACK=1 and provide E2E_BASE_URL / E2E_API_URL to target an existing stack." >&2
     exit 1
   fi
-
-  # Drop any leftovers from an interrupted run so the database starts empty:
-  # the first account registered must be the admin.
-  docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" down -v --remove-orphans \
-    >"${ROOTDIR}/e2e-docker.log" 2>&1 || true
 
   E2E_POSTGRES_PORT="$PG_PORT" E2E_REDIS_PORT="$REDIS_PORT" \
     docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" up -d --wait --wait-timeout 180 \
@@ -133,7 +127,7 @@ if [ -z "${SKIP_STACK:-}" ]; then
   PIDS+=($!)
 
   log "Starting web on :${WEB_PORT} (VITE_API_BASE_URL=http://localhost:${API_PORT})"
-  (cd frontend && VITE_API_BASE_URL="http://localhost:${API_PORT}" exec npm run dev -- --host "$E2E_WEB_BIND" --port "$WEB_PORT") \
+  (cd frontend && VITE_API_BASE_URL="http://localhost:${API_PORT}" exec node node_modules/vite/bin/vite.js --host "$E2E_WEB_BIND" --port "$WEB_PORT") \
     >"${ROOTDIR}/e2e-web.log" 2>&1 &
   PIDS+=($!)
 
@@ -151,6 +145,10 @@ if [ -z "${SKIP_STACK:-}" ]; then
   fi
   if ! curl -sf "http://localhost:${WEB_PORT}/" >/dev/null; then
     echo "Web did not become healthy; see ${ROOTDIR}/e2e-web.log" >&2
+    exit 1
+  fi
+  if grep -q "Port ${WEB_PORT} is already in use" "${ROOTDIR}/e2e-web.log"; then
+    echo "Web port ${WEB_PORT} is already in use; choose another E2E_WEB_PORT." >&2
     exit 1
   fi
 

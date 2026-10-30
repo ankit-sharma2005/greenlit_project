@@ -310,6 +310,12 @@ export async function createJudgeProfile(
   return ((await created.json()) as { id: string }).id;
 }
 
+/** Select the judge profile a run should use after creating it. */
+export async function selectJudgeProfile(page: Page, profileId: string): Promise<void> {
+  const selected = await page.request.post(`${API}/api/v1/judge-profiles/${profileId}/select`);
+  expect(selected.status(), await selected.text()).toBe(200);
+}
+
 /** Land on the New Test page, failing loudly if the session did not survive. */
 export async function openNewTestPage(page: Page): Promise<void> {
   await page.goto(`${WEB}/`);

@@ -144,6 +144,12 @@ describe("DemoPanel", () => {
     expect(rendered.getByTestId("demo-broken-score")).toHaveTextContent("0.42");
     expect(rendered.getByTestId("demo-broken-reason")).toHaveTextContent("Low weighted score");
     expect(rendered.getByTestId("demo-results")).toHaveTextContent("Demo results");
+    expect(rendered.getByTestId("demo-results-grid")).toContainElement(
+      rendered.getByTestId("demo-good-result"),
+    );
+    expect(rendered.getByTestId("demo-results-grid")).toContainElement(
+      rendered.getByTestId("demo-broken-result"),
+    );
   });
 
   it("reports an error when the demo setup fails", async () => {

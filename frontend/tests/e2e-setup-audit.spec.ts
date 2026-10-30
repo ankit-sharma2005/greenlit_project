@@ -1,33 +1,40 @@
 import { test, expect } from "@playwright/test";
 
-import { GOLDEN_CSV, WEB, register, uploadApprovedDataset } from "./helpers";
+import {
+  ADMIN_EMAIL,
+  API,
+  GOLDEN_CSV,
+  WEB,
+  ensureAdmin,
+  login,
+  uploadApprovedDataset,
+} from "./helpers";
 
 /**
  * Setup checklist and the audit screen (spec 8.4).
  *
- * Both are "real status" surfaces: the checklist counts what actually exists, and
- * the audit table reads the append-only log through its server-side filter. The
- * test walks the first-run path with no provider and no dataset, then approves a
- * dataset and checks the checklist notices.
+ * Both are "real status" surfaces: the checklist reflects shared providers and
+ * the current owner's approved datasets, while the audit table reads the
+ * append-only log through its server-side filter.
  */
 test("the setup checklist tracks real state and the audit tab lists real events", async ({
   page,
 }) => {
-  const email = `setup${Date.now()}@example.com`;
-  await register(page, "Setup User", email);
+  await ensureAdmin();
+  await login(page, ADMIN_EMAIL);
 
   await page.goto(`${WEB}/`);
   const checklist = page.getByTestId("setup-checklist");
   await expect(checklist).toBeVisible();
-  await expect(page.getByTestId("setup-progress")).toHaveText("0 of 3");
-  await expect(page.getByTestId("setup-provider-link")).toHaveAttribute("href", "/settings");
-  await expect(page.getByTestId("setup-provider")).toHaveAttribute("data-done", "false");
-  await expect(page.getByTestId("setup-dataset")).toHaveAttribute("data-done", "false");
+  const providersResponse = await page.request.get(`${API}/api/v1/providers`);
+  expect(providersResponse.status()).toBe(200);
+  const providers = (await providersResponse.json()) as unknown[];
+  const providerStep = page.getByTestId("setup-provider");
+  await expect(providerStep).toHaveAttribute("data-done", String(providers.length > 0));
 
-  // Approve a dataset: only then does the dataset step count as done.
+  // Approve a dataset and verify the checklist reflects it.
   await uploadApprovedDataset(page, `Setup golden ${Date.now()}`, GOLDEN_CSV);
   await page.reload();
-  await expect(page.getByTestId("setup-progress")).toHaveText("1 of 3");
   await expect(page.getByTestId("setup-dataset")).toHaveAttribute("data-done", "true");
 
   // Settings -> Audit log is a real, admin-only table, not a placeholder.

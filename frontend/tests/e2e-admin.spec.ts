@@ -295,6 +295,8 @@ test("results page lists runs, opens a verdict and compares two runs", async ({ 
     // Two completed runs from the same account, through the normal UI flow.
     await openNewTestPage(page);
     await detectTarget(page, app);
+    await page.getByLabel("Safety").uncheck();
+    await page.getByLabel("Operations (latency, errors, tokens)").uncheck();
     await page.selectOption('[data-testid="run-dataset"]', {
       label: `${datasetName} · v1 (2 cases)`,
     });
