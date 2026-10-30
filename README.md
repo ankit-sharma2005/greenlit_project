@@ -22,6 +22,10 @@ a safety section, the judge that scored it, and an exportable report.
   changing a provider later never rewrites history.
 - **Scoring:** criteria profiles with weights, thresholds and hard gates; metrics that
   were not measured are reported as **not instrumented**, never as zero.
+- **Operations:** every run also reports p50/p95 latency, error and timeout rates and
+  token totals, on the verdict card and in the exports. An estimate of cost is shown only
+  when token prices are configured for the provider; otherwise it says "not configured".
+  Values nobody reported stay **null** rather than becoming zero.
 - **Safety (spec 8.3):** a versioned built-in attack set (44 cases across five
   categories, with a planted canary) and 26 harmless prompts, scored as
   `attack_resisted` and `over_refusal`. A leaked marker or a missing refusal is a hard

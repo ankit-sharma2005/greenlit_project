@@ -70,6 +70,9 @@ migrations, one error envelope `{"error": {"code", "message", "fields"}}`.
     one label per reviewer per case, and the project calibration.
   - `generation.py` — draft case generation through the shared LLM gateway, with text and
     PDF/TXT/MD extraction, passage limits, untrusted-source prompting and reference passages.
+  - `operations.py` — pure operations metrics: p50/p95 latency, error and timeout rates
+    and token totals, with a cost estimate only when token prices are configured. A value
+    nobody reported stays null rather than becoming a 0.
   - `report.py` — one report document with three renderers; redacts headers, escapes
     HTML, prefixes formula-leading CSV cells.
   - `llm_gateway.py` — the only place that talks to a model provider: timeout, retries
@@ -99,9 +102,10 @@ properties with a dark default and a light theme.
 **Data flow of one run:** `POST /api/v1/quick-test` (or `/runs`) snapshots settings and
 queues → Celery executes case by case, writing items and metric rows → the decision rules
 produce the verdict and reason → the worker compares the run with its dataset version's
-baseline and stores the result → the browser polls `/runs/{id}/progress` and then reads
-`/runs/{id}` for metrics, failures, safety, judge provenance and regression →
-`/runs/{id}/report` renders the same document out of the box.
+baseline and stores the result, and stores the operations block → the browser polls
+`/runs/{id}/progress` and then reads `/runs/{id}` for metrics, failures, safety, judge
+provenance, regression and operations → `/runs/{id}/report` renders the same document out
+of the box.
 
 ## How to test
 
@@ -119,7 +123,10 @@ bash scripts/run-e2e.sh
 - Backend tests live in `backend/tests`, one module per area. They never touch a real
   provider: `ChatFn` is injected, and so are the queue and the progress reader. Dataset
   source-generation tests build a small PDF fixture at test time and fake the model call.
-- Frontend component tests are Vitest + Testing Library next to the components.
+  The suite is currently 435 passed and 1 skipped; `tests/test_operations.py` covers the
+  percentile edge cases (one case, even and odd counts, all failures).
+- Frontend component tests are Vitest + Testing Library next to the components; the
+  suite is currently 107 tests in 21 files.
 - `frontend/tests` is the Playwright suite (17 tests in 11 specs): admin/accounts and the
   results page, Try the demo, baseline regression, calibration (label → kappa), judge
   provenance, the prompt app, report download, safety both ways, the setup checklist and
@@ -159,6 +166,13 @@ bash scripts/run-e2e.sh
 - **PDF dataset generation requires selectable text.** Scanned PDFs are rejected with an
   actionable error; OCR is not implemented. Source uploads are limited to 5 MB and only the
   first 20 passages are sent to the model.
+- **Token prices are set per provider, and nothing sets them yet from the UI.**
+  `operations.py` reads `price_per_1k_tokens_in` / `price_per_1k_tokens_out` out of a
+  provider's `metadata`, so until those keys exist every run reports cost as "not
+  configured". An HTTP-endpoint run has no provider at all and always says so.
+- **Operations describes the cases it saw.** Percentiles cover only the cases that
+  reported a latency; a run where the connector never timed the call shows "not measured"
+  rather than an estimate.
 - **Test Chat is a placeholder.** The page exists and is honest about it.
 - **The topbar project switcher is disabled** ("Default project") and the provider health
   badge there is static; provider health is real on Settings → Providers.
