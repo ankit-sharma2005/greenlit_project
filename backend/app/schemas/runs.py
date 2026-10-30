@@ -68,6 +68,9 @@ class RunCreateRequest(BaseModel):
     # Judge settings: an explicit profile, else the selected one (Settings > Judge).
     judge_profile_id: UUID | None = None
 
+    # Safety settings: which built-in sets to send. Omitted means every set.
+    safety_sets: list[str] | None = Field(default=None, max_length=40)
+
 
 class QuickTestRequest(BaseModel):
     """Everything a CI job needs: entry point, target and the test types."""
@@ -95,6 +98,8 @@ class QuickTestRequest(BaseModel):
     timeout_seconds: int = Field(default=60, ge=1, le=300)
     allow_private_targets: bool = False
     name: str | None = Field(default=None, max_length=120)
+    # Safety settings: which built-in sets to send. Omitted means every set.
+    safety_sets: list[str] | None = Field(default=None, max_length=40)
 
 
 class RunProgressRead(BaseModel):

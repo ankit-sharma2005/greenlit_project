@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Dataset, DatasetVersion, Provider, Run, RunState, User, utcnow
+from app.safety.sets import SafetySelection, SafetySetError, resolve_safety_sets
 from app.schemas.runs import QuickTestRequest, RunCreateRequest
 from app.services.criteria import CriteriaError, get_profile
 from app.services.datasets import (
@@ -196,6 +197,14 @@ def _check_test_types(test_types: Sequence[str]) -> Sequence[str]:
     return test_types
 
 
+def _safety_selection(requested: Sequence[str] | None) -> SafetySelection:
+    """Validate the run's safety sets, turning a bad choice into a 422."""
+    try:
+        return resolve_safety_sets(requested)
+    except SafetySetError as exc:
+        raise RunServiceError(exc.message, status=422, code="invalid_safety_sets") from exc
+
+
 def resolve_judge_profile(session: Session, user: User, requested: uuid.UUID | None) -> str | None:
     """The judge for this run: the requested profile, else the selected one.
 
@@ -232,6 +241,8 @@ def create_run_from_request(
     )
     snapshot = build_snapshot(payload, dataset_version_id=version.id, entry_point=entry)
     snapshot["test_types"] = test_types
+    if "safety" in test_types:
+        snapshot["safety_sets"] = list(_safety_selection(payload.safety_sets).ids)
     judge_id = resolve_judge_profile(session, user, payload.judge_profile_id)
     if judge_id is not None:
         snapshot["judge_profile_id"] = judge_id
@@ -394,6 +405,7 @@ def create_quick_test(
         context_path=payload.context_path,
         timeout_seconds=payload.timeout_seconds,
         allow_private_targets=payload.allow_private_targets,
+        safety_sets=payload.safety_sets,
     )
     run = create_run_from_request(session, user, request, enqueue)
     return run, version, generated

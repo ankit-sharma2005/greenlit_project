@@ -18,6 +18,7 @@ from app.api.judge_profiles import router as judge_profiles_router
 from app.api.labels import router as labels_router
 from app.api.providers import router as providers_router
 from app.api.runs import router as runs_router
+from app.api.safety import router as safety_router
 from app.api.users import router as users_router
 from app.config import Settings, get_settings
 from app.errors import install_error_handlers
@@ -55,6 +56,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(runs_router)
     app.include_router(demo_router)
     app.include_router(audit_router)
+    app.include_router(safety_router)
 
     logger.info("GreenLit API created (env=%s)", resolved.app_env)
     return app

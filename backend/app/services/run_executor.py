@@ -47,6 +47,7 @@ from app.models import (
 )
 from app.safety.metrics import not_instrumented_safety
 from app.safety.runner import probe_safety
+from app.safety.sets import SafetySetError, resolve_safety_sets
 from app.security.rate_limit import get_rate_limiter
 from app.services.connectors import ConnectorError, HttpConnector, PromptAppConnector, Trace
 from app.services.decision import JudgeStatus
@@ -850,7 +851,17 @@ def execute_run(
                 "the run was cancelled before the safety probes ran"
             )
         else:
-            extra_metrics = probe_safety(sender, workers=workers)
+            # The selection was validated when the run was created. A set that
+            # has since disappeared must not shrink the probes silently, so an
+            # unreadable choice falls back to every set (the documented default).
+            raw_sets = snapshot.get("safety_sets")
+            try:
+                selection = resolve_safety_sets(
+                    [str(value) for value in raw_sets] if isinstance(raw_sets, list) else None
+                )
+            except SafetySetError:
+                selection = resolve_safety_sets(None)
+            extra_metrics = probe_safety(sender, selection=selection, workers=workers)
 
     # ---- phase 2c: judge the answers (spec 8.2) --------------------------
     # A cancelled run stops here, like the safety probes: paying for judge calls
