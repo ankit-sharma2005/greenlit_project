@@ -42,12 +42,16 @@ class _SlowHandler(BaseHTTPRequestHandler):
     """Answers correctly, but only after the connector has given up."""
 
     def do_POST(self) -> None:
-        time.sleep(2.0)
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(RESPONSE_BODY)))
-        self.end_headers()
-        self.wfile.write(RESPONSE_BODY)
+        time.sleep(5.0)
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(RESPONSE_BODY)))
+            self.end_headers()
+            self.wfile.write(RESPONSE_BODY)
+        except OSError:
+            # The client gave up long ago, which is exactly what this test wants.
+            return
 
     def log_message(self, *args: object) -> None:  # keep the test output clean
         return
@@ -87,8 +91,10 @@ def test_a_slow_server_is_a_structured_timeout(slow_server: str) -> None:
     assert caught.value.code == "timeout"
     assert caught.value.kind == TIMEOUT
     # It waited for the configured timeout rather than failing instantly on
-    # some other error, and it did not wait for the server's two seconds.
-    assert 0.8 <= elapsed < 2.0
+    # some other error, and it did not wait for the server's five seconds. The
+    # bound stays well below the server's delay so slow CI machines cannot make
+    # an enforced timeout look like a request that waited for the reply.
+    assert 0.8 <= elapsed < 4.0
 
 
 def test_a_closed_port_is_a_connection_error_not_a_timeout() -> None:

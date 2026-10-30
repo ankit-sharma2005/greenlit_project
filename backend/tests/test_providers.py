@@ -437,8 +437,8 @@ def _reply(content: str, usage: object) -> httpx.Response:
     return httpx.Response(200, json=body, request=httpx.Request("POST", "http://test"))
 
 
-def test_gateway_records_token_usage() -> None:
-    """The gateway keeps the replied usage so operations can price a run."""
+def test_gateway_returns_token_usage_with_the_reply() -> None:
+    """The usage travels with the reply, not on the shared gateway."""
     from app.services.llm_gateway import LLMGateway
 
     provider = Provider(
@@ -454,8 +454,60 @@ def test_gateway_records_token_usage() -> None:
         post=lambda *a, **k: _reply("hello", {"prompt_tokens": 11, "completion_tokens": 7})
     )
 
+    content, usage = gateway.chat_with_usage(provider, [{"role": "user", "content": "hi"}])
+    assert content == "hello"
+    assert usage == {"prompt_tokens": 11, "completion_tokens": 7}
+    # ``chat`` still returns just the text for callers that do not need tokens.
     assert gateway.chat(provider, [{"role": "user", "content": "hi"}]) == "hello"
-    assert gateway.last_usage == {"prompt_tokens": 11, "completion_tokens": 7}
+
+
+def test_concurrent_calls_each_get_their_own_usage() -> None:
+    """One gateway is shared by every case thread, so usage must be per call.
+
+    A single mutable field on the gateway handed cases each other's token
+    counts, which made the cost estimate (and the e2e assertion on it) flaky.
+    """
+    import threading
+
+    from app.services.llm_gateway import LLMGateway
+
+    provider = Provider(
+        name="usage-concurrent",
+        kind="openai-compatible",
+        model_name="gpt-4o-mini",
+        base_url="http://127.0.0.1:9999/v1",
+        is_active=True,
+        max_retries=0,
+        timeout_seconds=5,
+    )
+    results: dict[str, int] = {}
+    lock = threading.Lock()
+
+    def post(*args: object, **kwargs: object) -> httpx.Response:
+        # The prompt tells each call which token count it must report back.
+        payload = kwargs["json"]
+        assert isinstance(payload, dict)
+        prompt = payload["messages"][0]["content"]
+        number = int(str(prompt))
+        time.sleep(0.01)
+        return _reply("ok", {"prompt_tokens": number, "completion_tokens": number + 1})
+
+    import time
+
+    gateway = LLMGateway(post=post)
+
+    def call(number: int) -> None:
+        _, usage = gateway.chat_with_usage(provider, [{"role": "user", "content": str(number)}])
+        with lock:
+            results[str(number)] = usage["prompt_tokens"]
+
+    threads = [threading.Thread(target=call, args=(n,)) for n in (1, 2, 3, 4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert results == {"1": 1, "2": 2, "3": 3, "4": 4}
 
 
 def test_gateway_ignores_missing_or_bad_usage() -> None:
@@ -473,12 +525,12 @@ def test_gateway_ignores_missing_or_bad_usage() -> None:
     )
 
     gateway = LLMGateway(post=lambda *a, **k: _reply("hello", None))
-    gateway.chat(provider, [{"role": "user", "content": "hi"}])
-    assert gateway.last_usage == {}
+    assert gateway.chat_with_usage(provider, [{"role": "user", "content": "hi"}])[1] == {}
 
     gateway = LLMGateway(
         post=lambda *a, **k: _reply("hello", {"prompt_tokens": "many", "completion_tokens": 3})
     )
-    gateway.chat(provider, [{"role": "user", "content": "hi"}])
     # Only the usable number is kept.
-    assert gateway.last_usage == {"completion_tokens": 3}
+    assert gateway.chat_with_usage(provider, [{"role": "user", "content": "hi"}])[1] == {
+        "completion_tokens": 3
+    }

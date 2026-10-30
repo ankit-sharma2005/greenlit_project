@@ -1,8 +1,10 @@
 import { test, expect } from "@playwright/test";
 
 import {
+  ADMIN_EMAIL,
   createProvider,
-  register,
+  ensureAdmin,
+  login,
   startFakeProvider,
   TARGET_HOST,
   uploadApprovedDataset,
@@ -39,8 +41,11 @@ function samplePdf(): Buffer {
 test("Dataset Studio generates, previews and approves cases from an uploaded PDF", async ({
   page,
 }) => {
-  const email = `dataset-pdf-${Date.now()}@example.com`;
-  await register(page, "Dataset PDF User", email);
+  // Providers are admin-only, so this uses the admin account like the judge
+  // spec; the dataset it opens is filtered by its own unique name below.
+  await ensureAdmin();
+  await login(page, ADMIN_EMAIL);
+  const datasetName = `PDF generation seed ${Date.now()}`;
 
   const fakeProvider = await startFakeProvider({
     generationReply: JSON.stringify([
@@ -57,11 +62,16 @@ test("Dataset Studio generates, previews and approves cases from an uploaded PDF
       model: "fake-model",
       baseUrl: `http://${TARGET_HOST}:${fakeProvider.port}/v1`,
     });
-    await uploadApprovedDataset(page, "PDF generation seed", "question,answer\nSeed,Answer\n");
+    await uploadApprovedDataset(page, datasetName, "question,answer\nSeed,Answer\n");
 
     await page.goto(`${WEB}/settings`);
     await page.getByTestId("settings-tab-datasets").click();
-    await page.getByTestId("open-dataset").first().click();
+    await page
+      .getByTestId("datasets-table")
+      .getByRole("row")
+      .filter({ hasText: datasetName })
+      .getByTestId("open-dataset")
+      .click();
     await page.selectOption('[data-testid="generate-provider"]', providerId);
     await page.setInputFiles('[data-testid="generate-source-file"]', {
       name: "scholarship.pdf",

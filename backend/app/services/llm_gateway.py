@@ -49,10 +49,6 @@ class LLMGateway:
         self._rate_limiter = rate_limiter
         self._sleep = sleep
         self._post = post or httpx.post
-        # Token usage of the most recent reply, when the provider reported it.
-        # ``chat`` still returns the text; callers that need the numbers (the
-        # prompt-app connector, for operations metrics) read this afterwards.
-        self.last_usage: dict[str, int] = {}
 
     def chat(
         self,
@@ -64,6 +60,30 @@ class LLMGateway:
         params: dict[str, Any] | None = None,
     ) -> str:
         """One chat completion against an OpenAI-compatible endpoint."""
+        return self.chat_with_usage(
+            provider,
+            messages,
+            temperature,
+            max_tokens=max_tokens,
+            model=model,
+            params=params,
+        )[0]
+
+    def chat_with_usage(
+        self,
+        provider: Provider,
+        messages: list[dict[str, str]],
+        temperature: float = 0.0,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        model: str | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> tuple[str, dict[str, int]]:
+        """One chat completion plus the token usage *of this call*.
+
+        The usage is returned rather than left on the instance: a run executes
+        its cases in several threads against one gateway, so a shared
+        shared field could hand a case another case's token counts.
+        """
         if not provider.base_url:
             raise GatewayError(
                 "provider_unavailable",
@@ -117,9 +137,8 @@ class LLMGateway:
             else:
                 if response.status_code == 200:
                     content = self._content(provider, response)
-                    # Record usage before returning, so the caller can read it.
-                    self._record_usage(response)
-                    return content
+                    usage = self._record_usage(response)
+                    return content, usage
                 last_error = GatewayError(
                     "provider_unavailable",
                     f"Provider '{provider.name}' answered HTTP {response.status_code}: "
@@ -146,23 +165,21 @@ class LLMGateway:
             60,
         )
 
-    def _record_usage(self, response: httpx.Response) -> None:
-        """Remember the reply's token usage, ignoring anything unusable."""
+    def _record_usage(self, response: httpx.Response) -> dict[str, int]:
+        """The reply's token usage, ignoring anything unusable."""
         try:
             usage = response.json().get("usage")
         except (ValueError, AttributeError):
-            self.last_usage = {}
-            return
+            return {}
         if not isinstance(usage, dict):
-            self.last_usage = {}
-            return
+            return {}
         recorded: dict[str, int] = {}
         for key in ("prompt_tokens", "completion_tokens"):
             value = usage.get(key)
             if isinstance(value, bool) or not isinstance(value, int):
                 continue
             recorded[key] = value
-        self.last_usage = recorded
+        return recorded
 
     @staticmethod
     def _content(provider: Provider, response: httpx.Response) -> str:
