@@ -13,11 +13,12 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import get_current_user
-from app.models import Run, RunBaseline, RunItem, User, utcnow
+from app.models import Provider, Run, RunBaseline, RunItem, User, utcnow
 from app.schemas.evaluation import FailedCaseOut, MetricOut
 from app.schemas.runs import (
     BaselineCreate,
     BaselineRead,
+    OperationsRead,
     QuickTestRequest,
     QuickTestResponse,
     RegressionRead,
@@ -31,6 +32,11 @@ from app.schemas.runs import (
 )
 from app.services.audit import record
 from app.services.generation import ChatFn, get_chat_fn
+from app.services.operations import (
+    compute_operations,
+    prices_from_metadata,
+    samples_from_items,
+)
 from app.services.regression import (
     RegressionError,
     baseline_for_run,
@@ -199,6 +205,41 @@ def _regression_read(
     return (fresh.as_dict() if fresh is not None else None), False
 
 
+def _operations_read(
+    db: Session,
+    run: Run,
+    items: Sequence[RunItem] | None,
+) -> dict[str, Any] | None:
+    """The run's operations block: the stored one, else computed, else nothing.
+
+    Older runs predate the stored column, so a detail read recomputes it from the
+    cases it already loaded. Prices come from the provider's metadata settings;
+    when they are absent the cost estimate stays null and the UI says so.
+    """
+    if run.operations is not None:
+        return dict(run.operations)
+    if items is None:
+        return None
+
+    snapshot = dict(run.settings_snapshot or {})
+    price_in: float | None = None
+    price_out: float | None = None
+    raw_id = snapshot.get("provider_id")
+    if isinstance(raw_id, str) and raw_id:
+        try:
+            provider = db.get(Provider, uuid.UUID(raw_id))
+        except ValueError:
+            provider = None
+        if provider is not None:
+            price_in, price_out = prices_from_metadata(provider.provider_config)
+
+    return compute_operations(
+        samples_from_items(items),
+        price_per_1k_tokens_in=price_in,
+        price_per_1k_tokens_out=price_out,
+    )
+
+
 def _run_read(
     db: Session,
     run: Run,
@@ -238,6 +279,7 @@ def _run_read(
                 )
             )
     regression_payload, is_baseline = _regression_read(db, run, snapshot)
+    operations_payload = _operations_read(db, run, items)
     return RunRead(
         id=run.id,
         name=run.name,
@@ -265,6 +307,11 @@ def _run_read(
             else None
         ),
         is_baseline=is_baseline,
+        operations=(
+            OperationsRead.model_validate(operations_payload)
+            if operations_payload is not None
+            else None
+        ),
     )
 
 

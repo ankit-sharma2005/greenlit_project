@@ -68,6 +68,11 @@ from app.services.judge import (
 from app.services.judge_profiles import effective_model
 from app.services.llm_gateway import LLMGateway
 from app.services.metrics import MetricResult, not_instrumented
+from app.services.operations import (
+    compute_operations,
+    prices_from_metadata,
+    samples_from_items,
+)
 from app.services.regression import store_regression
 from app.services.run_progress import ProgressReporter, RunProgress, get_progress
 from app.services.run_repository import (
@@ -165,6 +170,31 @@ def build_sender(snapshot: Mapping[str, Any], session_factory: Callable[[], Sess
     if entry == "prompt_app":
         return _prompt_app_sender(snapshot, session_factory)
     raise RunExecutionError(f"The entry point '{entry}' is coming soon and cannot run tests yet.")
+
+
+def _operations_block(
+    session: Session, snapshot: Mapping[str, Any], items: Sequence[RunItem]
+) -> dict[str, Any]:
+    """Latency, reliability and token totals for the cases that ran.
+
+    Prices are a per-provider setting, so an HTTP-endpoint run has none and
+    reports "not configured" rather than an invented cost.
+    """
+    price_in: float | None = None
+    price_out: float | None = None
+    raw_provider = snapshot.get("provider_id")
+    if raw_provider:
+        try:
+            provider = session.get(Provider, uuid.UUID(str(raw_provider)))
+        except ValueError:
+            provider = None
+        if provider is not None:
+            price_in, price_out = prices_from_metadata(provider.provider_config)
+    return compute_operations(
+        samples_from_items(items),
+        price_per_1k_tokens_in=price_in,
+        price_per_1k_tokens_out=price_out,
+    )
 
 
 def _prompt_app_sender(
@@ -984,6 +1014,7 @@ def execute_run(
                         score=decision.score,
                         verdict_reason=reason,
                         is_partial=was_cancelled,
+                        operations=_operations_block(session, snapshot, finished),
                         completed_at=utcnow(),
                     )
                     # Regression is recorded as the run finishes, so the card and

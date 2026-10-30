@@ -1,5 +1,6 @@
 import { BaselinePanel } from "./BaselinePanel";
 import { Button } from "./Button";
+import { OperationsPanel } from "./OperationsPanel";
 import { ProgressBar } from "./ProgressBar";
 import { ReportExport } from "./ReportExport";
 import { SafetySection } from "./SafetySection";
@@ -187,6 +188,8 @@ function RunVerdict({ run }: { run: Run }) {
       </section>
 
       <BaselinePanel run={run} />
+
+      <OperationsPanel operations={run.operations} />
 
       <SafetySection metrics={run.metrics} />
 

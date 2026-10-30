@@ -200,6 +200,31 @@ class BaselineRead(BaseModel):
     updated_at: datetime
 
 
+class OperationsRead(BaseModel):
+    """How the app behaved during a run: speed, reliability and token use.
+
+    Every rate and latency is ``None`` when it could not be measured, so the UI
+    can say "not measured" instead of showing a misleading zero.
+    """
+
+    items_total: int = 0
+    items_attempted: int = 0
+    items_failed: int = 0
+    items_cancelled: int = 0
+    latency_samples: int = 0
+    latency_p50_ms: float | None = None
+    latency_p95_ms: float | None = None
+    error_rate: float | None = None
+    timeout_rate: float | None = None
+    items_timed_out: int = 0
+    tokens_in_total: int | None = None
+    tokens_out_total: int | None = None
+    price_per_1k_tokens_in: float | None = None
+    price_per_1k_tokens_out: float | None = None
+    cost_configured: bool = False
+    cost_estimate: float | None = None
+
+
 class RunRead(BaseModel):
     id: UUID
     name: str
@@ -224,6 +249,8 @@ class RunRead(BaseModel):
     # Set when a baseline exists for the run's dataset version (spec 8.5).
     regression: RegressionRead | None = None
     is_baseline: bool = False
+    # Stored by the worker when the run finishes; absent on older runs.
+    operations: OperationsRead | None = None
 
 
 class RunListResponse(BaseModel):

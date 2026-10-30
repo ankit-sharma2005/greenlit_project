@@ -329,6 +329,9 @@ class Run(TimestampMixin, Base):
     score: Mapped[float | None] = mapped_column(nullable=True)
     verdict_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_partial: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Latency percentiles, error/timeout rates and token totals, stored when the
+    # run finishes so history does not depend on re-reading every case.
+    operations: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

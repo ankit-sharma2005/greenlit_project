@@ -29,6 +29,7 @@ from app.services.run_repository import (
     add_metric_result,
     create_run,
     create_run_item,
+    list_run_items,
     update_run,
     update_run_item,
 )
@@ -391,3 +392,66 @@ def test_report_rejects_an_unknown_format(client: TestClient) -> None:
     _register(client)
     response = client.get(f"/api/v1/runs/{uuid.uuid4()}/report?format=pdf")
     assert response.status_code == 422
+
+
+def test_report_carries_the_operations_block(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    """Latency, error rate and token totals travel with the export."""
+    _register(client)
+    dataset = _upload_and_approve(client)
+    run_id = _finished_run(session_factory, dataset)
+
+    # Give the two cases the numbers a real connector would report.
+    with session_factory() as session:
+        items = list_run_items(session, run_id)
+        by_row = {item.row_index: item for item in items}
+        update_run_item(
+            session,
+            by_row[1],
+            latency_ms=200,
+            tokens_in=1000,
+            tokens_out=500,
+        )
+        update_run_item(
+            session,
+            by_row[2],
+            latency_ms=400,
+            tokens_in=500,
+            tokens_out=100,
+        )
+        session.commit()
+
+    document = json.loads(client.get(f"/api/v1/runs/{run_id}/report?format=json").text)
+    operations = document["operations"]
+    assert operations["items_total"] == 2
+    assert operations["items_attempted"] == 2
+    assert operations["latency_p50_ms"] == 300.0
+    assert operations["latency_p95_ms"] == pytest.approx(390.0)
+    assert operations["error_rate"] == 0.5
+    assert operations["tokens_in_total"] == 1500
+    assert operations["tokens_out_total"] == 600
+    # No prices are set on this run's provider, so no cost is invented.
+    assert operations["cost_configured"] is False
+    assert operations["cost_estimate"] is None
+
+    body = client.get(f"/api/v1/runs/{run_id}/report?format=html").text
+    assert "Operations" in body
+    assert "p50 latency" in body
+    assert "p95 latency" in body
+    assert "not configured" in body
+
+    rows = list(
+        csv.reader(io.StringIO(client.get(f"/api/v1/runs/{run_id}/report?format=csv").text))
+    )
+    header = rows[0]
+    for column in (
+        "latency_p50_ms",
+        "latency_p95_ms",
+        "error_rate",
+        "timeout_rate",
+        "tokens_in_total",
+        "tokens_out_total",
+        "cost_estimate",
+    ):
+        assert column in header

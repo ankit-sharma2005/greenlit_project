@@ -99,6 +99,31 @@ export interface Run {
   regression?: RunRegression | null;
   /** True when this run *is* the dataset version's baseline. */
   is_baseline?: boolean;
+  /** Speed, reliability and token use; null on runs that predate the block. */
+  operations?: RunOperations | null;
+}
+
+/**
+ * Every rate and latency is null when it could not be measured, so the UI can
+ * say "not measured" instead of showing a misleading zero.
+ */
+export interface RunOperations {
+  items_total: number;
+  items_attempted: number;
+  items_failed: number;
+  items_cancelled: number;
+  latency_samples: number;
+  latency_p50_ms: number | null;
+  latency_p95_ms: number | null;
+  error_rate: number | null;
+  timeout_rate: number | null;
+  items_timed_out: number;
+  tokens_in_total: number | null;
+  tokens_out_total: number | null;
+  price_per_1k_tokens_in: number | null;
+  price_per_1k_tokens_out: number | null;
+  cost_configured: boolean;
+  cost_estimate: number | null;
 }
 
 export interface RunCreateRequest {

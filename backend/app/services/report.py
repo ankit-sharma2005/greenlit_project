@@ -30,6 +30,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Dataset, DatasetItem, DatasetVersion, Provider, Run, RunItem
+from app.services.operations import (
+    compute_operations,
+    prices_from_metadata,
+    samples_from_items,
+)
 from app.services.run_repository import get_metric_results, list_run_items
 
 REPORT_VERSION = "1.0"
@@ -414,7 +419,36 @@ def build_report(session: Session, run: Run) -> dict[str, Any]:
         "judge": judged,
         "judge_skipped_reason": snapshot.get("judge_skipped_reason"),
         "regression": _regression_block(snapshot),
+        "operations": _operations_block(session, run, items, snapshot),
     }
+
+
+def _operations_block(
+    session: Session,
+    run: Run,
+    items: list[RunItem],
+    snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    """Speed, reliability and token use, with prices from the provider."""
+    if run.operations is not None:
+        return dict(run.operations)
+
+    price_in: float | None = None
+    price_out: float | None = None
+    raw_id = snapshot.get("provider_id")
+    if isinstance(raw_id, str) and raw_id:
+        try:
+            provider = session.get(Provider, uuid.UUID(raw_id))
+        except ValueError:
+            provider = None
+        if provider is not None:
+            price_in, price_out = prices_from_metadata(provider.provider_config)
+
+    return compute_operations(
+        samples_from_items(items),
+        price_per_1k_tokens_in=price_in,
+        price_per_1k_tokens_out=price_out,
+    )
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -442,9 +476,19 @@ def render_csv(document: dict[str, Any]) -> str:
             "reason",
             "verdict",
             "weighted_score",
+            # Run-level operations, repeated on every case row so one file has
+            # the whole result without a second export.
+            "latency_p50_ms",
+            "latency_p95_ms",
+            "error_rate",
+            "timeout_rate",
+            "tokens_in_total",
+            "tokens_out_total",
+            "cost_estimate",
         ]
     )
     verdict = document["verdict"]
+    operations = document.get("operations") or {}
     for case in document["cases"]:
         writer.writerow(
             [
@@ -459,6 +503,13 @@ def render_csv(document: dict[str, Any]) -> str:
                 csv_cell(case["reason"]),
                 csv_cell(verdict["verdict"]),
                 csv_cell("—" if verdict["score"] is None else f"{float(verdict['score']):.2f}"),
+                csv_cell(operations.get("latency_p50_ms")),
+                csv_cell(operations.get("latency_p95_ms")),
+                csv_cell(operations.get("error_rate")),
+                csv_cell(operations.get("timeout_rate")),
+                csv_cell(operations.get("tokens_in_total")),
+                csv_cell(operations.get("tokens_out_total")),
+                csv_cell(operations.get("cost_estimate")),
             ]
         )
     return buffer.getvalue()
@@ -479,6 +530,20 @@ def _esc(value: object) -> str:
 def _spaced(value: object) -> str:
     """A snake_case identifier as words, for headings a person reads."""
     return str(value if value is not None else "—").replace("_", " ")
+
+
+def _ops_number(value: object) -> str:
+    """A latency in milliseconds, or an honest dash when nothing was measured."""
+    if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "—"
+    return f"{float(value):.0f}"
+
+
+def _ops_rate(value: object) -> str:
+    """A rate as a percentage, or an honest dash when nothing was attempted."""
+    if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "—"
+    return f"{float(value) * 100:.1f}%"
 
 
 def _row(cells: list[str]) -> str:
@@ -591,6 +656,23 @@ def render_html(document: dict[str, Any]) -> str:
                 ]
             )
         )
+    parts.append("</tbody></table>")
+
+    # Operations: how the app behaved, not how good its answers were.
+    operations = document.get("operations") or {}
+    parts.append("<h2>Operations</h2><table><thead><tr>")
+    parts.append("<th>Measure</th><th>Value</th></tr></thead><tbody>")
+    parts.append(_row(["Cases attempted", _esc(operations.get("items_attempted"))]))
+    parts.append(_row(["p50 latency (ms)", _ops_number(operations.get("latency_p50_ms"))]))
+    parts.append(_row(["p95 latency (ms)", _ops_number(operations.get("latency_p95_ms"))]))
+    parts.append(_row(["Error rate", _ops_rate(operations.get("error_rate"))]))
+    parts.append(_row(["Timeout rate", _ops_rate(operations.get("timeout_rate"))]))
+    parts.append(_row(["Tokens in", _esc(operations.get("tokens_in_total") or "not reported")]))
+    parts.append(_row(["Tokens out", _esc(operations.get("tokens_out_total") or "not reported")]))
+    if operations.get("cost_configured") and operations.get("cost_estimate") is not None:
+        parts.append(_row(["Estimated cost", _esc(operations["cost_estimate"])]))
+    else:
+        parts.append(_row(["Estimated cost", "not configured"]))
     parts.append("</tbody></table>")
 
     # Safety, when the run was probed.

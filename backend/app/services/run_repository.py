@@ -34,6 +34,7 @@ _RUN_FIELDS: frozenset[str] = frozenset(
         "is_partial",
         "settings_snapshot",
         "criteria_profile",
+        "operations",
         "started_at",
         "completed_at",
     }

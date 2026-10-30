@@ -43,4 +43,8 @@ test("uploaded outputs are scored against the approved dataset and reach a verdi
   await expect(page.getByTestId("run-verdict-reason")).toContainText("GO threshold 0.80");
   await expect(page.getByTestId("run-metrics")).toContainText("answer match");
   await expect(page.getByTestId("run-state")).toHaveText("Completed");
+
+  // Operations travels with the verdict and never invents a cost estimate.
+  await expect(page.getByTestId("run-operations")).toBeVisible();
+  await expect(page.getByTestId("ops-cost")).toHaveText("not configured");
 });
