@@ -29,11 +29,14 @@ from app.services.datasets import (
     create_dataset,
 )
 from app.services.generation import (
+    MAX_SOURCE_BYTES,
     ChatFn,
     GenerationError,
     create_generated_version,
+    extract_source_text,
     generate_test_cases,
     get_chat_fn,
+    split_source_passages,
 )
 from app.services.llm_gateway import GatewayError
 
@@ -60,6 +63,41 @@ def _owned_dataset(db: Session, dataset_id: uuid.UUID, user: User) -> Dataset:
     if dataset is None or dataset.owner_id != user.id:
         raise HTTPException(status_code=404, detail="Dataset not found.")
     return dataset
+
+
+def _generate_draft(
+    db: Session,
+    dataset: Dataset,
+    provider: Provider,
+    user: User,
+    *,
+    count: int,
+    source_text: str | None,
+    chat: ChatFn,
+) -> DatasetVersion:
+    passages: list[str] | None = None
+    truncated = False
+    if source_text is not None and source_text.strip():
+        passages, truncated = split_source_passages(source_text)
+        if not passages:
+            raise GenerationError("empty_source", "The source contains no usable text.")
+    cases = generate_test_cases(
+        provider,
+        count=count,
+        source_passages=passages,
+        chat=chat,
+    )
+    version = create_generated_version(db, dataset, cases, source_truncated=truncated)
+    record(
+        db,
+        "dataset.generated",
+        actor_id=user.id,
+        target_type="dataset",
+        target_id=str(dataset.id),
+        metadata={"version_no": version.version_no, "count": version.row_count},
+    )
+    db.commit()
+    return version
 
 
 def _parse_overrides(raw: str | None) -> dict[str, str] | None:
@@ -262,25 +300,72 @@ def generate_version(
     if provider is None:
         raise HTTPException(status_code=404, detail="Provider not found.")
     try:
-        cases = generate_test_cases(
+        version = _generate_draft(
+            db,
+            dataset,
             provider,
+            user,
             count=payload.count,
             source_text=payload.source_text,
             chat=chat,
         )
-        version = create_generated_version(db, dataset, cases)
-        record(
-            db,
-            "dataset.generated",
-            actor_id=user.id,
-            target_type="dataset",
-            target_id=str(dataset.id),
-            metadata={"version_no": version.version_no, "count": version.row_count},
-        )
-        db.commit()
     except (GenerationError, GatewayError) as exc:
         db.rollback()
-        status = 429 if exc.code == "rate_limited" else 502
+        status = (
+            429
+            if exc.code == "rate_limited"
+            else 413
+            if exc.code == "source_too_large"
+            else 422
+            if exc.code in {"invalid_source", "empty_source", "empty_pdf"}
+            else 502
+        )
+        raise HTTPException(status_code=status, detail=exc.message) from exc
+    return DatasetVersionRead.model_validate(version)
+
+
+@router.post(
+    "/{dataset_id}/generate-from-source",
+    response_model=DatasetVersionRead,
+    status_code=201,
+)
+def generate_version_from_source(
+    dataset_id: uuid.UUID,
+    provider_id: uuid.UUID = Form(...),
+    count: int = Form(default=20, ge=1, le=100),
+    source_file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    chat: ChatFn = Depends(get_chat_fn),
+) -> DatasetVersionRead:
+    """Extract a PDF/TXT/MD source and generate a draft version from its passages."""
+    dataset = _owned_dataset(db, dataset_id, user)
+    provider = db.get(Provider, provider_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="Provider not found.")
+    try:
+        content = source_file.file.read(MAX_SOURCE_BYTES + 1)
+        source_text = extract_source_text(source_file.filename or "", content)
+        version = _generate_draft(
+            db,
+            dataset,
+            provider,
+            user,
+            count=count,
+            source_text=source_text,
+            chat=chat,
+        )
+    except (GenerationError, GatewayError) as exc:
+        db.rollback()
+        status = (
+            429
+            if exc.code == "rate_limited"
+            else 413
+            if exc.code == "source_too_large"
+            else 422
+            if exc.code in {"invalid_source", "empty_source", "empty_pdf"}
+            else 502
+        )
         raise HTTPException(status_code=status, detail=exc.message) from exc
     return DatasetVersionRead.model_validate(version)
 

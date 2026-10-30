@@ -422,6 +422,32 @@ def _create_provider(session_factory: sessionmaker[Session]) -> str:
         session.close()
 
 
+def _sample_pdf() -> bytes:
+    stream = b"BT /F1 12 Tf 72 720 Td (Scholarships cover tuition.) Tj ET"
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    pdf = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(len(pdf))
+        pdf.extend(f"{index} 0 obj\n".encode() + obj + b"\nendobj\n")
+    xref_offset = len(pdf)
+    pdf.extend(f"xref\n0 {len(offsets)}\n".encode() + b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        pdf.extend(f"{offset:010d} 00000 n \n".encode())
+    pdf.extend(
+        f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\n"
+        f"startxref\n{xref_offset}\n%%EOF\n".encode()
+    )
+    return bytes(pdf)
+
+
 def _stub_chat(client: TestClient, reply: object) -> None:
     """Swap the model call; pass a str (reply) or an Exception (failure).
 
@@ -466,6 +492,67 @@ def test_generate_creates_draft_version_and_preview_items(
     rows = _audit_rows(session_factory, "dataset.generated")
     assert len(rows) == 1
     assert rows[0].event_metadata["version_no"] == 2
+
+
+def test_generate_from_pdf_extracts_and_stores_reference_passage(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    _register(client)
+    dataset_id = _upload(client).json()["id"]
+    provider_id = _create_provider(session_factory)
+    prompts: list[str] = []
+
+    def fake_chat(provider: Provider, messages: list[dict[str, str]], t: float, m: int) -> str:
+        prompts.append(messages[-1]["content"])
+        return json.dumps(
+            [
+                {
+                    "question": "What does the scholarship cover?",
+                    "answer": "Tuition.",
+                    "passage_index": 0,
+                }
+            ]
+        )
+
+    client.app.dependency_overrides[get_chat_fn] = lambda: fake_chat
+    try:
+        response = client.post(
+            f"/api/v1/datasets/{dataset_id}/generate-from-source",
+            data={"provider_id": provider_id, "count": "1"},
+            files={"source_file": ("policy.pdf", _sample_pdf(), "application/pdf")},
+        )
+    finally:
+        client.app.dependency_overrides.pop(get_chat_fn, None)
+
+    assert response.status_code == 201, response.text
+    assert "UNTRUSTED_SOURCE_JSON" in prompts[0]
+    assert "Scholarships cover tuition" in prompts[0]
+    assert response.json()["generated"] is True
+    items = client.get(f"/api/v1/datasets/{dataset_id}/versions/2/items").json()["items"]
+    assert items[0]["data"]["reference_context"] == "Scholarships cover tuition."
+
+
+def test_generate_from_scanned_pdf_returns_actionable_error(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    _register(client)
+    dataset_id = _upload(client).json()["id"]
+    provider_id = _create_provider(session_factory)
+
+    response = client.post(
+        f"/api/v1/datasets/{dataset_id}/generate-from-source",
+        data={"provider_id": provider_id, "count": "1"},
+        files={
+            "source_file": (
+                "scanned.pdf",
+                _sample_pdf().replace(b"Scholarships cover tuition.", b"                    "),
+                "application/pdf",
+            )
+        },
+    )
+
+    assert response.status_code == 422
+    assert "scanned" in response.json()["error"]["message"]
 
 
 def test_generate_unknown_provider_returns_404(client: TestClient) -> None:
