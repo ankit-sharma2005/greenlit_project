@@ -248,6 +248,8 @@ function RunVerdict({ run }: { run: Run }) {
                 <th scope="col">Input</th>
                 <th scope="col">Actual</th>
                 <th scope="col">Reason</th>
+                <th scope="col">Target</th>
+                <th scope="col">Response</th>
               </tr>
             </thead>
             <tbody>
@@ -255,7 +257,12 @@ function RunVerdict({ run }: { run: Run }) {
                 <tr key={`${failure.input}-${failure.reason}`}>
                   <td>{failure.input}</td>
                   <td>{failure.actual || "—"}</td>
-                  <td>{failure.reason}</td>
+                  <td>{failure.error_summary || failure.reason}</td>
+                  <td data-testid="failed-case-target">
+                    {failure.http_status ? `HTTP ${failure.http_status} · ` : ""}
+                    {failure.target || "—"}
+                  </td>
+                  <td data-testid="failed-case-snippet">{failure.error_snippet || "—"}</td>
                 </tr>
               ))}
             </tbody>

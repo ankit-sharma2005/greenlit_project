@@ -18,6 +18,7 @@ from app.models import Provider
 from app.security.keys import decrypt_key
 from app.security.rate_limit import RateLimiter
 from app.services.error_kinds import CONNECTION, HTTP_ERROR, TIMEOUT, kind_for_code
+from app.services.target_error import redact_snippet, target_of
 
 DEFAULT_REQUESTS_PER_MINUTE = 30
 DEFAULT_MAX_TOKENS = 2048
@@ -28,13 +29,22 @@ RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 class GatewayError(Exception):
     """An LLM call failed; ``code`` maps to an HTTP status in the API layer."""
 
-    def __init__(self, code: str, message: str, kind: str | None = None) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        kind: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         # The structured failure kind. Codes stay as they are (the API maps them
         # to statuses); the kind is what the operations metrics read.
         self.kind = kind or kind_for_code(code)
+        # Status, target and a redacted snippet, so a failed call says what
+        # happened instead of only that something did.
+        self.details = details or {}
 
 
 class LLMGateway:
@@ -127,12 +137,17 @@ class LLMGateway:
                     "provider_unavailable",
                     f"Provider '{provider.name}' timed out after {provider.timeout_seconds}s.",
                     kind=TIMEOUT,
+                    details={
+                        "target": target_of(url),
+                        "timeout_seconds": provider.timeout_seconds,
+                    },
                 )
             except httpx.HTTPError as exc:
                 last_error = GatewayError(
                     "provider_unavailable",
                     f"Could not reach provider '{provider.name}': {str(exc)[:200]}",
                     kind=CONNECTION,
+                    details={"target": target_of(url)},
                 )
             else:
                 if response.status_code == 200:
@@ -141,9 +156,13 @@ class LLMGateway:
                     return content, usage
                 last_error = GatewayError(
                     "provider_unavailable",
-                    f"Provider '{provider.name}' answered HTTP {response.status_code}: "
-                    f"{response.text[:200]}",
+                    f"Provider '{provider.name}' answered HTTP {response.status_code}.",
                     kind=HTTP_ERROR,
+                    details={
+                        "status_code": response.status_code,
+                        "target": target_of(url),
+                        "snippet": redact_snippet(response.text),
+                    },
                 )
                 if response.status_code not in RETRYABLE_STATUS_CODES:
                     raise last_error
@@ -189,10 +208,18 @@ class LLMGateway:
             raise GatewayError(
                 "invalid_response",
                 f"Provider '{provider.name}' returned an unexpected response shape.",
+                details={
+                    "status_code": response.status_code,
+                    "snippet": redact_snippet(response.text),
+                },
             ) from exc
         if not isinstance(content, str) or not content.strip():
             raise GatewayError(
                 "invalid_response",
                 f"Provider '{provider.name}' returned an empty response.",
+                details={
+                    "status_code": response.status_code,
+                    "snippet": redact_snippet(response.text),
+                },
             )
         return content

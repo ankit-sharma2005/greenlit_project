@@ -97,7 +97,18 @@ describe("RunProgressPanel", () => {
             },
           ],
           failed_cases: [
-            { input: "What is GreenLit?", expected: "", actual: "I am not sure.", reason: "wrong" },
+            {
+              input: "What is GreenLit?",
+              expected: "",
+              actual: "I am not sure.",
+              reason: "wrong",
+              error_kind: "http_error",
+              http_status: 422,
+              target: "app.internal/ask",
+              error_snippet: '{"detail":"question is required"}',
+              error_summary:
+                'Target returned HTTP 422 at app.internal/ask — {"detail":"question is required"}',
+            },
           ],
         })}
         onCancel={() => {}}
@@ -111,6 +122,12 @@ describe("RunProgressPanel", () => {
     expect(screen.getByTestId("run-metrics")).toHaveTextContent("answer match");
     expect(screen.getByTestId("run-metrics")).toHaveTextContent("not instrumented");
     expect(screen.getByTestId("run-failed-cases")).toHaveTextContent("I am not sure.");
+    // The failure names the status, the target and the body, not just "wrong".
+    expect(screen.getByTestId("failed-case-target")).toHaveTextContent(
+      "HTTP 422 · app.internal/ask",
+    );
+    expect(screen.getByTestId("failed-case-snippet")).toHaveTextContent("question is required");
+    expect(screen.getByTestId("run-failed-cases")).toHaveTextContent("Target returned HTTP 422");
   });
 
   it("labels partial results after a cancel", () => {

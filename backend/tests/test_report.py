@@ -297,13 +297,15 @@ def test_csv_report_is_case_level(
 
     rows = list(csv.reader(io.StringIO(response.text)))
     assert rows[0][:5] == ["row_index", "input", "expected", "actual", "state"]
+    # Failure detail: what happened at the target, next to the case.
+    assert rows[0][9:13] == ["error_kind", "http_status", "target", "error_snippet"]
     assert len(rows) == 3  # header + two cases
     assert rows[1][1] == "What is GreenLit?"
     assert rows[1][2] == "GreenLit tests LLM apps."
     assert rows[2][4] == "failed"
     assert rows[2][8] == "answer mismatch"
-    assert rows[2][9] == "NO_GO"
-    assert rows[2][10] == "0.42"
+    assert rows[2][13] == "NO_GO"
+    assert rows[2][14] == "0.42"
 
 
 def test_report_never_contains_secrets(

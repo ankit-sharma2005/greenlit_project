@@ -9,7 +9,8 @@ from typing import Any
 
 import httpx
 
-from app.services.error_kinds import kind_for_code
+from app.services.error_kinds import HTTP_ERROR, kind_for_code
+from app.services.target_error import redact_snippet, target_of
 from app.utils.request_client import RequestClient
 
 
@@ -139,18 +140,33 @@ class HttpConnector:
             )
 
             latency_ms = int((time.time() - start) * 1000)
+            status = response.status_code
+            # A test double may not model the body; a real httpx response does.
+            snippet = redact_snippet(getattr(response, "text", ""))
+            target = target_of(url)
 
-            if response.status_code == 404:
+            # Any non-2xx answer is a target failure, never a missing answer: a
+            # 422 must not be reported as "wrong answer path" (the run would
+            # then look like a quality problem instead of a setup problem).
+            if not 200 <= status < 300:
+                code = "http_error"
+                message = f"target returned HTTP {status}"
+                if status == 404:
+                    code = "not_found"
+                    message = "your app answered but this path does not exist"
+                elif status in (401, 403):
+                    code = "auth_error"
+                    message = "your app rejected the request: check API key/auth"
                 raise ConnectorError(
-                    "your app answered but this path does not exist",
-                    code="not_found",
-                    details={"status_code": 404},
-                )
-            if response.status_code in (401, 403):
-                raise ConnectorError(
-                    "your app rejected the request: check API key/auth",
-                    code="auth_error",
-                    details={"status_code": response.status_code},
+                    message,
+                    code=code,
+                    details={
+                        "status_code": status,
+                        "target": target,
+                        "snippet": snippet,
+                        "message": message,
+                        "kind": HTTP_ERROR,
+                    },
                 )
 
             try:
@@ -159,6 +175,12 @@ class HttpConnector:
                 raise ConnectorError(
                     "Response was not valid JSON",
                     code="invalid_json",
+                    details={
+                        "status_code": status,
+                        "target": target,
+                        "snippet": snippet,
+                        "message": "Response was not valid JSON",
+                    },
                 ) from e
 
             # Extract answer
@@ -218,12 +240,18 @@ class HttpConnector:
             raise ConnectorError(
                 "increase the timeout or speed up the app",
                 code="timeout",
+                details={
+                    "target": target_of(url),
+                    "timeout_seconds": timeout_seconds,
+                    "message": f"the app did not answer within {timeout_seconds} s",
+                },
             ) from e
         except httpx.ConnectError as e:
             # The app is not listening at all, which is not a timeout.
             raise ConnectorError(
                 f"could not connect to the app: {str(e)[:200]}",
                 code="connection_error",
+                details={"target": target_of(url), "message": "could not connect to the app"},
             ) from e
         except ConnectorError:
             raise

@@ -83,6 +83,7 @@ from app.services.run_repository import (
     update_run,
     update_run_item,
 )
+from app.services.target_error import error_detail as build_error_detail
 
 logger = logging.getLogger("greenlit.run_executor")
 
@@ -195,6 +196,33 @@ def _operations_block(
         samples_from_items(items),
         price_per_1k_tokens_in=price_in,
         price_per_1k_tokens_out=price_out,
+    )
+
+
+def _failure_detail(
+    kind: str | None, message: str, details: Mapping[str, Any] | None
+) -> dict[str, Any] | None:
+    """The stored failure detail: kind, status, target and a redacted snippet.
+
+    Only built when the failure carries something a person can act on (a target,
+    a status or a body); a plain "unexpected error" would otherwise store a
+    detail dict that says nothing.
+    """
+    if not details:
+        return None
+    status = details.get("status_code")
+    target = details.get("target")
+    snippet = details.get("snippet")
+    waited = details.get("timeout_seconds")
+    if status is None and not target and not snippet and waited is None:
+        return None
+    return build_error_detail(
+        kind=kind or "other",
+        message=message,
+        status=int(status) if isinstance(status, int) else None,
+        target=str(target or ""),
+        snippet=str(snippet or ""),
+        timeout_seconds=waited if isinstance(waited, (int, float)) else None,
     )
 
 
@@ -766,6 +794,8 @@ def execute_run(
         error_code: str | None = None
         # None when the case succeeded; otherwise one of error_kinds.ERROR_KINDS.
         error_kind: str | None = None
+        # Kind, HTTP status, target and a redacted snippet, when there is one.
+        failure_detail: dict[str, Any] | None = None
         timed_out = False
         try:
             # upload_outputs: answers come from the file, nothing is called.
@@ -775,12 +805,14 @@ def execute_run(
             error = exc.message
             error_code = exc.code
             error_kind = exc.kind
+            failure_detail = _failure_detail(error_kind, exc.message, exc.details)
             timed_out = error_kind == "timeout"
         except GatewayError as exc:
             # The prompt-app path fails through the gateway, not a connector.
             error = exc.message
             error_code = exc.code
             error_kind = exc.kind
+            failure_detail = _failure_detail(error_kind, exc.message, exc.details)
             timed_out = error_kind == "timeout"
         except Exception as exc:  # a single bad case never fails the run (spec 8.1)
             error = str(exc) or exc.__class__.__name__
@@ -808,6 +840,7 @@ def execute_run(
                             "timed_out": timed_out,
                             "error_code": error_code,
                             "error_kind": error_kind,
+                            "error_detail": failure_detail,
                             "elapsed_ms": elapsed_ms,
                             "raw": trace.raw if trace is not None else None,
                         },

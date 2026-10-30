@@ -42,6 +42,12 @@ export interface FailedCase {
   expected: string;
   actual: string;
   reason: string;
+  // What happened at the target, when the connector or gateway recorded it.
+  error_kind?: string | null;
+  http_status?: number | null;
+  target?: string | null;
+  error_snippet?: string | null;
+  error_summary?: string | null;
 }
 
 export interface PreviewResponse {

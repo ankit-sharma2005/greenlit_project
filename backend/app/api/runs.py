@@ -270,12 +270,21 @@ def _run_read(
         for item in items or []:
             if item.state != "failed":
                 continue
+            meta = item.trace if isinstance(item.trace, dict) else {}
+            raw_failure = meta.get("error_detail")
+            failure = raw_failure if isinstance(raw_failure, dict) else {}
+            status = failure.get("status")
             failures.append(
                 FailedCaseOut(
                     input=item.input_text,
                     expected="",
                     actual=item.output or "",
                     reason=item.error or "The app did not answer this case.",
+                    error_kind=str(failure.get("kind") or meta.get("error_kind") or "") or None,
+                    http_status=status if isinstance(status, int) else None,
+                    target=str(failure.get("target") or "") or None,
+                    error_snippet=str(failure.get("snippet") or "") or None,
+                    error_summary=str(failure.get("summary") or "") or None,
                 )
             )
     regression_payload, is_baseline = _regression_read(db, run, snapshot)

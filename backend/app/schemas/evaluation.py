@@ -64,6 +64,12 @@ class FailedCaseOut(BaseModel):
     expected: str
     actual: str
     reason: str
+    # Structured detail, when the connector or gateway recorded one.
+    error_kind: str | None = None
+    http_status: int | None = None
+    target: str | None = None
+    error_snippet: str | None = None
+    error_summary: str | None = None
 
 
 class PreviewResponse(BaseModel):

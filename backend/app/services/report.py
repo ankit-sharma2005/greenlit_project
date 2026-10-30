@@ -242,6 +242,10 @@ def _case_rows(session: Session, run: Run, items: list[RunItem]) -> list[dict[st
         expected = by_input.get(item.input_text.strip().lower())
         if expected is None:
             expected = by_index.get(item.row_index - 1) or by_index.get(item.row_index)
+        meta = item.trace if isinstance(item.trace, dict) else {}
+        raw_detail = meta.get("error_detail")
+        detail = raw_detail if isinstance(raw_detail, dict) else {}
+        status = detail.get("status")
         cases.append(
             {
                 "row_index": item.row_index,
@@ -253,6 +257,12 @@ def _case_rows(session: Session, run: Run, items: list[RunItem]) -> list[dict[st
                 "tokens_in": item.tokens_in,
                 "tokens_out": item.tokens_out,
                 "reason": item.error or "",
+                # What actually happened at the target, when it failed.
+                "error_kind": detail.get("kind") or meta.get("error_kind"),
+                "http_status": status if isinstance(status, int) else None,
+                "target": detail.get("target") or None,
+                "error_snippet": detail.get("snippet") or None,
+                "error_summary": detail.get("summary") or None,
             }
         )
     return cases
@@ -474,6 +484,10 @@ def render_csv(document: dict[str, Any]) -> str:
             "tokens_in",
             "tokens_out",
             "reason",
+            "error_kind",
+            "http_status",
+            "target",
+            "error_snippet",
             "verdict",
             "weighted_score",
             # Run-level operations, repeated on every case row so one file has
@@ -501,6 +515,10 @@ def render_csv(document: dict[str, Any]) -> str:
                 csv_cell(case["tokens_in"]),
                 csv_cell(case["tokens_out"]),
                 csv_cell(case["reason"]),
+                csv_cell(case.get("error_kind")),
+                csv_cell(case.get("http_status")),
+                csv_cell(case.get("target")),
+                csv_cell(case.get("error_snippet")),
                 csv_cell(verdict["verdict"]),
                 csv_cell("—" if verdict["score"] is None else f"{float(verdict['score']):.2f}"),
                 csv_cell(operations.get("latency_p50_ms")),
@@ -807,9 +825,13 @@ def render_html(document: dict[str, Any]) -> str:
     else:
         parts.append(
             "<table><thead><tr><th>Input</th><th>Expected</th><th>Actual</th>"
-            "<th>Reason</th></tr></thead><tbody>"
+            "<th>Reason</th><th>Target</th><th>Response</th></tr></thead><tbody>"
         )
         for case in document["failed_cases"]:
+            status = case.get("http_status")
+            where = case.get("target") or "—"
+            if status is not None:
+                where = f"HTTP {status} · {where}"
             parts.append(
                 _row(
                     [
@@ -817,6 +839,8 @@ def render_html(document: dict[str, Any]) -> str:
                         f"<pre>{_esc(case['expected'] or '—')}</pre>",
                         f"<pre>{_esc(case['output'] or '—')}</pre>",
                         _esc(case["reason"] or "—"),
+                        _esc(where),
+                        f"<pre>{_esc(case.get('error_snippet') or '—')}</pre>",
                     ]
                 )
             )
