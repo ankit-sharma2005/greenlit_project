@@ -51,6 +51,7 @@ from app.safety.sets import SafetySetError, resolve_safety_sets
 from app.security.rate_limit import get_rate_limiter
 from app.services.connectors import ConnectorError, HttpConnector, PromptAppConnector, Trace
 from app.services.decision import JudgeStatus
+from app.services.error_kinds import CONNECTION, HTTP_ERROR, INVALID_RESPONSE, TIMEOUT
 from app.services.evaluation import CaseData, EvaluationError, evaluate_preview
 from app.services.judge import (
     ANSWER_QUALITY,
@@ -93,6 +94,14 @@ SenderFactory = Callable[[Mapping[str, Any], Callable[[], Session]], Sender]
 
 _DEFAULT_BODY_TEMPLATE = '{"question": {{input}}}'
 _LATENCY_LIMIT_MS = 5000
+
+# A first case that fails this way says the target is not reachable at all:
+# the run stops as a setup problem instead of sending every remaining case
+# into the same wall (spec 8.1, fail fast).
+_PREFLIGHT_KINDS: tuple[str, ...] = (CONNECTION, HTTP_ERROR, INVALID_RESPONSE, TIMEOUT)
+# Three consecutive failures of the same kind: the target is down, so the rest
+# of the cases are marked "not run" rather than failed or scored as zero.
+_BREAKER_THRESHOLD = 3
 
 NO_JUDGE_REASON = (
     "This run had no judge profile, so answer quality was not scored. "
@@ -224,6 +233,36 @@ def _failure_detail(
         snippet=str(snippet or ""),
         timeout_seconds=waited if isinstance(waited, (int, float)) else None,
     )
+
+
+def _setup_problem_block(
+    kind: str | None, detail: Mapping[str, Any] | None, total: int
+) -> dict[str, Any]:
+    """The report's setup-problem block, built from the pre-flight failure."""
+    status = detail.get("status") if detail else None
+    target = str((detail or {}).get("target") or "")
+    text = f"HTTP {status}" if isinstance(status, int) else str(kind or "failure")
+    where = f" at {target}" if target else ""
+    return {
+        "failed": 1,
+        "total": total,
+        "detail": text,
+        "target": target or None,
+        "line": (
+            f"Setup problem: the first of {total} requests failed ({text}{where}). "
+            "This is not a quality result."
+        ),
+    }
+
+
+def _breaker_block(kind: str | None, detail: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Why the target was dropped: the same failure three times in a row."""
+    summary = str((detail or {}).get("summary") or f"{kind or 'unknown'} failure")
+    return {
+        "kind": kind,
+        "summary": summary,
+        "line": f"The target kept failing ({summary}); the remaining cases were not run.",
+    }
 
 
 def _prompt_app_sender(
@@ -767,7 +806,14 @@ def execute_run(
             state = session.scalar(select(Run.state).where(Run.id == rid))
         return state in (RunState.CANCELLING.value, RunState.CANCELLED.value)
 
-    def execute_item(item_id: uuid.UUID, case: _Case) -> None:
+    def execute_item(
+        item_id: uuid.UUID, case: _Case
+    ) -> tuple[RunItemState, str | None, dict[str, Any] | None]:
+        """Run one case and report (state, error kind, structured detail).
+
+        The return value is what the fail-fast logic reads: a run decides to stop
+        on the kind of failure, not by parsing the message afterwards.
+        """
         # Cancel check first: a cancelling run takes on no new cases.
         if is_stopping():
             with lock:
@@ -780,7 +826,7 @@ def execute_run(
                 counts["done"] += 1
                 payload = snapshot_progress("running")
             reporter.publish(rid, payload)
-            return
+            return RunItemState.CANCELLED, None, None
 
         with lock, factory() as session:
             item = session.get(RunItem, item_id)
@@ -853,13 +899,69 @@ def execute_run(
                 counts["failed"] += 1
             payload = snapshot_progress("running")
         reporter.publish(rid, payload)
+        return state, error_kind, failure_detail
 
     # ---- phase 2: execute the items -------------------------------------
+    # Fail fast (spec 8.1): the first case goes through the same request the run
+    # uses. A target that cannot answer it is a setup problem, so the rest of the
+    # cases are never sent and nothing is scored as a zero-quality answer.
+    target_failure: dict[str, Any] | None = None
+    breaker: dict[str, Any] | None = None
+    not_run: list[tuple[uuid.UUID, _Case]] = []
     try:
-        with ThreadPoolExecutor(max_workers=max(1, min(workers, total))) as pool:
-            futures = [pool.submit(execute_item, item_id, case) for item_id, case in work]
-            for future in futures:
-                future.result()
+        window = max(1, min(workers, total))
+        remaining = list(work)
+        if sender is not None and work:
+            remaining = list(work[1:])
+            state, kind, detail = execute_item(*work[0])
+            if state == RunItemState.FAILED and kind in _PREFLIGHT_KINDS:
+                target_failure = _setup_problem_block(kind, detail, total)
+                not_run = list(remaining)
+                remaining = []
+        if target_failure is None:
+            streak_kind: str | None = None
+            streak = 0
+            with ThreadPoolExecutor(max_workers=window) as pool:
+                pending: list[Any] = []
+                while remaining or pending:
+                    while remaining and len(pending) < window and breaker is None:
+                        item_id, case = remaining.pop(0)
+                        pending.append((pool.submit(execute_item, item_id, case), item_id))
+                    if not pending:
+                        break
+                    future, _pending_id = pending.pop(0)
+                    state, kind, detail = future.result()
+                    if state == RunItemState.FAILED and kind:
+                        streak = streak + 1 if kind == streak_kind else 1
+                        streak_kind = kind
+                    else:
+                        streak = 0
+                        streak_kind = None
+                    if streak >= _BREAKER_THRESHOLD:
+                        breaker = _breaker_block(kind, detail)
+                        break
+            if breaker is not None:
+                not_run = list(remaining)
+                remaining = []
+        if not_run:
+            with lock, factory() as session:
+                for item_id, _case in not_run:
+                    item = session.get(RunItem, item_id)
+                    if item is not None:
+                        update_run_item(
+                            session,
+                            item,
+                            state=RunItemState.CANCELLED,
+                            trace={
+                                "not_run": True,
+                                "reason": "the target was failing, so this case was not sent",
+                            },
+                        )
+                session.commit()
+                counts["cancelled"] += len(not_run)
+                counts["done"] += len(not_run)
+                payload = snapshot_progress("running")
+            reporter.publish(rid, payload)
     except Exception:
         _fail(
             factory,
@@ -868,6 +970,40 @@ def execute_run(
             "The worker hit an unexpected error while running the cases.",
         )
         raise
+
+    if target_failure is not None:
+        # Nothing was scored: the run says it is a setup problem rather than
+        # letting an empty score read as a quality result.
+        with lock, factory() as session:
+            run = session.get(Run, rid)
+            if run is not None:
+                snapshot_update = dict(snapshot)
+                snapshot_update["setup_problem"] = target_failure
+                update_run(
+                    session,
+                    run,
+                    state=RunState.FAILED,
+                    verdict=None,
+                    score=None,
+                    verdict_reason=target_failure["line"],
+                    settings_snapshot=snapshot_update,
+                    is_partial=True,
+                    completed_at=utcnow(),
+                )
+                session.commit()
+            payload = snapshot_progress(str(RunState.FAILED))
+        reporter.publish(rid, payload)
+        return _report(
+            rid,
+            status=str(RunState.FAILED),
+            state=RunState.FAILED,
+            reason=target_failure["line"],
+            total=total,
+            completed=counts["completed"],
+            failed=counts["failed"],
+            cancelled=counts["cancelled"],
+            partial=True,
+        )
 
     # ---- phase 2b: built-in safety probes (spec 8.3) ---------------------
     # Only when the Safety test type is on, and only for connectors that really
@@ -878,6 +1014,12 @@ def execute_run(
         if sender is None:
             extra_metrics = not_instrumented_safety(
                 "this run scores uploaded answers, so the app was never asked"
+            )
+        elif breaker is not None:
+            # The target was already failing three cases in a row: sending the
+            # safety probes at it would only add noise (and traffic).
+            extra_metrics = not_instrumented_safety(
+                "the target was failing, so the safety probes were not run"
             )
         elif is_stopping():
             extra_metrics = not_instrumented_safety(
@@ -1069,15 +1211,23 @@ def execute_run(
                         reason = f"{reason} Suggested fixes: {'; '.join(decision.suggested_fixes)}."
                     if was_cancelled:
                         reason = f"This run was cancelled, so the results are partial. {reason}"
+                    final_verdict = decision.verdict
+                    if breaker is not None:
+                        # The target kept failing, so the score only covers the few
+                        # cases that came back. REVIEW with a reason that names the
+                        # failure; the cases that were never sent stay out of every
+                        # rate instead of counting as zero-quality answers.
+                        final_verdict = "REVIEW"
+                        reason = f"Target failing: {breaker['summary']}"
                     final_state = RunState.CANCELLED if was_cancelled else RunState.COMPLETED
                     update_run(
                         session,
                         run,
                         state=final_state,
-                        verdict=decision.verdict,
+                        verdict=final_verdict,
                         score=decision.score,
                         verdict_reason=reason,
-                        is_partial=was_cancelled,
+                        is_partial=was_cancelled or breaker is not None,
                         operations=_operations_block(session, snapshot, finished),
                         completed_at=utcnow(),
                     )
@@ -1093,9 +1243,9 @@ def execute_run(
                         completed=counts["completed"],
                         failed=counts["failed"],
                         cancelled=counts["cancelled"],
-                        verdict=decision.verdict,
+                        verdict=final_verdict,
                         score=decision.score,
-                        partial=was_cancelled,
+                        partial=was_cancelled or breaker is not None,
                         reason=reason,
                     )
             final_payload = snapshot_progress(str(report["state"]))

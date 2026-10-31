@@ -23,6 +23,7 @@ import html
 import io
 import json
 import uuid
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
@@ -303,6 +304,14 @@ def _setup_problem(cases: list[dict[str, Any]]) -> dict[str, Any] | None:
     }
 
 
+def _stored_setup_problem(snapshot: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The setup-problem block the worker stored when a pre-flight failed."""
+    stored = snapshot.get("setup_problem")
+    if not isinstance(stored, dict) or not stored.get("line"):
+        return None
+    return dict(stored)
+
+
 def _metric_block(session: Session, run: Run) -> list[dict[str, Any]]:
     rows = get_metric_results(session, run.id)
     metrics: list[dict[str, Any]] = []
@@ -460,7 +469,10 @@ def build_report(session: Session, run: Run) -> dict[str, Any]:
         "metrics": metrics,
         "cases": cases,
         "failed_cases": [case for case in cases if case["state"] == "failed"],
-        "setup_problem": _setup_problem(cases),
+        # A run stopped by the pre-flight keeps its structured setup problem in
+        # the snapshot: its remaining cases are "not run", not failed, so the
+        # all-failed rule above would miss it.
+        "setup_problem": _setup_problem(cases) or _stored_setup_problem(snapshot),
         "safety": _safety_block(metrics),
         "judge": judged,
         "judge_skipped_reason": snapshot.get("judge_skipped_reason"),

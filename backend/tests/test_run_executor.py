@@ -336,29 +336,37 @@ def test_all_items_fail_still_completes_with_no_go(
 def test_timeout_item_is_flagged_and_counted(
     session_factory: sessionmaker[Session], owner: uuid.UUID
 ) -> None:
-    run_id = seed_run(session_factory, owner)
+    """Isolated timeouts are measured: the run keeps going and the metric counts them."""
+    rows = [{"question": f"timeout-q{index}", "answer": f"a{index}"} for index in range(4)]
+    run_id = seed_run(session_factory, owner, rows=rows)
+    # Two timeouts with a successful case between them: the first case cannot
+    # fail (that is a pre-flight setup problem) and three in a row trip the
+    # circuit breaker, so only isolated timeouts exercise the metric itself.
     sender = FakeSender(
-        answers=echo_answers(),
+        answers=echo_answers(rows),
         failures={
-            row["question"]: ("increase the timeout or speed up the app", "timeout") for row in ROWS
+            rows[1]["question"]: ("increase the timeout or speed up the app", "timeout"),
+            rows[3]["question"]: ("increase the timeout or speed up the app", "timeout"),
         },
     )
     report, _ = run_it(run_id, session_factory, sender)
 
-    assert report["status"] == "completed"
+    assert report["status"] == "completed", report
+    assert len(sender.calls) == 4
     with session_factory() as session:
         items = list_run_items(session, run_id)
-        assert all(item.state == "failed" for item in items)
-        assert all(item.trace is not None and item.trace["timed_out"] is True for item in items)
+        failed = [item for item in items if item.state == "failed"]
+        assert len(failed) == 2
+        assert all(item.trace is not None and item.trace["timed_out"] is True for item in failed)
         # The kind is stored next to the code, so the metrics need not read text.
-        assert all(item.trace["error_kind"] == "timeout" for item in items if item.trace)
+        assert all(item.trace["error_kind"] == "timeout" for item in failed if item.trace)
         timeout_rows = [
             row for row in get_metric_results(session, run_id) if row.name == "timeout_rate"
         ]
         assert len(timeout_rows) == 1
         assert timeout_rows[0].instrumented is True
-        assert timeout_rows[0].passed is False
-        assert timeout_rows[0].score == 0.0
+        assert timeout_rows[0].score == pytest.approx(0.5)
+        assert timeout_rows[0].passed is True
 
 
 def test_a_refusal_whose_text_says_timeout_is_not_counted_as_one(
@@ -369,11 +377,12 @@ def test_a_refusal_whose_text_says_timeout_is_not_counted_as_one(
     sender = FakeSender(
         answers=echo_answers(),
         failures={
-            row["question"]: (
+            # Not the first case: a failing pre-flight would stop the run as a
+            # setup problem before the timeout metric is ever computed.
+            ROWS[1]["question"]: (
                 "could not connect to the app: connection timed out",
                 "connection_error",
             )
-            for row in ROWS
         },
     )
     report, _ = run_it(run_id, session_factory, sender)
@@ -381,8 +390,10 @@ def test_a_refusal_whose_text_says_timeout_is_not_counted_as_one(
     assert report["status"] == "completed"
     with session_factory() as session:
         items = list_run_items(session, run_id)
-        assert all(item.trace["error_kind"] == "connection" for item in items if item.trace)
-        assert all(item.trace["timed_out"] is False for item in items if item.trace)
+        failed = [item for item in items if item.state == "failed"]
+        assert len(failed) == 1
+        assert failed[0].trace["error_kind"] == "connection"
+        assert failed[0].trace["timed_out"] is False
         timeout_rows = [
             row for row in get_metric_results(session, run_id) if row.name == "timeout_rate"
         ]
@@ -390,6 +401,154 @@ def test_a_refusal_whose_text_says_timeout_is_not_counted_as_one(
         # No case actually timed out, so the metric passes with a full score.
         assert timeout_rows[0].score == 1.0
         assert timeout_rows[0].passed is True
+
+
+# ---- fail fast (spec 8.1) ------------------------------------------------
+
+
+def test_preflight_stops_the_run_when_the_first_case_cannot_connect(
+    session_factory: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    """A target that cannot answer the first case is a setup problem, not a result."""
+    rows = [{"question": f"preflight-q{index}", "answer": f"a{index}"} for index in range(5)]
+    run_id = seed_run(session_factory, owner, rows=rows)
+    sender = FakeSender(
+        answers=echo_answers(rows),
+        failures={
+            row["question"]: ("target refused the connection", "connection_error") for row in rows
+        },
+    )
+    report, _ = run_it(run_id, session_factory, sender)
+
+    assert report["status"] == "failed", report
+    assert report["verdict"] is None
+    # The pre-flight is the same request the run uses, and it is the only one:
+    # no case is wasted on a target that already said it cannot answer.
+    assert len(sender.calls) == 1
+    assert report["items_failed"] == 1
+    assert report["items_cancelled"] == 4
+
+    with session_factory() as session:
+        run = session.get(Run, run_id)
+        assert run is not None and run.state == "failed"
+        reason = run.verdict_reason or ""
+        assert reason.startswith("Setup problem:"), reason
+        assert "not a quality result" in reason
+        setup = (run.settings_snapshot or {}).get("setup_problem")
+        assert isinstance(setup, dict) and setup["total"] == 5 and setup["failed"] == 1
+        items = list_run_items(session, run_id)
+        assert sorted(item.state for item in items) == ["cancelled"] * 4 + ["failed"]
+        cancelled = [item for item in items if item.state == "cancelled"]
+        assert all(item.trace and item.trace["not_run"] is True for item in cancelled)
+        # Not run means not scored: nothing is measured or counted against the app.
+        assert get_metric_results(session, run_id) == []
+
+
+def test_preflight_names_the_http_status_and_target(
+    session_factory: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    """The setup problem says what the target actually answered, not "unreachable"."""
+    rows = [{"question": f"preflight-http{index}", "answer": f"a{index}"} for index in range(2)]
+    run_id = seed_run(session_factory, owner, rows=rows)
+    details = {
+        "status_code": 500,
+        "target": "127.0.0.1:9099/ask",
+        "snippet": "connection to db lost",
+    }
+    sender = FakeSender(
+        answers=echo_answers(rows),
+        failures={
+            row["question"]: ("the app answered with an error", "http_error") for row in rows
+        },
+    )
+
+    # The fake sender does not carry details, so give it them like the connector does.
+    original_factory = sender.factory
+
+    def factory_with_details(
+        snapshot: Mapping[str, Any], session_factory: Callable[[], Session]
+    ) -> Callable[[str], Trace]:
+        send = original_factory(snapshot, session_factory)
+
+        def send_with_details(input_text: str) -> Trace:
+            try:
+                return send(input_text)
+            except ConnectorError as exc:
+                raise ConnectorError(exc.message, code=exc.code, details=details) from exc
+
+        return send_with_details
+
+    report, _ = run_it(run_id, session_factory, sender_factory=factory_with_details)
+
+    assert report["status"] == "failed"
+    with session_factory() as session:
+        run = session.get(Run, run_id)
+        assert run is not None
+        reason = run.verdict_reason or ""
+        assert "HTTP 500" in reason
+        assert "127.0.0.1:9099/ask" in reason
+        items = list_run_items(session, run_id)
+        first = next(item for item in items if item.state == "failed")
+        assert first.trace["error_detail"]["status"] == 500
+        assert first.trace["error_detail"]["snippet"] == "connection to db lost"
+
+
+def test_circuit_breaker_marks_the_rest_not_run_and_says_target_failing(
+    session_factory: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    """Three failures in a row: stop sending, keep REVIEW and explain why."""
+    rows = [{"question": f"breaker-q{index}", "answer": f"a{index}"} for index in range(6)]
+    run_id = seed_run(session_factory, owner, rows=rows)
+    sender = FakeSender(
+        answers=echo_answers(rows),
+        failures={row["question"]: ("the app is down", "http_error") for row in rows[1:4]},
+    )
+    report, _ = run_it(run_id, session_factory, sender)
+
+    assert report["status"] == "completed", report
+    assert report["verdict"] == "REVIEW", report
+    # Four requests: the successful first case and the three failures.
+    assert len(sender.calls) == 4
+    assert report["items_completed"] == 1
+    assert report["items_failed"] == 3
+    assert report["items_cancelled"] == 2
+
+    with session_factory() as session:
+        run = session.get(Run, run_id)
+        assert run is not None and run.state == "completed"
+        assert run.verdict == "REVIEW"
+        assert (run.verdict_reason or "").startswith("Target failing:")
+        items = list_run_items(session, run_id)
+        not_run = [item for item in items if item.state == "cancelled"]
+        assert len(not_run) == 2
+        assert all(item.trace and item.trace["not_run"] is True for item in not_run)
+        # "Not run" is excluded from the rates (three of four attempted failed),
+        # never folded in as two more zero-quality answers.
+        assert run.operations is not None
+        assert run.operations["items_attempted"] == 4
+        assert run.operations["error_rate"] == pytest.approx(0.75)
+
+
+def test_two_isolated_failures_keep_the_run_going(
+    session_factory: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    rows = [{"question": f"mixed-q{index}", "answer": f"a{index}"} for index in range(6)]
+    run_id = seed_run(session_factory, owner, rows=rows)
+    sender = FakeSender(
+        answers=echo_answers(rows),
+        failures={
+            rows[1]["question"]: ("the app is down", "http_error"),
+            rows[4]["question"]: ("the app is down", "http_error"),
+        },
+    )
+    report, _ = run_it(run_id, session_factory, sender)
+
+    assert report["status"] == "completed", report
+    assert len(sender.calls) == 6
+    assert report["items_completed"] == 4
+    assert report["items_failed"] == 2
+    assert report["items_cancelled"] == 0
+    assert report["verdict"] is not None
 
 
 # ---- cancel ---------------------------------------------------------------

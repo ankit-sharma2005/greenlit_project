@@ -552,3 +552,99 @@ def test_a_normal_run_has_no_setup_problem_banner(
     assert "Setup problem" not in body
     # A measured run still shows its real weighted score.
     assert "0.42" in body
+
+
+def _preflight_stopped_run(
+    session_factory: sessionmaker[Session], dataset: dict[str, object]
+) -> uuid.UUID:
+    """A run stopped by its pre-flight: one failed case, the rest never sent."""
+    owner = _user_id(session_factory)
+    setup = {
+        "failed": 1,
+        "total": 3,
+        "detail": "HTTP 500",
+        "target": "127.0.0.1:9099/ask",
+        "line": (
+            "Setup problem: the first of 3 requests failed (HTTP 500 at "
+            "127.0.0.1:9099/ask). This is not a quality result."
+        ),
+    }
+    snapshot: dict[str, object] = {
+        "entry_point": "http_endpoint",
+        "test_types": ["quality"],
+        "dataset_version_id": str(dataset["versions"][0]["id"]),  # type: ignore[index]
+        "timeout_seconds": 30,
+        "url": "http://127.0.0.1:9099/ask",
+        "method": "POST",
+        "body_template": '{"question": {{input}}}',
+        "answer_path": "answer",
+        "setup_problem": setup,
+    }
+    with session_factory() as session:
+        run = create_run(
+            session,
+            owner_id=owner,
+            name="Pre-flight stopped",
+            settings_snapshot=snapshot,
+            dataset_id=uuid.UUID(str(dataset["id"])),
+            dataset_version_id=uuid.UUID(str(dataset["versions"][0]["id"])),  # type: ignore[index]
+            criteria_profile="plain_chatbot",
+        )
+        first = create_run_item(session, run, row_index=1, input_text="What is GreenLit?")
+        second = create_run_item(session, run, row_index=2, input_text="Is it fast?")
+        third = create_run_item(session, run, row_index=3, input_text="Who approves?")
+        session.commit()
+        update_run_item(
+            session,
+            first,
+            state="failed",
+            error="the app answered with an error",
+            trace={
+                "error_kind": "http_error",
+                "error_detail": {
+                    "kind": "http_error",
+                    "status": 500,
+                    "target": "127.0.0.1:9099/ask",
+                    "snippet": "connection to db lost",
+                },
+            },
+        )
+        for item in (second, third):
+            update_run_item(
+                session,
+                item,
+                state="cancelled",
+                trace={"not_run": True, "reason": "the target was failing"},
+            )
+        update_run(
+            session,
+            run,
+            state="failed",
+            verdict=None,
+            score=None,
+            verdict_reason=setup["line"],
+            is_partial=True,
+            started_at=utcnow(),
+            completed_at=utcnow(),
+        )
+        session.commit()
+        return run.id
+
+
+def test_a_preflight_stopped_run_reports_a_setup_problem(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    """The report says the target failed before any case could be scored."""
+    _register(client)
+    dataset = _upload_and_approve(client)
+    run_id = _preflight_stopped_run(session_factory, dataset)
+
+    body = client.get(f"/api/v1/runs/{run_id}/report?format=html").text
+    assert "Setup problem: the first of 3 requests failed (HTTP 500" in body
+    assert "This is not a quality result." in body
+    assert "not measured (no case produced a scored answer)" in body
+
+    document = client.get(f"/api/v1/runs/{run_id}/report?format=json").json()
+    assert document["setup_problem"]["failed"] == 1
+    assert document["setup_problem"]["total"] == 3
+    assert document["verdict"]["score"] is None
