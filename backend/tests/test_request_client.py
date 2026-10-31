@@ -108,3 +108,32 @@ def test_make_request_ssrf_block() -> None:
     result = make_request("http://127.0.0.1/status/200", timeout=5)
     assert isinstance(result, RequestResult)
     assert not result.success
+
+
+def test_local_mode_leaves_a_lan_target_alone():
+    """Only a loopback target is reached through the gateway."""
+    from app.utils.request_client import RequestClient
+
+    client = RequestClient(allow_private_targets=True, local_rewrite=True)
+    url, headers = client.local_target("http://192.168.1.9:9000/chat", None)
+    assert url == "http://192.168.1.9:9000/chat"
+    assert headers is None
+
+
+def test_local_mode_never_rewrites_without_the_local_computer_flag():
+    """A public target keeps its own host even inside a container."""
+    from app.utils.request_client import RequestClient
+
+    client = RequestClient(allow_private_targets=False, local_rewrite=True)
+    url, headers = client.local_target("http://127.0.0.1:9000/chat", None)
+    assert url == "http://127.0.0.1:9000/chat"
+    assert headers is None
+
+
+def test_the_host_override_cannot_bypass_the_ssrf_guard():
+    """The rewrite runs after sanitising, so a blocked URL is still blocked."""
+    from app.utils.request_client import RequestClient
+
+    client = RequestClient(allow_private_targets=False, local_rewrite=True)
+    with pytest.raises(ValueError):
+        client.request("POST", "http://127.0.0.1:9000/chat", json={})

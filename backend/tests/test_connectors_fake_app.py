@@ -6,6 +6,7 @@ import json
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import ClassVar
 
 import pytest
 
@@ -405,3 +406,95 @@ def test_upload_outputs_csv_missing_optional_columns():
     assert trace.retrieved_context == "not instrumented"
     assert trace.tokens_in is None
     assert trace.tokens_out is None
+
+
+class HostCheckingHandler(BaseHTTPRequestHandler):
+    """An app that refuses any Host header but the one the user typed."""
+
+    expected_host = ""
+    seen_hosts: ClassVar[list[str]] = []
+
+    def do_POST(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        self.rfile.read(content_length)
+        host = self.headers.get("Host", "")
+        type(self).seen_hosts.append(host)
+        if host != type(self).expected_host:
+            body = b"Invalid host header"
+            self.send_response(400)
+            self.send_header("Content-type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        self.send_response(200)
+        self.send_header("Content-type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({"answer": "ok"}).encode())
+
+    def log_message(self, *args):
+        pass
+
+
+def test_local_computer_mode_keeps_the_host_the_user_typed(monkeypatch):
+    """Connect through the gateway, but the app must still see 127.0.0.1:<port>.
+
+    Without the override the app answers 400 "Invalid host header", which the run
+    then reports as a target failure instead of a quality result.
+    """
+    from app.utils import request_client
+
+    HostCheckingHandler.seen_hosts = []
+    server = HTTPServer(("127.0.0.1", 0), HostCheckingHandler)
+    port = server.server_address[1]
+    HostCheckingHandler.expected_host = f"127.0.0.1:{port}"
+    thread = threading.Thread(target=server.serve_forever)
+    thread.daemon = True
+    thread.start()
+    try:
+        # The gateway is not resolvable here, so resolve to loopback; the point of
+        # the test is that the Host header does not follow the connect address.
+        monkeypatch.setattr(request_client, "LOCAL_GATEWAY_HOST", "localhost")
+        connector = HttpConnector(allow_private=True)
+        connector.client.local_rewrite = True
+        trace = connector.render_and_send(
+            url=f"http://127.0.0.1:{port}/chat",
+            body_template='{"question": {{input}}}',
+            input_text="hi",
+            timeout_seconds=5,
+        )
+        assert trace.output == "ok"
+        assert HostCheckingHandler.seen_hosts == [f"127.0.0.1:{port}"]
+    finally:
+        server.shutdown()
+
+
+def test_the_app_rejects_a_host_header_that_is_not_the_typed_one(monkeypatch):
+    """The guard is real: a Host the app does not accept is a 400, not an answer."""
+    from app.utils import request_client
+
+    HostCheckingHandler.seen_hosts = []
+    server = HTTPServer(("127.0.0.1", 0), HostCheckingHandler)
+    port = server.server_address[1]
+    HostCheckingHandler.expected_host = f"127.0.0.1:{port}"
+    thread = threading.Thread(target=server.serve_forever)
+    thread.daemon = True
+    thread.start()
+    try:
+        monkeypatch.setattr(request_client, "LOCAL_GATEWAY_HOST", "localhost")
+        connector = HttpConnector(allow_private=True)
+        connector.client.local_rewrite = True
+        # A caller-supplied Host is replaced by the one derived from the typed URL,
+        # so sending the gateway name there is exactly the old broken behaviour.
+        with pytest.raises(ConnectorError) as caught:
+            connector.render_and_send(
+                url=f"http://localhost:{port}/chat",
+                body_template='{"question": {{input}}}',
+                input_text="hi",
+                headers={"Host": f"localhost:{port}"},
+                timeout_seconds=5,
+            )
+        assert caught.value.code == "http_error"
+        assert caught.value.details["status_code"] == 400
+    finally:
+        server.shutdown()

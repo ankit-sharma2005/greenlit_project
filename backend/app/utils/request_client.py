@@ -3,11 +3,23 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 import time
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+
+# Inside a dev container ``127.0.0.1`` is the container itself, so a target the user
+# runs on their own computer is reached through the Docker gateway instead. The name
+# can validate the request against it, so it must keep seeing the Host the user typed.
+LOCAL_GATEWAY_HOST = "host.docker.internal"
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def _in_container() -> bool:
+    return os.path.exists("/.dockerenv")
+
 
 _PRIVATE_RANGES = [
     "0.",
@@ -49,9 +61,17 @@ BlockedPrivateURL = BlockedPrivateURLError
 class RequestClient:
     """SSRF-safe HTTP client for user-supplied URLs."""
 
-    def __init__(self, allow_private_targets: bool = False, max_redirects: int = 5):
+    def __init__(
+        self,
+        allow_private_targets: bool = False,
+        max_redirects: int = 5,
+        local_rewrite: bool | None = None,
+    ):
         self.allow_private_targets = allow_private_targets
         self.max_redirects = max_redirects
+        # ``None`` means "ask the environment": only a container has to go through
+        # the gateway, a process on the host reaches the app directly as before.
+        self.local_rewrite = _in_container() if local_rewrite is None else local_rewrite
 
     def _is_private_host(self, hostname: str) -> bool:
         if hostname in ("localhost", "local", "home", "internal"):
@@ -87,13 +107,36 @@ class RequestClient:
             raise DisallowedHost(f"Unsupported scheme: {parsed.scheme}")
         return url
 
+    def local_target(
+        self, url: str, headers: dict[str, str] | None
+    ) -> tuple[str, dict[str, str] | None]:
+        """Connect through the gateway but keep the Host the user typed.
+
+        Only loopback targets changed by the local-computer mode are touched; an
+        arbitrary Host never comes from the caller, it is derived from the URL the
+        user supplied after the same sanitising as an ordinary request.
+        """
+        if not (self.allow_private_targets and self.local_rewrite):
+            return url, headers
+        parsed = urlparse(url)
+        if (parsed.hostname or "").lower() not in _LOOPBACK_HOSTS:
+            return url, headers
+        host = parsed.hostname or ""
+        port = f":{parsed.port}" if parsed.port else ""
+        rewritten = dict(headers or {})
+        rewritten.pop("host", None)
+        rewritten["Host"] = f"{host}{port}"
+        connect_url = parsed._replace(netloc=f"{LOCAL_GATEWAY_HOST}{port}").geturl()
+        return connect_url, rewritten
+
     def request(self, method: str = "POST", url: str = "", **kwargs: Any) -> httpx.Response:
         safe_url = self._sanitize_url(url)
         timeout = kwargs.pop("timeout", 60)
+        safe_url, headers = self.local_target(safe_url, kwargs.pop("headers", None))
         with httpx.Client(
             timeout=timeout, follow_redirects=True, max_redirects=self.max_redirects
         ) as client:
-            response = client.request(method, safe_url, **kwargs)
+            response = client.request(method, safe_url, headers=headers, **kwargs)
         return response
 
 
