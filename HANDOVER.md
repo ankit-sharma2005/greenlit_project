@@ -73,8 +73,17 @@ migrations, one error envelope `{"error": {"code", "message", "fields"}}`.
   - `operations.py` — pure operations metrics: p50/p95 latency, error and timeout rates
     and token totals, with a cost estimate only when token prices are configured. A value
     nobody reported stays null rather than becoming a 0.
-  - `report.py` — one report document with three renderers; redacts headers, escapes
-    HTML, prefixes formula-leading CSV cells.
+  - `report.py` — one report document with three renderers; redacts headers and the
+    encrypted cURL blob, escapes HTML, prefixes formula-leading CSV cells, and carries the
+    recorded permission (who allowed testing the target) in all three formats.
+  - `utils/request_client.py` — the one SSRF-safe request path (JSON and streamed), with
+    the retry rules: 429/502/503/504, exponential backoff plus jitter, and the target's
+    `Retry-After` (seconds or HTTP date) capped at 60 s.
+  - `services/connectors.py` — the shared request function both the test call and every run
+    case use: polite pacing (`max_concurrency`, `min_delay_ms`, `max_retries`), one JSON
+    body or a joined `sse`/`ndjson`/`text` stream (100 KB cap, TTFT and total latency).
+  - `utils/curl.py` — parses a pasted cURL (headers, cookies, `-u`, body), drops `Host`,
+    and encrypts the values; the API returns names only.
   - `llm_gateway.py` — the only place that talks to a model provider: timeout, retries
     with backoff, rate limit, key decryption.
 - `tasks.py` + `celery_app.py` — the worker task `run_test`. Progress lives in Redis
@@ -124,13 +133,18 @@ bash scripts/run-e2e.sh
 - Backend tests live in `backend/tests`, one module per area. They never touch a real
   provider: `ChatFn` is injected, and so are the queue and the progress reader. Dataset
   source-generation tests build a small PDF fixture at test time and fake the model call.
-  The suite is currently 489 passed and 1 skipped; `tests/test_operations.py` covers the
+  The suite currently collects 542 tests (1 skipped), and a full run on 2026-11-01 exited
+  0; `tests/test_operations.py` covers the
   percentile edge cases (one case, even and odd counts, all failures), and
   `tests/test_error_kind_timeout.py` proves a real timeout against a local slow server
-  (plus connection-refused and the old-run text fallback).
+  (plus connection-refused and the old-run text fallback). `tests/test_http_rate_control.py`
+  and `tests/test_http_streaming.py` run real local servers for the retry/`Retry-After` and
+  SSE/NDJSON/text/stall/oversize behaviour, and `tests/test_curl_credentials.py` uses a
+  server that refuses anything without the imported cookie and bearer token.
 - Frontend component tests are Vitest + Testing Library next to the components; the
-  suite is currently 124 tests in 24 files.
-- `frontend/tests` is the Playwright suite (17 tests in 11 specs): admin/accounts and the
+  suite is currently 128 tests in 25 files (including `NewTestPage.test.tsx`, which proves
+  the permission box is required and that the attack-probe box starts off).
+- `frontend/tests` is the Playwright suite (18 tests in 11 specs): admin/accounts and the
   results page, Try the demo, baseline regression, calibration (label → kappa), judge
   provenance, the prompt app (prices typed into the provider's row in Settings, then
   the priced cost estimate on the verdict),
@@ -138,7 +152,9 @@ bash scripts/run-e2e.sh
   outputs, and PDF dataset generation through preview and approval.
   It runs against fake apps started inside the test process (`tests/helpers.ts`), so no
   real model is needed. The last full run from a clean stack passed all of them:
-  `17 passed (7.1m)`, exit code 0.
+  `17 passed (7.1m)`, exit code 0. `e2e-report.spec.ts` then gained a second test (a
+  streamed SSE target reaches a GO, and the permission box is required first); running
+  that spec alone on a clean stack passed: `2 passed (1.5m)`, exit code 0.
 - `scripts/run-e2e.sh` uses a uniquely named Compose project per invocation (Postgres 5536,
   Redis 6482, fresh volume), the API on 8103, a solo Celery worker, Vite on 5277 and the two
   demo helpdesks on 9501/9502. It stops only that invocation's containers, preserves its
@@ -179,6 +195,12 @@ bash scripts/run-e2e.sh
 - **Operations describes the cases it saw.** Percentiles cover only the cases that
   reported a latency; a run where the connector never timed the call shows "not measured"
   rather than an estimate.
+- **The permission rule keys on "runs on my computer".** Any target tested with that box
+  unticked needs the confirmation (the built-in demo and host.docker.internal targets are
+  local, so one click still works); a LAN address typed without the box is treated as
+  remote and refused until confirmed. There is no allowlist of company domains.
+- **The safety set picker still has no UI.** `safety_sets` is API-only, and for a remote
+  target the whole Safety type is dropped unless the second permission checkbox is ticked.
 - **Test Chat is a placeholder.** The page exists and is honest about it.
 - **The topbar project switcher is disabled** ("Default project") and the provider health
   badge there is static; provider health is real on Settings → Providers.

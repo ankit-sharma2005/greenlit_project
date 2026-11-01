@@ -123,6 +123,64 @@ export function startEchoApp(): Promise<FakeApp> {
   });
 }
 
+/**
+ * A chatbot that streams its answer as Server-Sent Events.
+ *
+ * The real shape a company website uses: several `data:` events, each carrying
+ * one piece of the answer, then `[DONE]`. The text is split so the client must
+ * join the stream instead of reading one body.
+ */
+export function startStreamingApp(): Promise<FakeApp> {
+  return new Promise((resolve, reject) => {
+    const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+      if (req.method !== "POST") {
+        res.writeHead(200);
+        res.end("ok");
+        return;
+      }
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        let question = "";
+        try {
+          const payload = JSON.parse(body) as { question?: string };
+          question = payload.question ?? "";
+        } catch {
+          question = "";
+        }
+        const answer = GOLDEN_ANSWERS[question] ?? "I am not sure about that.";
+        const pieces = answer.match(/.{1,12}/g) ?? [answer];
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+        });
+        let index = 0;
+        const writeNext = () => {
+          if (index < pieces.length) {
+            res.write(`data: ${JSON.stringify({ token: pieces[index] })}\n\n`);
+            index += 1;
+            setTimeout(writeNext, 10);
+            return;
+          }
+          res.write("data: [DONE]\n\n");
+          res.end();
+        };
+        writeNext();
+      });
+    });
+    server.on("error", reject);
+    server.listen(0, "0.0.0.0", () => {
+      const addr = server.address() as AddressInfo;
+      resolve({
+        port: addr.port,
+        close: () => new Promise<void>((done) => server.close(() => done())),
+      });
+    });
+  });
+}
+
 export interface FakeProviderOptions {
   /** Answers for the app under test, keyed by a substring of the question. */
   answers?: Record<string, string>;

@@ -48,6 +48,28 @@ a safety section, the judge that scored it, and an exportable report.
   cases are excluded from the answer-quality average, not scored 0.
 - **Reports (spec 8.5):** export any finished run as self-contained printable HTML, full
   JSON or case-level CSV. Request headers are redacted and no key is ever exported.
+  When the target was not the user's own app, the report names the recorded permission
+  and its reference.
+- **A real company chatbot (HTTP endpoint):** the connector is polite by default — one
+  request at a time, at least 500 ms apart, and a busy target (429, 502, 503, 504) is
+  retried three times with exponential backoff plus jitter, honouring `Retry-After`
+  (seconds or an HTTP date, capped at 60 s). A response that still fails keeps its
+  structured error and still trips the run's circuit breaker.
+- **Streamed answers:** a target that streams is understood: `sse`, `ndjson` or plain
+  `text`, plus the current single-JSON-body mode. Streamed pieces are joined into one
+  answer (an explicit JSON path, or auto-detected OpenAI-style deltas and plain `data:`
+  text), `[DONE]` and keepalive comments are ignored, the answer is capped at 100 KB,
+  and both time to first byte and total latency are recorded.
+- **Pasted cURL credentials:** a pasted `curl` brings its headers, cookies (`-b`),
+  basic auth (`-u`) and body into the connector. Values are stored encrypted, the API
+  returns only their names, exports and errors redact them, and the `Host` header is
+  never imported (the URL decides the host, so the SSRF check still applies). A 401/403
+  says the session may have expired and to paste a fresh cURL.
+- **Permission to test:** a target that is not the user's own computer needs a ticked
+  "I own this application or have permission to test it" (an unconfirmed run is a 422)
+  plus an optional reference. Both are stored with the run, shown on the verdict card,
+  in every export and in the audit log. Safety attack probes against such a target stay
+  off unless a second checkbox repeats the permission explicitly.
 - **Baselines and regression (spec 8.5):** set a completed run as the baseline for its
   dataset version; the next run is compared with it and shows **PASS / WARN / BLOCK** with
   the metric deltas and the cases that passed before and fail now, on the verdict card and
@@ -184,11 +206,20 @@ dataset, then press **Start test**.
    `host.docker.internal` for a service on your own machine when the API runs in Docker,
    or the container name when it runs alongside it.
 3. Tick **This app runs on my computer** for a local or private target. Only do that for
-   targets you trust.
-4. GreenLit probes the endpoint once to detect the request/response shape (method, body
+   targets you trust. For any other target, tick **I own this application or have
+   permission to test it** (and optionally say who gave it); without that the run is
+   refused with a 422. Security attack probes against such a target need the second
+   checkbox that repeats the permission wording, and otherwise stay off.
+4. For a chatbot that needs a session, press **Paste cURL** and paste the full command:
+   its headers, cookies and token are imported encrypted and only their names are shown.
+5. Under **Advanced connector options**, set the polite rate (defaults: 1 concurrent
+   request, 500 ms apart, 3 retries) and how the app answers — one JSON body, `sse`,
+   `ndjson` or plain `text` — plus the JSON path inside each event when it is not the
+   OpenAI-style delta.
+6. GreenLit probes the endpoint once to detect the request/response shape (method, body
    template, answer path, context path) and shows what it found. Adjust it if the guess
    is wrong.
-5. Choose an approved dataset version, or leave it empty to have the model write cases.
+7. Choose an approved dataset version, or leave it empty to have the model write cases.
 
 ### Prompt app
 
@@ -249,7 +280,9 @@ project and therefore a fresh database:
   `e2e-report`, `e2e-safety`, `e2e-setup-audit`, `e2e-upload-outputs`) against
   `http://localhost:5277` (`E2E_BASE_URL`), then stops only that project with
   `docker compose down`; its volume is preserved. The last full run from a clean stack
-  passed every test: `17 passed (7.1m)`.
+  passed every test: `17 passed (7.1m)`. `e2e-report.spec.ts` has since grown a second
+  test (a streamed target and the required permission), and running that one spec alone
+  on a clean stack passed both: `2 passed (1.5m)`.
 
 Because the whole suite takes longer than one command on a slow machine, a single spec can
 be run on the same disposable stack:
