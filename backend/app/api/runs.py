@@ -27,6 +27,7 @@ from app.schemas.runs import (
     RunItemsResponse,
     RunJudgeRead,
     RunListResponse,
+    RunPermissionRead,
     RunProgressRead,
     RunRead,
 )
@@ -139,6 +140,18 @@ def _count(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return 0
     return int(value)
+
+
+def _permission_read(snapshot: dict[str, Any]) -> RunPermissionRead | None:
+    """The permission recorded with the run; absent for a local app."""
+    if "permission_confirmed" not in snapshot:
+        return None
+    reference = snapshot.get("permission_reference")
+    return RunPermissionRead(
+        confirmed=bool(snapshot.get("permission_confirmed")),
+        reference=str(reference) if reference else None,
+        safety_attacks_confirmed=bool(snapshot.get("safety_attacks_confirmed")),
+    )
 
 
 def _judge_read(
@@ -300,6 +313,7 @@ def _run_read(
         is_partial=run.is_partial,
         criteria_profile=run.criteria_profile,
         test_types=test_types,
+        permission=_permission_read(snapshot),
         dataset_id=run.dataset_id,
         dataset_version_id=run.dataset_version_id,
         created_at=run.created_at,
@@ -349,6 +363,10 @@ def start_run(
             "entry_point": payload.entry_point,
             "test_types": list(payload.test_types),
             "criteria_profile": run.criteria_profile,
+            # Who allowed testing this target, when it was not the user's own app.
+            "permission_confirmed": bool(run.settings_snapshot.get("permission_confirmed")),
+            "permission_reference": run.settings_snapshot.get("permission_reference"),
+            "safety_attacks_confirmed": bool(run.settings_snapshot.get("safety_attacks_confirmed")),
         },
         request=request,
     )
@@ -384,6 +402,9 @@ def quick_test(
             "dataset_version_id": str(version.id),
             "generated_cases": generated,
             "quick_test": True,
+            "permission_confirmed": bool(run.settings_snapshot.get("permission_confirmed")),
+            "permission_reference": run.settings_snapshot.get("permission_reference"),
+            "safety_attacks_confirmed": bool(run.settings_snapshot.get("safety_attacks_confirmed")),
         },
         request=request,
     )

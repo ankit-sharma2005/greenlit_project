@@ -58,6 +58,11 @@ class RunCreateRequest(BaseModel):
     context_path: str | None = Field(default=None, max_length=300)
     timeout_seconds: int = Field(default=60, ge=1, le=300)
     allow_private_targets: bool = False
+    # Testing somebody else's app needs their permission, recorded with the run.
+    permission_confirmed: bool = False
+    permission_reference: str | None = Field(default=None, max_length=300)
+    # Attack probes (safety) against a remote target need their own yes.
+    safety_attacks_confirmed: bool = False
     # Polite-rate settings: one request at a time, 500 ms apart, three retries.
     max_concurrency: int = Field(default=1, ge=1, le=8)
     min_delay_ms: int = Field(default=500, ge=0, le=60_000)
@@ -108,6 +113,9 @@ class QuickTestRequest(BaseModel):
 
     timeout_seconds: int = Field(default=60, ge=1, le=300)
     allow_private_targets: bool = False
+    permission_confirmed: bool = False
+    permission_reference: str | None = Field(default=None, max_length=300)
+    safety_attacks_confirmed: bool = False
     max_concurrency: int = Field(default=1, ge=1, le=8)
     min_delay_ms: int = Field(default=500, ge=0, le=60_000)
     max_retries: int = Field(default=3, ge=0, le=10)
@@ -116,6 +124,14 @@ class QuickTestRequest(BaseModel):
     name: str | None = Field(default=None, max_length=120)
     # Safety settings: which built-in sets to send. Omitted means every set.
     safety_sets: list[str] | None = Field(default=None, max_length=40)
+
+
+class RunPermissionRead(BaseModel):
+    """Who allowed GreenLit to test this target; absent on local-app runs."""
+
+    confirmed: bool = False
+    reference: str | None = None
+    safety_attacks_confirmed: bool = False
 
 
 class RunProgressRead(BaseModel):
@@ -257,6 +273,7 @@ class RunRead(BaseModel):
     is_partial: bool = False
     criteria_profile: str
     test_types: list[str] = Field(default_factory=list)
+    permission: RunPermissionRead | None = None
     dataset_id: UUID | None = None
     dataset_version_id: UUID | None = None
     created_at: datetime

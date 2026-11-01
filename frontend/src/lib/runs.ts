@@ -73,6 +73,13 @@ export interface RunRegression {
   regressed_cases: RegressedCase[];
 }
 
+/** Who allowed GreenLit to test a target that is not the user's own app. */
+export interface RunPermission {
+  confirmed: boolean;
+  reference: string | null;
+  safety_attacks_confirmed: boolean;
+}
+
 export interface Run {
   id: string;
   name: string;
@@ -84,6 +91,7 @@ export interface Run {
   is_partial: boolean;
   criteria_profile: string;
   test_types: string[];
+  permission?: RunPermission | null;
   dataset_id: string | null;
   dataset_version_id: string | null;
   created_at: string;
@@ -143,6 +151,9 @@ export interface RunCreateRequest {
   context_path?: string;
   timeout_seconds?: number;
   allow_private_targets?: boolean;
+  permission_confirmed?: boolean;
+  permission_reference?: string;
+  safety_attacks_confirmed?: boolean;
   max_concurrency?: number;
   min_delay_ms?: number;
   max_retries?: number;
@@ -173,6 +184,9 @@ export interface QuickTestRequest {
   context_path?: string;
   timeout_seconds?: number;
   allow_private_targets?: boolean;
+  permission_confirmed?: boolean;
+  permission_reference?: string;
+  safety_attacks_confirmed?: boolean;
   max_concurrency?: number;
   min_delay_ms?: number;
   max_retries?: number;

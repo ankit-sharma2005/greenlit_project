@@ -383,6 +383,18 @@ def _safety_block(metrics: list[dict[str, Any]]) -> dict[str, Any] | None:
     }
 
 
+def _permission_block(snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    """Who allowed testing this target, or None for a local app."""
+    if "permission_confirmed" not in snapshot:
+        return None
+    reference = snapshot.get("permission_reference")
+    return {
+        "confirmed": bool(snapshot.get("permission_confirmed")),
+        "reference": str(reference) if reference else None,
+        "safety_attacks_confirmed": bool(snapshot.get("safety_attacks_confirmed")),
+    }
+
+
 def _judge_block(snapshot: dict[str, Any]) -> dict[str, Any] | None:
     raw = snapshot.get("judge")
     if not isinstance(raw, dict):
@@ -463,6 +475,7 @@ def build_report(session: Session, run: Run) -> dict[str, Any]:
         "dataset": _dataset_block(session, run),
         "target": target,
         "settings": sanitized_settings(snapshot),
+        "permission": _permission_block(snapshot),
         "verdict": {
             "verdict": run.verdict,
             "score": run.score,
@@ -550,10 +563,18 @@ def render_csv(document: dict[str, Any]) -> str:
             "tokens_in_total",
             "tokens_out_total",
             "cost_estimate",
+            # Who allowed testing this target, when it was not the user's own app.
+            "permission_confirmed",
+            "permission_reference",
+            "safety_attacks_confirmed",
         ]
     )
     verdict = document["verdict"]
     operations = document.get("operations") or {}
+    settings = document.get("settings") or {}
+    permission_confirmed = settings.get("permission_confirmed")
+    permission_reference = settings.get("permission_reference")
+    safety_attacks_confirmed = settings.get("safety_attacks_confirmed")
     for case in document["cases"]:
         writer.writerow(
             [
@@ -579,6 +600,9 @@ def render_csv(document: dict[str, Any]) -> str:
                 csv_cell(operations.get("tokens_in_total")),
                 csv_cell(operations.get("tokens_out_total")),
                 csv_cell(operations.get("cost_estimate")),
+                csv_cell(permission_confirmed),
+                csv_cell(permission_reference),
+                csv_cell(safety_attacks_confirmed),
             ]
         )
     return buffer.getvalue()
@@ -696,6 +720,14 @@ def render_html(document: dict[str, Any]) -> str:
         parts.append(f"<dt>Dataset hash</dt><dd><code>{digest}</code></dd>")
     parts.append(f"<dt>Started</dt><dd>{_esc(run['started_at'] or '—')}</dd>")
     parts.append(f"<dt>Completed</dt><dd>{_esc(run['completed_at'] or '—')}</dd>")
+    permission = document.get("permission")
+    if permission is not None:
+        parts.append(
+            "<dt>Permission to test</dt><dd>confirmed "
+            f"({_esc(permission['reference'] or 'no reference given')})</dd>"
+        )
+        attacks = "on" if permission["safety_attacks_confirmed"] else "off"
+        parts.append(f"<dt>Attack probes</dt><dd>{attacks}</dd>")
     parts.append("</dl>")
 
     parts.append("<h2>Settings snapshot</h2><dl>")

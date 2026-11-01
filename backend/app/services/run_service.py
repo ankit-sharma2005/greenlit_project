@@ -149,6 +149,14 @@ def build_snapshot(
         "timeout_seconds": payload.timeout_seconds,
     }
     if entry_point == "http_endpoint":
+        remote = not payload.allow_private_targets
+        if remote and not payload.permission_confirmed:
+            raise RunServiceError(
+                "This target is not on your computer. Confirm that you own it or have "
+                "permission to test it before GreenLit sends anything.",
+                status=422,
+                code="permission_required",
+            )
         snapshot.update(
             {
                 "url": _check_url(payload.target),
@@ -168,6 +176,11 @@ def build_snapshot(
                 "stream_content_path": payload.stream_content_path,
             }
         )
+        if remote:
+            # Who allowed this test, stored with the run and its report.
+            snapshot["permission_confirmed"] = True
+            snapshot["permission_reference"] = (payload.permission_reference or "").strip() or None
+            snapshot["safety_attacks_confirmed"] = payload.safety_attacks_confirmed
     elif entry_point == "prompt_app":
         if payload.provider_id is None:
             raise RunServiceError(
@@ -248,6 +261,21 @@ def create_run_from_request(
         dataset_version_id=payload.dataset_version_id,
     )
     snapshot = build_snapshot(payload, dataset_version_id=version.id, entry_point=entry)
+    # Attack probes against somebody else's app stay off until that is its own
+    # explicit yes; quality and operations testing are unaffected.
+    if (
+        entry == "http_endpoint"
+        and not payload.allow_private_targets
+        and not payload.safety_attacks_confirmed
+    ):
+        test_types = [kind for kind in test_types if kind != "safety"]
+        if not test_types:
+            raise RunServiceError(
+                "Safety attacks against a target you do not host need the second "
+                "confirmation. Confirm it, or pick Quality or Operations.",
+                status=422,
+                code="safety_requires_permission",
+            )
     snapshot["test_types"] = test_types
     if "safety" in test_types:
         snapshot["safety_sets"] = list(_safety_selection(payload.safety_sets).ids)
@@ -414,6 +442,9 @@ def create_quick_test(
         context_path=payload.context_path,
         timeout_seconds=payload.timeout_seconds,
         allow_private_targets=payload.allow_private_targets,
+        permission_confirmed=payload.permission_confirmed,
+        permission_reference=payload.permission_reference,
+        safety_attacks_confirmed=payload.safety_attacks_confirmed,
         max_concurrency=payload.max_concurrency,
         min_delay_ms=payload.min_delay_ms,
         max_retries=payload.max_retries,

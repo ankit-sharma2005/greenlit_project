@@ -10,6 +10,9 @@ export interface ConnectTestRequest {
   headers_secret?: string;
   timeout_seconds?: number;
   allow_private_targets?: boolean;
+  permission_confirmed?: boolean;
+  permission_reference?: string;
+  safety_attacks_confirmed?: boolean;
   max_concurrency?: number;
   min_delay_ms?: number;
   max_retries?: number;

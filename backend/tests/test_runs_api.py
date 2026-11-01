@@ -580,6 +580,110 @@ def test_start_prompt_app_snapshots_the_model(
         assert run.settings_snapshot["entry_point"] == "prompt_app"
 
 
+def test_a_remote_target_needs_permission(client: TestClient, runtime: SimpleNamespace) -> None:
+    """Testing somebody else's app is refused until the box is ticked."""
+    _register(client)
+    dataset = _upload_and_approve(client)
+    body = _body(dataset)
+    body.pop("allow_private_targets")
+    body["target"] = "https://chat.example.com/ask"
+
+    response = client.post("/api/v1/runs", json=body)
+    assert response.status_code == 422, response.text
+    message = response.json()["error"]["message"]
+    assert "permission" in message.lower()
+    assert runtime.queue == []
+
+
+def test_permission_is_recorded_and_attacks_stay_off(
+    client: TestClient,
+    session_factory: sessionmaker[Session],
+    runtime: SimpleNamespace,
+) -> None:
+    _register(client)
+    dataset = _upload_and_approve(client)
+    body = _body(dataset)
+    body.pop("allow_private_targets")
+    body["target"] = "https://chat.example.com/ask"
+    body["permission_confirmed"] = True
+    body["permission_reference"] = "Ops ticket 4711"
+
+    response = client.post("/api/v1/runs", json=body)
+    assert response.status_code == 202, response.text
+    run_id = uuid.UUID(response.json()["id"])
+    # Safety was asked for, but attack probes need their own confirmation.
+    assert response.json()["test_types"] == ["quality", "operations"]
+    assert response.json()["permission"] == {
+        "confirmed": True,
+        "reference": "Ops ticket 4711",
+        "safety_attacks_confirmed": False,
+    }
+
+    with session_factory() as session:
+        run = session.get(Run, run_id)
+        assert run is not None
+        snapshot = run.settings_snapshot
+        assert snapshot["permission_confirmed"] is True
+        assert snapshot["permission_reference"] == "Ops ticket 4711"
+        assert snapshot["safety_attacks_confirmed"] is False
+        assert "safety_sets" not in snapshot
+        event = session.scalars(select(AuditEvent).where(AuditEvent.action == "run.start")).one()
+        assert event.event_metadata["permission_confirmed"] is True
+        assert event.event_metadata["permission_reference"] == "Ops ticket 4711"
+
+
+def test_safety_only_without_the_attack_confirmation_is_refused(
+    client: TestClient, runtime: SimpleNamespace
+) -> None:
+    _register(client)
+    dataset = _upload_and_approve(client)
+    body = _body(dataset)
+    body.pop("allow_private_targets")
+    body["target"] = "https://chat.example.com/ask"
+    body["permission_confirmed"] = True
+    body["test_types"] = ["safety"]
+
+    response = client.post("/api/v1/runs", json=body)
+    assert response.status_code == 422, response.text
+    message = response.json()["error"]["message"]
+    assert "confirmation" in message.lower()
+    assert runtime.queue == []
+
+
+def test_the_second_confirmation_turns_attacks_on(
+    client: TestClient,
+    session_factory: sessionmaker[Session],
+    runtime: SimpleNamespace,
+) -> None:
+    _register(client)
+    dataset = _upload_and_approve(client)
+    body = _body(dataset)
+    body.pop("allow_private_targets")
+    body["target"] = "https://chat.example.com/ask"
+    body["permission_confirmed"] = True
+    body["safety_attacks_confirmed"] = True
+    body["test_types"] = ["safety", "quality"]
+
+    response = client.post("/api/v1/runs", json=body)
+    assert response.status_code == 202, response.text
+    assert response.json()["test_types"] == ["safety", "quality"]
+
+    with session_factory() as session:
+        run = session.get(Run, uuid.UUID(response.json()["id"]))
+        assert run is not None
+        assert run.settings_snapshot["safety_attacks_confirmed"] is True
+        assert run.settings_snapshot["safety_sets"]
+
+
+def test_a_local_target_needs_no_permission(client: TestClient, runtime: SimpleNamespace) -> None:
+    """The local app and the built-in demo stay one click."""
+    _register(client)
+    dataset = _upload_and_approve(client)
+    response = client.post("/api/v1/runs", json=_body(dataset))
+    assert response.status_code == 202, response.text
+    assert response.json()["permission"] is None
+
+
 def test_run_created_directly_can_be_read(
     client: TestClient, session_factory: sessionmaker[Session]
 ) -> None:

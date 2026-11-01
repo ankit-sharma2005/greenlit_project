@@ -397,6 +397,68 @@ def test_report_never_exports_pasted_curl_credentials(
     assert document["settings"]["headers_encrypted"] == "[redacted]"
 
 
+def test_reports_name_who_allowed_testing_the_target(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    _register(client)
+    dataset = _upload_and_approve(client)
+    owner = _user_id(session_factory)
+    reference = "Support lead, ticket 4711"
+    snapshot: dict[str, object] = {
+        "entry_point": "http_endpoint",
+        "test_types": ["quality"],
+        "dataset_version_id": dataset["versions"][0]["id"],  # type: ignore[index]
+        "timeout_seconds": 30,
+        "url": "https://chat.example.com/ask",
+        "method": "POST",
+        "headers": {},
+        "body_template": '{"question": {{input}}}',
+        "answer_path": "answer",
+        "permission_confirmed": True,
+        "permission_reference": reference,
+        "safety_attacks_confirmed": False,
+    }
+    with session_factory() as session:
+        run = create_run(
+            session,
+            owner_id=owner,
+            name="Permission run",
+            settings_snapshot=snapshot,
+            dataset_id=uuid.UUID(str(dataset["id"])),
+            dataset_version_id=uuid.UUID(str(dataset["versions"][0]["id"])),  # type: ignore[index]
+            criteria_profile="rag_chatbot",
+        )
+        item = create_run_item(session, run, row_index=1, input_text="What is GreenLit?")
+        session.commit()
+        update_run_item(session, item, state="completed", output="GreenLit tests LLM apps.")
+        update_run(session, run, state="completed", verdict="GO", score=1.0, completed_at=utcnow())
+        session.commit()
+        run_id = run.id
+
+    html = client.get(f"/api/v1/runs/{run_id}/report?format=html")
+    assert html.status_code == 200, html.text
+    assert "Permission to test" in html.text
+    assert reference in html.text
+    assert "Attack probes" in html.text
+
+    document = json.loads(client.get(f"/api/v1/runs/{run_id}/report?format=json").text)
+    assert document["permission"] == {
+        "confirmed": True,
+        "reference": reference,
+        "safety_attacks_confirmed": False,
+    }
+
+    rows = list(
+        csv.reader(io.StringIO(client.get(f"/api/v1/runs/{run_id}/report?format=csv").text))
+    )
+    assert rows[0][-3:] == [
+        "permission_confirmed",
+        "permission_reference",
+        "safety_attacks_confirmed",
+    ]
+    assert rows[1][-3:] == ["True", reference, "False"]
+
+
 def test_html_escapes_case_text(client: TestClient, session_factory: sessionmaker[Session]) -> None:
     _register(client)
     dataset = _upload_and_approve(client)

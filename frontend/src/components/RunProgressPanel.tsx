@@ -159,6 +159,13 @@ function RunVerdict({ run }: { run: Run }) {
           {run.verdict_reason}
         </p>
 
+        {run.permission ? (
+          <p className="card__hint" data-testid="run-permission">
+            Permission to test: {run.permission.reference ?? "confirmed, no reference given"} ·
+            attack probes {run.permission.safety_attacks_confirmed ? "on" : "off"}
+          </p>
+        ) : null}
+
         <ReportExport runId={run.id} />
 
         {run.judge && run.judge.capped_items > 0 ? (

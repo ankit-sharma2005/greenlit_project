@@ -85,6 +85,11 @@ export function NewTestPage() {
   const [curlSecret, setCurlSecret] = useState("");
   const [curlHeaderNames, setCurlHeaderNames] = useState<string[]>([]);
   const [runsOnMyComputer, setRunsOnMyComputer] = useState(false);
+  // Testing an app we do not host needs the owner's permission, recorded with the run.
+  const [permissionConfirmed, setPermissionConfirmed] = useState(false);
+  const [permissionReference, setPermissionReference] = useState("");
+  // Attack probes against someone else's app need their own, separate yes.
+  const [safetyAttacksConfirmed, setSafetyAttacksConfirmed] = useState(false);
   // Polite-rate defaults: a real company chatbot must not be hammered.
   const [maxConcurrency, setMaxConcurrency] = useState(1);
   const [minDelayMs, setMinDelayMs] = useState(500);
@@ -319,6 +324,13 @@ export function NewTestPage() {
       setError("Enter the URL of the app GreenLit should test (or paste a curl command).");
       return;
     }
+    if (connector === "http_endpoint" && !runsOnMyComputer && !permissionConfirmed) {
+      setError(
+        "Confirm that you own this application or have permission to test it before GreenLit " +
+          "sends anything to it.",
+      );
+      return;
+    }
 
     if (connector === "http_endpoint") {
       setLoading(true);
@@ -330,6 +342,11 @@ export function NewTestPage() {
           auto_detect: true,
           headers_secret: curlSecret || undefined,
           allow_private_targets: runsOnMyComputer,
+          permission_confirmed: !runsOnMyComputer && permissionConfirmed,
+          permission_reference: !runsOnMyComputer
+            ? permissionReference.trim() || undefined
+            : undefined,
+          safety_attacks_confirmed: !runsOnMyComputer && safetyAttacksConfirmed,
           max_concurrency: maxConcurrency,
           min_delay_ms: minDelayMs,
           max_retries: maxRetries,
@@ -482,6 +499,9 @@ export function NewTestPage() {
       context_path: detectResult.detected_context_path || undefined,
       timeout_seconds: 60,
       allow_private_targets: runsOnMyComputer,
+      permission_confirmed: !runsOnMyComputer && permissionConfirmed,
+      permission_reference: !runsOnMyComputer ? permissionReference.trim() || undefined : undefined,
+      safety_attacks_confirmed: !runsOnMyComputer && safetyAttacksConfirmed,
       max_concurrency: maxConcurrency,
       min_delay_ms: minDelayMs,
       max_retries: maxRetries,
@@ -505,6 +525,11 @@ export function NewTestPage() {
           context_path: detectResult.detected_context_path || undefined,
           timeout_seconds: 60,
           allow_private_targets: runsOnMyComputer,
+          permission_confirmed: !runsOnMyComputer && permissionConfirmed,
+          permission_reference: !runsOnMyComputer
+            ? permissionReference.trim() || undefined
+            : undefined,
+          safety_attacks_confirmed: !runsOnMyComputer && safetyAttacksConfirmed,
           max_concurrency: maxConcurrency,
           min_delay_ms: minDelayMs,
           max_retries: maxRetries,
@@ -532,8 +557,11 @@ export function NewTestPage() {
     maxConcurrency,
     maxRetries,
     minDelayMs,
+    permissionConfirmed,
+    permissionReference,
     responseFormat,
     runsOnMyComputer,
+    safetyAttacksConfirmed,
     streamContentPath,
     testTypes,
     url,
@@ -907,6 +935,65 @@ export function NewTestPage() {
             Docker. Only enable this for targets you trust.
           </p>
         </div>
+
+        {connector === "http_endpoint" && !runsOnMyComputer ? (
+          <div
+            className="form__run-on-computer"
+            data-testid="permission-block"
+            style={{ marginTop: "var(--space-4)" }}
+          >
+            <input
+              type="checkbox"
+              id="permission-confirmed"
+              data-testid="permission-confirmed"
+              checked={permissionConfirmed}
+              onChange={() => {
+                setPermissionConfirmed(!permissionConfirmed);
+                if (permissionConfirmed) setSafetyAttacksConfirmed(false);
+              }}
+              disabled={loading}
+            />
+            <label htmlFor="permission-confirmed">
+              I own this application or have permission to test it
+            </label>
+            <p className="form__hint">
+              GreenLit sends real requests to this address. Confirm the owner agreed before testing
+              an app you do not host.
+            </p>
+            <label className="form__label" htmlFor="permission-reference">
+              Who gave permission / reference (optional):
+            </label>
+            <input
+              id="permission-reference"
+              data-testid="permission-reference"
+              type="text"
+              value={permissionReference}
+              onChange={(e) => setPermissionReference(e.target.value)}
+              placeholder="e.g. support lead, ticket 4711"
+              disabled={loading}
+            />
+            {testTypes.safety ? (
+              <div style={{ marginTop: "var(--space-3)" }}>
+                <input
+                  type="checkbox"
+                  id="safety-attacks-confirmed"
+                  data-testid="safety-attacks-confirmed"
+                  checked={safetyAttacksConfirmed}
+                  onChange={() => setSafetyAttacksConfirmed(!safetyAttacksConfirmed)}
+                  disabled={loading || !permissionConfirmed}
+                />
+                <label htmlFor="safety-attacks-confirmed">
+                  I own this application or have permission to test it, including security attack
+                  probes
+                </label>
+                <p className="form__hint">
+                  Attack probes (prompt injection, jailbreaks, hidden instructions) stay off against
+                  an app you do not host unless this second box is ticked.
+                </p>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         {error && (
           <p className="form-error" role="alert" style={{ marginTop: "var(--space-4)" }}>
