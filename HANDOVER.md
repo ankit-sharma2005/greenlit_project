@@ -81,7 +81,10 @@ migrations, one error envelope `{"error": {"code", "message", "fields"}}`.
     `Retry-After` (seconds or HTTP date) capped at 60 s.
   - `services/connectors.py` — the shared request function both the test call and every run
     case use: polite pacing (`max_concurrency`, `min_delay_ms`, `max_retries`), one JSON
-    body or a joined `sse`/`ndjson`/`text` stream (100 KB cap, TTFT and total latency).
+    body or a joined `sse`/`ndjson`/`text` stream (100 KB cap, TTFT and total latency), a
+    150 s per-case budget, and interruptible retry waits (Cancel sets a threading.Event).
+    A recovered case records the final attempt's latency plus `retry_count`/`waited_ms`;
+    `operations.py` reports `retried_cases` and never counts those as errors.
   - `utils/curl.py` — parses a pasted cURL (headers, cookies, `-u`, body), drops `Host`,
     and encrypts the values; the API returns names only.
   - `llm_gateway.py` — the only place that talks to a model provider: timeout, retries

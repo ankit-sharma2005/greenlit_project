@@ -53,8 +53,12 @@ a safety section, the judge that scored it, and an exportable report.
 - **A real company chatbot (HTTP endpoint):** the connector is polite by default — one
   request at a time, at least 500 ms apart, and a busy target (429, 502, 503, 504) is
   retried three times with exponential backoff plus jitter, honouring `Retry-After`
-  (seconds or an HTTP date, capped at 60 s). A response that still fails keeps its
-  structured error and still trips the run's circuit breaker.
+  (seconds or an HTTP date, capped at 60 s). Set retries to 0 to send each request once.
+  A response that still fails keeps its structured error and still trips the run's
+  circuit breaker. A case that needed retries is still a success: its latency is the
+  final attempt alone, `retry_count` and `waited_ms` are stored and exported beside it,
+  and Operations reports how many cases were retried. A case has a 150 s budget, so a
+  slow target cannot hold a worker, and Cancel interrupts a wait immediately.
 - **Streamed answers:** a target that streams is understood: `sse`, `ndjson` or plain
   `text`, plus the current single-JSON-body mode. Streamed pieces are joined into one
   answer (an explicit JSON path, or auto-detected OpenAI-style deltas and plain `data:`
