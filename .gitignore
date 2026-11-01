@@ -1,5 +1,6 @@
-# Freebuff workspace metadata
+# Freebuff workspace metadata and user attachments (they can hold tokens)
 .freebuff/
+.cloud-attachments/
 
 # Secrets
 .env
