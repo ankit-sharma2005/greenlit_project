@@ -8,6 +8,9 @@ export interface ConnectTestRequest {
   headers?: Record<string, string>;
   timeout_seconds?: number;
   allow_private_targets?: boolean;
+  max_concurrency?: number;
+  min_delay_ms?: number;
+  max_retries?: number;
   answer_path?: string;
   context_path?: string;
   auto_detect?: boolean;

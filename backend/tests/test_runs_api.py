@@ -157,6 +157,10 @@ def test_start_queues_without_executing(
         assert run.settings_snapshot["url"] == "http://127.0.0.1:9099/ask"
         assert run.settings_snapshot["allow_private_targets"] is True
         assert run.settings_snapshot["answer_path"] == "answer"
+        # Polite-rate defaults travel with the run and are not read live later.
+        assert run.settings_snapshot["max_concurrency"] == 1
+        assert run.settings_snapshot["min_delay_ms"] == 500
+        assert run.settings_snapshot["max_retries"] == 3
         # Automatic profile: context was detected, so the RAG template applies.
         assert run.criteria_profile == "rag_chatbot"
         assert run.dataset_version_id == uuid.UUID(str(dataset["versions"][0]["id"]))  # type: ignore[index]

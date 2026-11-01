@@ -42,7 +42,12 @@ def test_connection(
     payload: ConnectTestRequest, request: Request, user: Any = Depends(get_current_user)
 ) -> ConnectTestResponse:
     if payload.connector_type == "http_endpoint":
-        connector = HttpConnector(allow_private=payload.allow_private_targets)
+        connector = HttpConnector(
+            allow_private=payload.allow_private_targets,
+            max_concurrency=payload.max_concurrency,
+            min_delay_ms=payload.min_delay_ms,
+            max_retries=payload.max_retries,
+        )
         try:
             if payload.auto_detect or not payload.body_template:
                 trace, template, detected_answer, detected_context = connector.auto_detect(

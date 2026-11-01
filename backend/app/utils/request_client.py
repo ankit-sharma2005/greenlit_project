@@ -4,11 +4,21 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import random
 import time
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+
+# A busy or briefly unavailable target is worth asking again. These are the
+# answers that mean "not now", never a wrong question.
+RETRYABLE_STATUSES = frozenset({429, 502, 503, 504})
+RETRY_AFTER_CAP_SECONDS = 60.0
+RETRY_BASE_SECONDS = 0.25
+RETRY_DELAY_CAP_SECONDS = 10.0
 
 # Inside a dev container ``127.0.0.1`` is the container itself, so a target the user
 # runs on their own computer is reached through the Docker gateway instead. The name
@@ -66,9 +76,11 @@ class RequestClient:
         allow_private_targets: bool = False,
         max_redirects: int = 5,
         local_rewrite: bool | None = None,
+        max_retries: int = 3,
     ):
         self.allow_private_targets = allow_private_targets
         self.max_redirects = max_redirects
+        self.max_retries = max(0, max_retries)
         # ``None`` means "ask the environment": only a container has to go through
         # the gateway, a process on the host reaches the app directly as before.
         self.local_rewrite = _in_container() if local_rewrite is None else local_rewrite
@@ -129,15 +141,60 @@ class RequestClient:
         connect_url = parsed._replace(netloc=f"{LOCAL_GATEWAY_HOST}{port}").geturl()
         return connect_url, rewritten
 
-    def request(self, method: str = "POST", url: str = "", **kwargs: Any) -> httpx.Response:
+    def request(
+        self,
+        method: str = "POST",
+        url: str = "",
+        max_retries: int | None = None,
+        **kwargs: Any,
+    ) -> httpx.Response:
         safe_url = self._sanitize_url(url)
         timeout = kwargs.pop("timeout", 60)
         safe_url, headers = self.local_target(safe_url, kwargs.pop("headers", None))
+        retries = self.max_retries if max_retries is None else max(0, max_retries)
+        attempts = retries + 1
         with httpx.Client(
             timeout=timeout, follow_redirects=True, max_redirects=self.max_redirects
         ) as client:
-            response = client.request(method, safe_url, headers=headers, **kwargs)
+            response: httpx.Response | None = None
+            for attempt in range(attempts):
+                response = client.request(method, safe_url, headers=headers, **kwargs)
+                if response.status_code not in RETRYABLE_STATUSES or attempt == attempts - 1:
+                    return response
+                time.sleep(retry_delay(response, attempt))
+        # Unreachable: the loop always returns on its last attempt.
+        assert response is not None
         return response
+
+
+def retry_after_seconds(value: str | None) -> float | None:
+    """``Retry-After`` as seconds, from either a number or an HTTP date."""
+    if not value:
+        return None
+    text = value.strip()
+    try:
+        seconds = float(text)
+    except ValueError:
+        try:
+            when = parsedate_to_datetime(text)
+        except (TypeError, ValueError):
+            return None
+        if when is None:
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)
+        seconds = (when - datetime.now(UTC)).total_seconds()
+    return max(0.0, min(seconds, RETRY_AFTER_CAP_SECONDS))
+
+
+def retry_delay(response: httpx.Response | None, attempt: int) -> float:
+    """Wait before retrying: the target's Retry-After, else exp backoff + jitter."""
+    header = response.headers.get("Retry-After") if response is not None else None
+    honoured = retry_after_seconds(header)
+    if honoured is not None:
+        return honoured
+    backoff = RETRY_BASE_SECONDS * (2**attempt)
+    return float(min(RETRY_DELAY_CAP_SECONDS, backoff + random.uniform(0, backoff / 2)))
 
 
 def _is_private_host(hostname: str) -> bool:

@@ -134,7 +134,7 @@ def server() -> Iterator[str]:
 
 
 def _connector() -> HttpConnector:
-    return HttpConnector(allow_private=True)
+    return HttpConnector(allow_private=True, min_delay_ms=0)
 
 
 def _send(connector: HttpConnector, url: str) -> ConnectorError:

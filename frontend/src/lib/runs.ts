@@ -141,6 +141,9 @@ export interface RunCreateRequest {
   context_path?: string;
   timeout_seconds?: number;
   allow_private_targets?: boolean;
+  max_concurrency?: number;
+  min_delay_ms?: number;
+  max_retries?: number;
   provider_id?: string;
   model?: string;
   system_prompt?: string;
@@ -164,6 +167,9 @@ export interface QuickTestRequest {
   context_path?: string;
   timeout_seconds?: number;
   allow_private_targets?: boolean;
+  max_concurrency?: number;
+  min_delay_ms?: number;
+  max_retries?: number;
   name?: string;
 }
 

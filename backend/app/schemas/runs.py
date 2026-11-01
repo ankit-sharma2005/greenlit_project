@@ -55,6 +55,10 @@ class RunCreateRequest(BaseModel):
     context_path: str | None = Field(default=None, max_length=300)
     timeout_seconds: int = Field(default=60, ge=1, le=300)
     allow_private_targets: bool = False
+    # Polite-rate settings: one request at a time, 500 ms apart, three retries.
+    max_concurrency: int = Field(default=1, ge=1, le=8)
+    min_delay_ms: int = Field(default=500, ge=0, le=60_000)
+    max_retries: int = Field(default=3, ge=0, le=10)
 
     # Prompt app connector settings.
     provider_id: UUID | None = None
@@ -97,6 +101,9 @@ class QuickTestRequest(BaseModel):
 
     timeout_seconds: int = Field(default=60, ge=1, le=300)
     allow_private_targets: bool = False
+    max_concurrency: int = Field(default=1, ge=1, le=8)
+    min_delay_ms: int = Field(default=500, ge=0, le=60_000)
+    max_retries: int = Field(default=3, ge=0, le=10)
     name: str | None = Field(default=None, max_length=120)
     # Safety settings: which built-in sets to send. Omitted means every set.
     safety_sets: list[str] | None = Field(default=None, max_length=40)

@@ -158,6 +158,9 @@ def build_snapshot(
                 "answer_path": payload.answer_path,
                 "context_path": payload.context_path,
                 "allow_private_targets": payload.allow_private_targets,
+                "max_concurrency": payload.max_concurrency,
+                "min_delay_ms": payload.min_delay_ms,
+                "max_retries": payload.max_retries,
             }
         )
     elif entry_point == "prompt_app":
@@ -405,6 +408,9 @@ def create_quick_test(
         context_path=payload.context_path,
         timeout_seconds=payload.timeout_seconds,
         allow_private_targets=payload.allow_private_targets,
+        max_concurrency=payload.max_concurrency,
+        min_delay_ms=payload.min_delay_ms,
+        max_retries=payload.max_retries,
         safety_sets=payload.safety_sets,
     )
     run = create_run_from_request(session, user, request, enqueue)

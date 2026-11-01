@@ -82,6 +82,10 @@ export function NewTestPage() {
   const [showCurl, setShowCurl] = useState(false);
   const [curlNotice, setCurlNotice] = useState<string | null>(null);
   const [runsOnMyComputer, setRunsOnMyComputer] = useState(false);
+  // Polite-rate defaults: a real company chatbot must not be hammered.
+  const [maxConcurrency, setMaxConcurrency] = useState(1);
+  const [minDelayMs, setMinDelayMs] = useState(500);
+  const [maxRetries, setMaxRetries] = useState(3);
   const [testTypes, setTestTypes] = useState<TestTypes>({
     quality: true,
     safety: true,
@@ -308,6 +312,9 @@ export function NewTestPage() {
           method: "POST",
           auto_detect: true,
           allow_private_targets: runsOnMyComputer,
+          max_concurrency: maxConcurrency,
+          min_delay_ms: minDelayMs,
+          max_retries: maxRetries,
         });
         setDetectResult(result);
         setAnswerPath(result.detected_answer_path || "");
@@ -454,6 +461,9 @@ export function NewTestPage() {
       context_path: detectResult.detected_context_path || undefined,
       timeout_seconds: 60,
       allow_private_targets: runsOnMyComputer,
+      max_concurrency: maxConcurrency,
+      min_delay_ms: minDelayMs,
+      max_retries: maxRetries,
     };
     try {
       if (datasetVersionId) {
@@ -471,6 +481,9 @@ export function NewTestPage() {
           context_path: detectResult.detected_context_path || undefined,
           timeout_seconds: 60,
           allow_private_targets: runsOnMyComputer,
+          max_concurrency: maxConcurrency,
+          min_delay_ms: minDelayMs,
+          max_retries: maxRetries,
           generate: GENERATED_CASES,
         });
         setActiveRun(result.run);
@@ -485,7 +498,17 @@ export function NewTestPage() {
     } finally {
       setStartingRun(false);
     }
-  }, [answerPath, datasetVersionId, detectResult, runsOnMyComputer, testTypes, url]);
+  }, [
+    answerPath,
+    datasetVersionId,
+    detectResult,
+    maxConcurrency,
+    maxRetries,
+    minDelayMs,
+    runsOnMyComputer,
+    testTypes,
+    url,
+  ]);
 
   const handleCancelRun = async () => {
     if (!activeRun) return;
@@ -755,6 +778,55 @@ export function NewTestPage() {
             </p>
           ) : null}
         </fieldset>
+
+        {connector === "http_endpoint" && (
+          <details className="form__advanced" data-testid="advanced-connector">
+            <summary>Advanced connector options</summary>
+            <p className="form__hint">
+              Polite defaults: one request at a time, at least 500 ms between requests, and a busy
+              target (429, 502, 503, 504) retried three times.
+            </p>
+            <div className="datasets__actions">
+              <label htmlFor="max-concurrency">
+                Max concurrent requests:{" "}
+                <input
+                  id="max-concurrency"
+                  type="number"
+                  min={1}
+                  max={8}
+                  value={maxConcurrency}
+                  onChange={(e) => setMaxConcurrency(Number(e.target.value) || 1)}
+                  disabled={loading}
+                />
+              </label>
+              <label htmlFor="min-delay-ms">
+                Minimum delay between requests (ms):{" "}
+                <input
+                  id="min-delay-ms"
+                  type="number"
+                  min={0}
+                  max={60000}
+                  step={100}
+                  value={minDelayMs}
+                  onChange={(e) => setMinDelayMs(Number(e.target.value) || 0)}
+                  disabled={loading}
+                />
+              </label>
+              <label htmlFor="max-retries">
+                Retries on a busy target:{" "}
+                <input
+                  id="max-retries"
+                  type="number"
+                  min={0}
+                  max={10}
+                  value={maxRetries}
+                  onChange={(e) => setMaxRetries(Number(e.target.value) || 0)}
+                  disabled={loading}
+                />
+              </label>
+            </div>
+          </details>
+        )}
 
         <div className="form__run-on-computer" style={{ marginTop: "var(--space-5)" }}>
           <input

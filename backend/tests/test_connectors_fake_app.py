@@ -99,7 +99,7 @@ def test_fast_app():
     thread.daemon = True
     thread.start()
     try:
-        connector = HttpConnector(allow_private=True)
+        connector = HttpConnector(allow_private=True, min_delay_ms=0)
         trace = connector.render_and_send(
             url=f"http://localhost:{port}/test",
             body_template='{"question": {{input}}}',
@@ -118,7 +118,7 @@ def test_slow_app_30s():
     thread.daemon = True
     thread.start()
     try:
-        connector = HttpConnector(allow_private=True)
+        connector = HttpConnector(allow_private=True, min_delay_ms=0)
         with pytest.raises(ConnectorError) as exc:
             connector.render_and_send(
                 url=f"http://localhost:{port}/test",
@@ -138,7 +138,7 @@ def test_wrong_answer_key():
     thread.daemon = True
     thread.start()
     try:
-        connector = HttpConnector(allow_private=True)
+        connector = HttpConnector(allow_private=True, min_delay_ms=0)
         trace = connector.render_and_send(
             url=f"http://localhost:{port}/test",
             body_template='{"question": {{input}}}',
@@ -158,7 +158,7 @@ def test_404():
     thread.daemon = True
     thread.start()
     try:
-        connector = HttpConnector(allow_private=True)
+        connector = HttpConnector(allow_private=True, min_delay_ms=0)
         with pytest.raises(ConnectorError) as exc:
             connector.render_and_send(
                 url=f"http://localhost:{port}/test",
@@ -178,7 +178,7 @@ def test_403_wrong_key():
     thread.daemon = True
     thread.start()
     try:
-        connector = HttpConnector(allow_private=True)
+        connector = HttpConnector(allow_private=True, min_delay_ms=0)
         with pytest.raises(ConnectorError) as exc:
             connector.render_and_send(
                 url=f"http://localhost:{port}/test",
@@ -198,7 +198,7 @@ def test_invalid_json():
     thread.daemon = True
     thread.start()
     try:
-        connector = HttpConnector(allow_private=True)
+        connector = HttpConnector(allow_private=True, min_delay_ms=0)
         with pytest.raises(ConnectorError) as exc:
             connector.render_and_send(
                 url=f"http://localhost:{port}/test",
@@ -218,7 +218,7 @@ def test_timeout():
     thread.daemon = True
     thread.start()
     try:
-        connector = HttpConnector(allow_private=True)
+        connector = HttpConnector(allow_private=True, min_delay_ms=0)
         with pytest.raises(ConnectorError) as exc:
             connector.render_and_send(
                 url=f"http://localhost:{port}/test",
@@ -234,7 +234,7 @@ def test_timeout():
 def test_private_target_blocked():
     from app.utils.request_client import BlockedPrivateURLError
 
-    connector = HttpConnector(allow_private=False)
+    connector = HttpConnector(allow_private=False, min_delay_ms=0)
     with pytest.raises((ConnectorError, BlockedPrivateURLError, Exception)):
         connector.render_and_send(
             url="http://192.168.1.1/test",
@@ -323,7 +323,7 @@ def test_autodetect_question():
     thread.daemon = True
     thread.start()
     try:
-        connector = HttpConnector(allow_private=True)
+        connector = HttpConnector(allow_private=True, min_delay_ms=0)
         trace, template, _ans_path, _ctx_path = connector.auto_detect(
             url=f"http://localhost:{port}/test", input_text="hi", timeout_seconds=5
         )
@@ -340,7 +340,7 @@ def test_autodetect_input():
     thread.daemon = True
     thread.start()
     try:
-        connector = HttpConnector(allow_private=True)
+        connector = HttpConnector(allow_private=True, min_delay_ms=0)
         trace, _template, _ans_path, _ctx_path = connector.auto_detect(
             url=f"http://localhost:{port}/test", input_text="hi", timeout_seconds=5
         )
@@ -356,7 +356,7 @@ def test_autodetect_query():
     thread.daemon = True
     thread.start()
     try:
-        connector = HttpConnector(allow_private=True)
+        connector = HttpConnector(allow_private=True, min_delay_ms=0)
         trace, _template, _ans_path, _ctx_path = connector.auto_detect(
             url=f"http://localhost:{port}/test", input_text="hi", timeout_seconds=5
         )
@@ -372,7 +372,7 @@ def test_autodetect_openai_shape():
     thread.daemon = True
     thread.start()
     try:
-        connector = HttpConnector(allow_private=True)
+        connector = HttpConnector(allow_private=True, min_delay_ms=0)
         trace, _template, ans_path, _ctx_path = connector.auto_detect(
             url=f"http://localhost:{port}/test", input_text="hi", timeout_seconds=5
         )
@@ -455,7 +455,7 @@ def test_local_computer_mode_keeps_the_host_the_user_typed(monkeypatch):
         # The gateway is not resolvable here, so resolve to loopback; the point of
         # the test is that the Host header does not follow the connect address.
         monkeypatch.setattr(request_client, "LOCAL_GATEWAY_HOST", "localhost")
-        connector = HttpConnector(allow_private=True)
+        connector = HttpConnector(allow_private=True, min_delay_ms=0)
         connector.client.local_rewrite = True
         trace = connector.render_and_send(
             url=f"http://127.0.0.1:{port}/chat",
@@ -482,7 +482,7 @@ def test_the_app_rejects_a_host_header_that_is_not_the_typed_one(monkeypatch):
     thread.start()
     try:
         monkeypatch.setattr(request_client, "LOCAL_GATEWAY_HOST", "localhost")
-        connector = HttpConnector(allow_private=True)
+        connector = HttpConnector(allow_private=True, min_delay_ms=0)
         connector.client.local_rewrite = True
         # A caller-supplied Host is replaced by the one derived from the typed URL,
         # so sending the gateway name there is exactly the old broken behaviour.

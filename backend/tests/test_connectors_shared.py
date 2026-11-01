@@ -8,7 +8,7 @@ from app.services.connectors import HttpConnector
 
 
 def test_shared_function_honours_timeout_and_template():
-    connector = HttpConnector(allow_private=True)
+    connector = HttpConnector(allow_private=True, min_delay_ms=0)
 
     with patch.object(connector.client, "request") as mock_request:
 

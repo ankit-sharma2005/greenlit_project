@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -102,10 +103,41 @@ def extract_by_path(data: Any, path: str | None) -> Any:
 
 
 class HttpConnector:
-    """HTTP endpoint connector with shared request function."""
+    """HTTP endpoint connector with shared request function.
 
-    def __init__(self, allow_private: bool = False):
-        self.client = RequestClient(allow_private_targets=allow_private)
+    ``max_concurrency``, ``min_delay_ms`` and ``max_retries`` are the polite-rate
+    settings a real chatbot needs: one request at a time, a pause between them,
+    and a few retries when the target says 429/502/503/504.
+    """
+
+    def __init__(
+        self,
+        allow_private: bool = False,
+        *,
+        max_concurrency: int = 1,
+        min_delay_ms: int = 500,
+        max_retries: int = 3,
+    ):
+        self.max_concurrency = max(1, int(max_concurrency))
+        self.min_delay_ms = max(0, int(min_delay_ms))
+        self.max_retries = max(0, int(max_retries))
+        self.client = RequestClient(
+            allow_private_targets=allow_private, max_retries=self.max_retries
+        )
+        self._concurrency = threading.BoundedSemaphore(self.max_concurrency)
+        self._pace_lock = threading.Lock()
+        self._last_request_started = 0.0
+
+    def _wait_for_turn(self) -> None:
+        """Respect the minimum gap between request starts (never inside a lock)."""
+        if self.min_delay_ms <= 0:
+            return
+        with self._pace_lock:
+            gap = self.min_delay_ms / 1000.0
+            waited = time.monotonic() - self._last_request_started
+            if waited < gap:
+                time.sleep(gap - waited)
+            self._last_request_started = time.monotonic()
 
     def render_and_send(
         self,
@@ -130,14 +162,18 @@ class HttpConnector:
                     code="template_error",
                 ) from e
 
-            # Make request
-            response = self.client.request(
-                method=method,
-                url=url,
-                json=body,
-                headers=headers,
-                timeout=timeout_seconds,
-            )
+            # Make request: at most ``max_concurrency`` in flight, with the
+            # configured pause between starts and retries for a busy target.
+            with self._concurrency:
+                self._wait_for_turn()
+                response = self.client.request(
+                    method=method,
+                    url=url,
+                    json=body,
+                    headers=headers,
+                    timeout=timeout_seconds,
+                    max_retries=self.max_retries,
+                )
 
             latency_ms = int((time.time() - start) * 1000)
             status = response.status_code

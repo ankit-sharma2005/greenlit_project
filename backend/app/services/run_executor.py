@@ -164,7 +164,12 @@ def build_sender(snapshot: Mapping[str, Any], session_factory: Callable[[], Sess
         answer_path = str(raw_answer_path) if raw_answer_path else None
         body_template = str(snapshot.get("body_template") or _DEFAULT_BODY_TEMPLATE)
         allow_private = bool(snapshot.get("allow_private_targets", False))
-        connector = HttpConnector(allow_private=allow_private)
+        connector = HttpConnector(
+            allow_private=allow_private,
+            max_concurrency=int(snapshot.get("max_concurrency") or 1),
+            min_delay_ms=int(snapshot.get("min_delay_ms", 500)),
+            max_retries=int(snapshot.get("max_retries", 3)),
+        )
 
         def send_http(input_text: str) -> Trace:
             return connector.render_and_send(

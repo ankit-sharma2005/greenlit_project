@@ -27,6 +27,9 @@ class ConnectTestRequest(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
     timeout_seconds: int = Field(default=60, ge=1, le=300)
     allow_private_targets: bool = False
+    max_concurrency: int = Field(default=1, ge=1, le=8)
+    min_delay_ms: int = Field(default=500, ge=0, le=60_000)
+    max_retries: int = Field(default=3, ge=0, le=10)
     answer_path: str | None = None
     context_path: str | None = None
     system_prompt: str | None = None

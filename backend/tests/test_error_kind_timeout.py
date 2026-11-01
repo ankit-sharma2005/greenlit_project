@@ -73,7 +73,7 @@ def slow_server() -> Iterator[str]:
 
 def _connector() -> HttpConnector:
     # The test server is on loopback, which the request client refuses by default.
-    return HttpConnector(allow_private=True)
+    return HttpConnector(allow_private=True, min_delay_ms=0)
 
 
 def test_a_slow_server_is_a_structured_timeout(slow_server: str) -> None:
