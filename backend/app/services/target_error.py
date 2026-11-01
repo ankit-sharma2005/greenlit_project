@@ -28,11 +28,13 @@ SNIPPET_LIMIT = 300
 _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # Authorization: Bearer <token> / Basic <token>
     (re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"), r"\1 [redacted]"),
-    # Headers and query/form style keys: api_key=..., token: ...
+    # Whole credential headers, including a cookie jar echoed back.
+    (re.compile(r"(?i)\b(cookie|set-cookie)\s*:\s*[^\r\n]+"), "Cookie: [redacted]"),
+    # Headers and query/form style keys: api_key=..., session=...
     (
         re.compile(
-            r"(?i)\b(api[-_]?key|access[-_]?token|refresh[-_]?token|token|secret|password|"
-            r"authorization)\b\s*[:=]\s*\"?([^\"\s,;&}]+)"
+            r"(?i)\b(api[-_]?key|access[-_]?token|refresh[-_]?token|session[-_]?id|session|"
+            r"sid|token|secret|password|authorization)\b\s*[:=]\s*\"?([^\"\s,;&}]+)"
         ),
         r"\1=[redacted]",
     ),

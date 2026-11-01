@@ -34,6 +34,7 @@ from app.services.run_repository import (
     update_run_item,
 )
 from app.services.run_service import get_enqueue
+from app.utils.curl import encrypt_headers
 
 PASSWORD = "correct horse battery staple"
 SECRET_HEADER = "Bearer super-secret-token-7f3a"
@@ -345,6 +346,55 @@ def test_report_never_contains_secrets(
     }
     assert document["target"]["provider"] == "Secret provider"
     assert document["target"]["model"] == "llama3:8b"
+
+
+def test_report_never_exports_pasted_curl_credentials(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    """A cURL-imported cookie and token stay out of every export."""
+    _register(client)
+    dataset = _upload_and_approve(client)
+    owner = _user_id(session_factory)
+    token = "tok-c0ffee-never-exported"
+    snapshot: dict[str, object] = {
+        "entry_point": "http_endpoint",
+        "test_types": ["quality"],
+        "dataset_version_id": dataset["versions"][0]["id"],  # type: ignore[index]
+        "timeout_seconds": 30,
+        "url": "https://chat.example.com/ask",
+        "method": "POST",
+        "headers": {},
+        "headers_encrypted": encrypt_headers(
+            {"Authorization": f"Bearer {token}", "Cookie": "session=abc123"}
+        ),
+        "body_template": '{"question": {{input}}}',
+        "answer_path": "answer",
+    }
+    with session_factory() as session:
+        run = create_run(
+            session,
+            owner_id=owner,
+            name="Curl run",
+            settings_snapshot=snapshot,
+            dataset_id=uuid.UUID(str(dataset["id"])),
+            dataset_version_id=uuid.UUID(str(dataset["versions"][0]["id"])),  # type: ignore[index]
+            criteria_profile="rag_chatbot",
+        )
+        item = create_run_item(session, run, row_index=1, input_text="What is GreenLit?")
+        session.commit()
+        update_run_item(session, item, state="completed", output="GreenLit tests LLM apps.")
+        update_run(session, run, state="completed", verdict="GO", score=1.0, completed_at=utcnow())
+        session.commit()
+        run_id = run.id
+
+    for fmt in ("html", "json", "csv"):
+        response = client.get(f"/api/v1/runs/{run_id}/report?format={fmt}")
+        assert response.status_code == 200, response.text
+        assert token not in response.text
+        assert "session=abc123" not in response.text
+
+    document = json.loads(client.get(f"/api/v1/runs/{run_id}/report?format=json").text)
+    assert document["settings"]["headers_encrypted"] == "[redacted]"
 
 
 def test_html_escapes_case_text(client: TestClient, session_factory: sessionmaker[Session]) -> None:

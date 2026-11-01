@@ -130,6 +130,9 @@ def sanitized_settings(snapshot: dict[str, Any]) -> dict[str, Any]:
         if key == "headers":
             headers = value if isinstance(value, dict) else {}
             cleaned[key] = {str(name): REDACTED for name in sorted(headers)}
+        elif key == "headers_encrypted":
+            # A pasted cURL's headers: the blob is never exported either.
+            cleaned[key] = REDACTED
         elif key == "csv":
             cleaned[key] = UPLOADED_ROWS_NOTE
         else:

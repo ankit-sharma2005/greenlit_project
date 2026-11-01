@@ -137,6 +137,8 @@ export interface RunCreateRequest {
   method?: string;
   body_template?: string;
   headers?: Record<string, string>;
+  /** cURL-imported headers and cookies, encrypted by the server. */
+  headers_secret?: string;
   answer_path?: string;
   context_path?: string;
   timeout_seconds?: number;
@@ -165,6 +167,8 @@ export interface QuickTestRequest {
   method?: string;
   body_template?: string;
   headers?: Record<string, string>;
+  /** cURL-imported headers and cookies, encrypted by the server. */
+  headers_secret?: string;
   answer_path?: string;
   context_path?: string;
   timeout_seconds?: number;

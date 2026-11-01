@@ -52,6 +52,8 @@ class RunCreateRequest(BaseModel):
     method: str = Field(default="POST", max_length=10)
     body_template: str | None = Field(default=None, max_length=20_000)
     headers: dict[str, str] = Field(default_factory=dict)
+    # cURL-imported headers and cookies, already encrypted by the server.
+    headers_secret: str | None = Field(default=None, max_length=20_000)
     answer_path: str | None = Field(default=None, max_length=300)
     context_path: str | None = Field(default=None, max_length=300)
     timeout_seconds: int = Field(default=60, ge=1, le=300)
@@ -100,6 +102,7 @@ class QuickTestRequest(BaseModel):
     method: str = Field(default="POST", max_length=10)
     body_template: str | None = Field(default=None, max_length=20_000)
     headers: dict[str, str] = Field(default_factory=dict)
+    headers_secret: str | None = Field(default=None, max_length=20_000)
     answer_path: str | None = Field(default=None, max_length=300)
     context_path: str | None = Field(default=None, max_length=300)
 

@@ -10,8 +10,8 @@ import {
   UploadOutputsPanel,
 } from "../components/UploadOutputsPanel";
 import { Spinner } from "../components/Spinner";
-import { parseCurl } from "../lib/curl";
-import { testConnection } from "../lib/connectors";
+import { parseCurl as parseCurlLocally } from "../lib/curl";
+import { parseCurl, testConnection } from "../lib/connectors";
 import { ApiError } from "../lib/api";
 import { listDatasets } from "../lib/datasets";
 import { listProviders } from "../lib/providers";
@@ -81,6 +81,9 @@ export function NewTestPage() {
   const [curlText, setCurlText] = useState("");
   const [showCurl, setShowCurl] = useState(false);
   const [curlNotice, setCurlNotice] = useState<string | null>(null);
+  // Header values and cookies stay encrypted on the server: only the blob comes back.
+  const [curlSecret, setCurlSecret] = useState("");
+  const [curlHeaderNames, setCurlHeaderNames] = useState<string[]>([]);
   const [runsOnMyComputer, setRunsOnMyComputer] = useState(false);
   // Polite-rate defaults: a real company chatbot must not be hammered.
   const [maxConcurrency, setMaxConcurrency] = useState(1);
@@ -268,20 +271,32 @@ export function NewTestPage() {
     setTestTypes((previous) => ({ ...previous, [key]: !previous[key] }));
   };
 
-  const applyCurl = () => {
-    const parsed = parseCurl(curlText);
-    if (!parsed) {
+  const applyCurl = async () => {
+    const local = parseCurlLocally(curlText);
+    if (!local) {
       setCurlNotice(
         "That does not look like a curl command with a URL. Paste the full command, starting with “curl”.",
       );
       return;
     }
-    setUrl(parsed.url);
-    setCurlNotice(
-      `Parsed ${parsed.method} ${parsed.url}` +
-        (parsed.headerCount > 0 ? ` with ${parsed.headerCount} header(s)` : "") +
-        ". The request body will be mapped in a later step.",
-    );
+    setUrl(local.url);
+    try {
+      const parsed = await parseCurl(curlText);
+      setCurlSecret(parsed.headers_secret ?? "");
+      setCurlHeaderNames(parsed.header_names);
+      setCurlNotice(
+        `Parsed ${parsed.method} ${parsed.url}` +
+          (parsed.header_names.length > 0
+            ? ` with ${parsed.header_names.length} header(s): ${parsed.header_names.join(", ")}`
+            : "") +
+          ". Header values and cookies are stored encrypted and never shown again.",
+      );
+    } catch {
+      setCurlNotice(
+        `Parsed ${local.method} ${local.url}. Could not import its headers; paste it again ` +
+          "or add them under Advanced connector options.",
+      );
+    }
   };
 
   const handlePromptAppProviderChange = (providerId: string) => {
@@ -313,6 +328,7 @@ export function NewTestPage() {
           url: url.trim(),
           method: "POST",
           auto_detect: true,
+          headers_secret: curlSecret || undefined,
           allow_private_targets: runsOnMyComputer,
           max_concurrency: maxConcurrency,
           min_delay_ms: minDelayMs,
@@ -461,6 +477,7 @@ export function NewTestPage() {
       test_types: chosenTestTypes(testTypes),
       method: "POST",
       body_template: detectResult.detected_request_shape || '{"question": {{input}}}',
+      headers_secret: curlSecret || undefined,
       answer_path: answerPath || detectResult.detected_answer_path || undefined,
       context_path: detectResult.detected_context_path || undefined,
       timeout_seconds: 60,
@@ -483,6 +500,7 @@ export function NewTestPage() {
           tests: chosenTestTypes(testTypes),
           method: "POST",
           body_template: detectResult.detected_request_shape || '{"question": {{input}}}',
+          headers_secret: curlSecret || undefined,
           answer_path: answerPath || detectResult.detected_answer_path || undefined,
           context_path: detectResult.detected_context_path || undefined,
           timeout_seconds: 60,
@@ -508,6 +526,7 @@ export function NewTestPage() {
     }
   }, [
     answerPath,
+    curlSecret,
     datasetVersionId,
     detectResult,
     maxConcurrency,
@@ -643,9 +662,14 @@ export function NewTestPage() {
                   disabled={loading}
                 />
                 <div className="datasets__actions" style={{ marginTop: "var(--space-2)" }}>
-                  <Button variant="secondary" onClick={applyCurl} disabled={loading}>
+                  <Button variant="secondary" onClick={() => void applyCurl()} disabled={loading}>
                     Use this request
                   </Button>
+                  {curlHeaderNames.length > 0 ? (
+                    <span className="form__hint" data-testid="curl-header-names">
+                      Imported: {curlHeaderNames.join(", ")}
+                    </span>
+                  ) : null}
                 </div>
                 {curlNotice && (
                   <p className="form__hint" role="status">

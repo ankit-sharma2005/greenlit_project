@@ -85,6 +85,7 @@ from app.services.run_repository import (
     update_run_item,
 )
 from app.services.target_error import error_detail as build_error_detail
+from app.utils.curl import decrypt_headers
 
 logger = logging.getLogger("greenlit.run_executor")
 
@@ -153,9 +154,14 @@ def build_sender(snapshot: Mapping[str, Any], session_factory: Callable[[], Sess
             raise RunExecutionError(
                 "This run has no target URL. Start the test again from the New Test page."
             )
-        headers = {
-            str(key): str(value) for key, value in dict(snapshot.get("headers") or {}).items()
-        }
+        secret_headers = snapshot.get("headers_encrypted")
+        headers = (
+            decrypt_headers(str(secret_headers))
+            if secret_headers
+            else {
+                str(key): str(value) for key, value in dict(snapshot.get("headers") or {}).items()
+            }
+        )
         timeout_seconds = int(
             snapshot.get("timeout_seconds") or get_settings().default_timeout_seconds
         )

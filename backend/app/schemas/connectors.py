@@ -14,9 +14,12 @@ class CurlParseRequest(BaseModel):
 
 
 class CurlParseResponse(BaseModel):
+    """A parsed curl command: names only, never a header value or cookie."""
+
     method: str
     url: str
-    headers: dict[str, str] = Field(default_factory=dict)
+    header_names: list[str] = Field(default_factory=list)
+    headers_secret: str | None = None
     body_template: str | None = None
     header_count: int = 0
 
@@ -27,6 +30,8 @@ class ConnectTestRequest(BaseModel):
     method: str = "POST"
     body_template: str | None = None
     headers: dict[str, str] = Field(default_factory=dict)
+    # cURL-imported headers and cookies, already encrypted by the server.
+    headers_secret: str | None = Field(default=None, max_length=20_000)
     timeout_seconds: int = Field(default=60, ge=1, le=300)
     allow_private_targets: bool = False
     max_concurrency: int = Field(default=1, ge=1, le=8)

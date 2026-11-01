@@ -14,7 +14,7 @@ from app.schemas.connectors import (
     CurlParseResponse,
 )
 from app.services.connectors import ConnectorError, HttpConnector
-from app.utils.curl import parse_curl
+from app.utils.curl import decrypt_headers, encrypt_headers, parse_curl
 
 router = APIRouter(prefix="/api/v1/connectors", tags=["connectors"])
 
@@ -31,7 +31,8 @@ def parse_curl_endpoint(
     return CurlParseResponse(
         method=parsed.method,
         url=parsed.url,
-        headers=parsed.headers,
+        header_names=sorted(parsed.headers),
+        headers_secret=encrypt_headers(parsed.headers),
         body_template=parsed.body_template,
         header_count=parsed.header_count,
     )
@@ -42,6 +43,9 @@ def test_connection(
     payload: ConnectTestRequest, request: Request, user: Any = Depends(get_current_user)
 ) -> ConnectTestResponse:
     if payload.connector_type == "http_endpoint":
+        headers = (
+            decrypt_headers(payload.headers_secret) if payload.headers_secret else payload.headers
+        )
         connector = HttpConnector(
             allow_private=payload.allow_private_targets,
             max_concurrency=payload.max_concurrency,
@@ -53,7 +57,7 @@ def test_connection(
                 trace, template, detected_answer, detected_context = connector.auto_detect(
                     url=str(payload.url) if payload.url else "",
                     input_text="Hello",
-                    headers=payload.headers,
+                    headers=headers,
                     timeout_seconds=payload.timeout_seconds,
                     method=payload.method,
                     response_format=payload.response_format,
@@ -71,7 +75,7 @@ def test_connection(
                 url=str(payload.url) if payload.url else "",
                 body_template=payload.body_template or '{"question": {{input}}}',
                 input_text="Hello",
-                headers=payload.headers,
+                headers=headers,
                 timeout_seconds=payload.timeout_seconds,
                 method=payload.method,
                 answer_path=payload.answer_path,

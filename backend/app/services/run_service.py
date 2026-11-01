@@ -153,7 +153,10 @@ def build_snapshot(
             {
                 "url": _check_url(payload.target),
                 "method": payload.method.upper(),
-                "headers": dict(payload.headers),
+                # A pasted cURL's headers stay encrypted at rest; only its
+                # names are readable in the report.
+                "headers": {} if payload.headers_secret else dict(payload.headers),
+                "headers_encrypted": payload.headers_secret,
                 "body_template": payload.body_template or _DEFAULT_BODY_TEMPLATE,
                 "answer_path": payload.answer_path,
                 "context_path": payload.context_path,
@@ -406,6 +409,7 @@ def create_quick_test(
             payload.csv if payload.entry_point == "upload_outputs" else payload.body_template
         ),
         headers=payload.headers,
+        headers_secret=payload.headers_secret,
         answer_path=payload.answer_path,
         context_path=payload.context_path,
         timeout_seconds=payload.timeout_seconds,

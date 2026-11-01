@@ -148,7 +148,11 @@ def _http_failure(status: int, snippet: str, target: str) -> ConnectorError:
         message = "your app answered but this path does not exist"
     elif status in (401, 403):
         code = "auth_error"
-        message = "your app rejected the request: check API key/auth"
+        # A pasted cURL carries a session that expires: say what to do next.
+        message = (
+            "your app rejected the request (HTTP "
+            f"{status}): the session or token may have expired; paste a fresh cURL"
+        )
     return ConnectorError(
         message,
         code=code,
