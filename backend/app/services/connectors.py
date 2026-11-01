@@ -12,7 +12,15 @@ import httpx
 
 from app.services.error_kinds import HTTP_ERROR, kind_for_code
 from app.services.target_error import redact_snippet, target_of
-from app.utils.request_client import RequestClient
+from app.utils.request_client import (
+    RequestClient,
+    RequestDeadlineExceededError,
+    RequestInterruptedError,
+)
+
+# One case may not hold a worker for longer than this, however politely the
+# target keeps saying "not now".
+DEFAULT_ITEM_BUDGET_SECONDS = 150.0
 
 # A streamed answer must stay bounded: a chatbot that never stops talking is a
 # setup problem, not a bigger answer.
@@ -65,6 +73,11 @@ class Trace:
     raw: dict[str, Any] | str
     # Only streamed answers can say when the first byte arrived.
     time_to_first_byte_ms: int | None = None
+    # Polite-rate bookkeeping: how many retries preceded the final attempt and
+    # how long the waits between them took. ``latency_ms`` is the final attempt
+    # alone, so a retried case never looks slow.
+    retry_count: int = 0
+    waited_ms: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -73,6 +86,8 @@ class Trace:
             "tool_calls": self.tool_calls,
             "latency_ms": self.latency_ms,
             "time_to_first_byte_ms": self.time_to_first_byte_ms,
+            "retry_count": self.retry_count,
+            "waited_ms": self.waited_ms,
             "tokens_in": self.tokens_in,
             "tokens_out": self.tokens_out,
             "error": self.error,
@@ -199,10 +214,15 @@ class HttpConnector:
         max_concurrency: int = 1,
         min_delay_ms: int = 500,
         max_retries: int = 3,
+        item_budget_seconds: float = DEFAULT_ITEM_BUDGET_SECONDS,
+        interrupt: threading.Event | None = None,
     ):
         self.max_concurrency = max(1, int(max_concurrency))
         self.min_delay_ms = max(0, int(min_delay_ms))
         self.max_retries = max(0, int(max_retries))
+        self.item_budget_seconds = max(0.001, float(item_budget_seconds))
+        # Set by the worker when the run is cancelled: retry waits stop early.
+        self.interrupt = interrupt
         self.client = RequestClient(
             allow_private_targets=allow_private, max_retries=self.max_retries
         )
@@ -235,6 +255,7 @@ class HttpConnector:
     ) -> Trace:
         """Shared function for test call and run items."""
         start = time.time()
+        deadline = time.monotonic() + self.item_budget_seconds
         try:
             # Render body template
             rendered = render_body_template(body_template, input_text)
@@ -259,6 +280,7 @@ class HttpConnector:
                     response_format=fmt,
                     stream_content_path=stream_content_path,
                     start=start,
+                    deadline=deadline,
                 )
 
             # Make request: at most ``max_concurrency`` in flight, with the
@@ -272,9 +294,15 @@ class HttpConnector:
                     headers=headers,
                     timeout=timeout_seconds,
                     max_retries=self.max_retries,
+                    interrupt=self.interrupt,
+                    deadline=deadline,
                 )
 
-            latency_ms = int((time.time() - start) * 1000)
+            # The final attempt's own latency: the waits between retries are
+            # recorded separately, so a recovered case is never called slow.
+            waited_ms = int(self.client.last_waited_seconds * 1000)
+            latency_ms = max(0, int((time.time() - start) * 1000) - waited_ms)
+            retry_count = self.client.last_retry_count
             status = response.status_code
             # A test double may not model the body; a real httpx response does.
             snippet = redact_snippet(getattr(response, "text", ""))
@@ -350,9 +378,42 @@ class HttpConnector:
                 tokens_out=None,
                 error=None,
                 raw=data,
+                retry_count=retry_count,
+                waited_ms=waited_ms,
             )
+        except RequestInterruptedError as e:
+            raise ConnectorError(
+                "this case was cancelled before the target answered",
+                code="cancelled",
+                details={"target": target_of(url), "message": "cancelled"},
+            ) from e
+        except RequestDeadlineExceededError as e:
+            budget = self.item_budget_seconds
+            message = f"this case hit the {budget:g} s budget and was stopped"
+            raise ConnectorError(
+                message,
+                code="timeout",
+                details={
+                    "target": target_of(url),
+                    "timeout_seconds": budget,
+                    "message": message,
+                },
+            ) from e
         except httpx.TimeoutException as e:
-            latency_ms = int((time.time() - start) * 1000)
+            # The attempt's own timeout was capped by the item budget: say which
+            # one ran out, so a slow case is not blamed on the setting alone.
+            if time.monotonic() >= deadline - 0.05:
+                budget = self.item_budget_seconds
+                message = f"this case hit the {budget:g} s budget and was stopped"
+                raise ConnectorError(
+                    message,
+                    code="timeout",
+                    details={
+                        "target": target_of(url),
+                        "timeout_seconds": budget,
+                        "message": message,
+                    },
+                ) from e
             raise ConnectorError(
                 "increase the timeout or speed up the app",
                 code="timeout",
@@ -386,6 +447,7 @@ class HttpConnector:
         response_format: str,
         stream_content_path: str | None,
         start: float,
+        deadline: float | None = None,
     ) -> Trace:
         """Read an SSE/NDJSON/plain-text answer and join its pieces."""
         target = target_of(url)
@@ -398,6 +460,8 @@ class HttpConnector:
                 headers=headers,
                 timeout=timeout_seconds,
                 max_retries=self.max_retries,
+                interrupt=self.interrupt,
+                deadline=deadline,
             ) as response:
                 status = response.status_code
                 if not 200 <= status < 300:
@@ -411,7 +475,8 @@ class HttpConnector:
                     start=start,
                     target=target,
                 )
-        latency_ms = int((time.time() - start) * 1000)
+        waited_ms = int(self.client.last_waited_seconds * 1000)
+        latency_ms = max(0, int((time.time() - start) * 1000) - waited_ms)
         if not output.strip():
             raise ConnectorError(
                 "the stream finished without any answer text; "
@@ -434,8 +499,12 @@ class HttpConnector:
                 "response_format": response_format,
                 "bytes": byte_count,
                 "time_to_first_byte_ms": ttfb_ms,
+                "retry_count": self.client.last_retry_count,
+                "waited_ms": waited_ms,
             },
             time_to_first_byte_ms=ttfb_ms,
+            retry_count=self.client.last_retry_count,
+            waited_ms=waited_ms,
         )
 
     def _collect_stream(

@@ -63,6 +63,11 @@ export function OperationsPanel({ operations }: OperationsPanelProps) {
     { label: "p95 latency", value: latency(operations.latency_p95_ms), testId: "ops-p95" },
     { label: "Error rate", value: rate(operations.error_rate), testId: "ops-error-rate" },
     { label: "Timeout rate", value: rate(operations.timeout_rate), testId: "ops-timeout-rate" },
+    {
+      label: "Retried cases",
+      value: String(operations.retried_cases ?? 0),
+      testId: "ops-retried-cases",
+    },
     { label: "Tokens in", value: tokens(operations.tokens_in_total), testId: "ops-tokens-in" },
     { label: "Tokens out", value: tokens(operations.tokens_out_total), testId: "ops-tokens-out" },
     { label: "Estimated cost", value: cost(operations), testId: "ops-cost" },

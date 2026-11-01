@@ -262,6 +262,10 @@ def _case_rows(session: Session, run: Run, items: list[RunItem]) -> list[dict[st
                 "tokens_out": item.tokens_out,
                 "reason": item.error or "",
                 # What actually happened at the target, when it failed.
+                # Polite-rate bookkeeping: the final attempt alone, plus the
+                # retries and waits that preceded it.
+                "retry_count": meta.get("retry_count") or 0,
+                "waited_ms": meta.get("waited_ms") or 0,
                 "error_kind": detail.get("kind") or meta.get("error_kind"),
                 "http_status": status if isinstance(status, int) else None,
                 "target": detail.get("target") or None,
@@ -545,6 +549,8 @@ def render_csv(document: dict[str, Any]) -> str:
             "actual",
             "state",
             "latency_ms",
+            "retry_count",
+            "waited_ms",
             "tokens_in",
             "tokens_out",
             "reason",
@@ -560,6 +566,7 @@ def render_csv(document: dict[str, Any]) -> str:
             "latency_p95_ms",
             "error_rate",
             "timeout_rate",
+            "retried_cases",
             "tokens_in_total",
             "tokens_out_total",
             "cost_estimate",
@@ -584,6 +591,8 @@ def render_csv(document: dict[str, Any]) -> str:
                 csv_cell(case["output"]),
                 csv_cell(case["state"]),
                 csv_cell(case["latency_ms"]),
+                csv_cell(case.get("retry_count")),
+                csv_cell(case.get("waited_ms")),
                 csv_cell(case["tokens_in"]),
                 csv_cell(case["tokens_out"]),
                 csv_cell(case["reason"]),
@@ -597,6 +606,7 @@ def render_csv(document: dict[str, Any]) -> str:
                 csv_cell(operations.get("latency_p95_ms")),
                 csv_cell(operations.get("error_rate")),
                 csv_cell(operations.get("timeout_rate")),
+                csv_cell(operations.get("retried_cases", 0)),
                 csv_cell(operations.get("tokens_in_total")),
                 csv_cell(operations.get("tokens_out_total")),
                 csv_cell(operations.get("cost_estimate")),
@@ -787,6 +797,7 @@ def render_html(document: dict[str, Any]) -> str:
     parts.append(_row(["p95 latency (ms)", _ops_number(operations.get("latency_p95_ms"))]))
     parts.append(_row(["Error rate", _ops_rate(operations.get("error_rate"))]))
     parts.append(_row(["Timeout rate", _ops_rate(operations.get("timeout_rate"))]))
+    parts.append(_row(["Retried cases", _esc(operations.get("retried_cases", 0))]))
     parts.append(_row(["Tokens in", _esc(operations.get("tokens_in_total") or "not reported")]))
     parts.append(_row(["Tokens out", _esc(operations.get("tokens_out_total") or "not reported")]))
     if operations.get("cost_configured") and operations.get("cost_estimate") is not None:
@@ -794,6 +805,26 @@ def render_html(document: dict[str, Any]) -> str:
     else:
         parts.append(_row(["Estimated cost", "not configured"]))
     parts.append("</tbody></table>")
+
+    # Cases that needed a retry: still successes, with the wait kept separate.
+    retried_cases = [case for case in document["cases"] if case.get("retry_count")]
+    if retried_cases:
+        parts.append(
+            "<h3>Cases retried</h3><table><thead><tr><th>Row</th><th>Input</th>"
+            "<th>Retries</th><th>Waited (ms)</th></tr></thead><tbody>"
+        )
+        for case in retried_cases:
+            parts.append(
+                _row(
+                    [
+                        _esc(case["row_index"]),
+                        _esc(case["input"]),
+                        _esc(case["retry_count"]),
+                        _esc(case["waited_ms"]),
+                    ]
+                )
+            )
+        parts.append("</tbody></table>")
 
     # Safety, when the run was probed.
     if safety is not None:

@@ -846,7 +846,9 @@ export function NewTestPage() {
             <summary>Advanced connector options</summary>
             <p className="form__hint">
               Polite defaults: one request at a time, at least 500 ms between requests, and a busy
-              target (429, 502, 503, 504) retried three times.
+              target (429, 502, 503, 504) retried three times with backoff, honouring its
+              Retry-After. Set retries to 0 to send each request exactly once — that avoids
+              duplicate side effects when a request may already have reached the app.
             </p>
             <div className="datasets__actions">
               <label htmlFor="max-concurrency">

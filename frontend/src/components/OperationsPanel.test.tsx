@@ -16,6 +16,7 @@ function makeOperations(overrides: Partial<RunOperations> = {}): RunOperations {
     error_rate: 0.25,
     timeout_rate: 0.25,
     items_timed_out: 1,
+    retried_cases: 2,
     tokens_in_total: 1500,
     tokens_out_total: 600,
     price_per_1k_tokens_in: null,
@@ -35,6 +36,7 @@ describe("OperationsPanel", () => {
     expect(screen.getByTestId("ops-p95")).toHaveTextContent("480 ms");
     expect(screen.getByTestId("ops-error-rate")).toHaveTextContent("25.0%");
     expect(screen.getByTestId("ops-timeout-rate")).toHaveTextContent("25.0%");
+    expect(screen.getByTestId("ops-retried-cases")).toHaveTextContent("2");
     expect(screen.getByTestId("ops-tokens-in")).toHaveTextContent("1,500");
     expect(screen.getByTestId("ops-tokens-out")).toHaveTextContent("600");
   });

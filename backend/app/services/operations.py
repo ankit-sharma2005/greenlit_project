@@ -38,6 +38,9 @@ class ItemSample:
     # The structured failure kind the connector/gateway recorded. ``None`` on
     # runs recorded before it existed, which fall back to the text heuristic.
     error_kind: str | None = None
+    # How many retries preceded the last attempt; a recovered case stays a
+    # success, but the run still says it needed them.
+    retry_count: int = 0
 
 
 def percentile(values: Sequence[float], fraction: float) -> float | None:
@@ -128,6 +131,7 @@ def compute_operations(
     timed_out = sum(
         1 for sample in samples if sample.state == "failed" and sample_timed_out(sample)
     )
+    retried = sum(1 for sample in samples if sample.retry_count > 0)
     latencies = [float(sample.latency_ms) for sample in samples if sample.latency_ms is not None]
     tokens_in_total = _sum_or_none(
         [sample.tokens_in for sample in samples if sample.tokens_in is not None]
@@ -160,6 +164,7 @@ def compute_operations(
         "error_rate": _share(failed, attempted),
         "timeout_rate": _share(timed_out, attempted),
         "items_timed_out": timed_out,
+        "retried_cases": retried,
         "tokens_in_total": tokens_in_total,
         "tokens_out_total": tokens_out_total,
         "price_per_1k_tokens_in": price_per_1k_tokens_in,
@@ -179,6 +184,7 @@ def samples_from_items(items: Sequence[Any]) -> list[ItemSample]:
             tokens_out=getattr(item, "tokens_out", None),
             error=getattr(item, "error", None),
             error_kind=_trace_error_kind(item),
+            retry_count=_trace_retry_count(item),
         )
         for item in items
     ]
@@ -201,6 +207,17 @@ def _trace_error_kind(item: Any) -> str | None:
     if isinstance(code, str) and code:
         return kind_for_code(code)
     return None
+
+
+def _trace_retry_count(item: Any) -> int:
+    """How many retries an item needed; 0 on runs recorded before the count."""
+    trace = getattr(item, "trace", None)
+    if not isinstance(trace, dict):
+        return 0
+    value = trace.get("retry_count")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return max(0, value)
 
 
 def prices_from_metadata(metadata: Any) -> tuple[float | None, float | None]:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import os
 import random
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -70,6 +71,46 @@ class BlockedPrivateURLError(SSLError):
 BlockedPrivateURL = BlockedPrivateURLError
 
 
+class RequestInterruptedError(Exception):
+    """The caller asked to stop while this request was waiting to retry."""
+
+
+class RequestDeadlineExceededError(Exception):
+    """The item's total time budget ran out before another attempt could start."""
+
+
+def _remaining_timeout(timeout: float, deadline: float | None) -> float:
+    """How long one attempt may take: its own timeout, capped by the budget."""
+    if deadline is None:
+        return timeout
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise RequestDeadlineExceededError("the item's time budget ran out")
+    return min(timeout, left)
+
+
+def _wait_for_retry(
+    seconds: float,
+    interrupt: threading.Event | None,
+    deadline: float | None,
+) -> float:
+    """Sleep before a retry; returns the seconds actually waited.
+
+    ``interrupt`` makes the wait stoppable (Cancel must not sit through a
+    target's 30-second Retry-After), and ``deadline`` caps it so a slow target
+    cannot outlive the item's budget.
+    """
+    if deadline is not None:
+        seconds = max(0.0, min(seconds, deadline - time.monotonic()))
+    started = time.monotonic()
+    if interrupt is not None:
+        if interrupt.wait(seconds):
+            raise RequestInterruptedError("cancelled while waiting to retry")
+    else:
+        time.sleep(seconds)
+    return time.monotonic() - started
+
+
 class RequestClient:
     """SSRF-safe HTTP client for user-supplied URLs."""
 
@@ -83,6 +124,11 @@ class RequestClient:
         self.allow_private_targets = allow_private_targets
         self.max_redirects = max_redirects
         self.max_retries = max(0, max_retries)
+        # What the last call did, so a caller can record a final-attempt latency
+        # and the retries separately (a retried case is still a success).
+        self.last_attempt_seconds = 0.0
+        self.last_retry_count = 0
+        self.last_waited_seconds = 0.0
         # ``None`` means "ask the environment": only a container has to go through
         # the gateway, a process on the host reaches the app directly as before.
         self.local_rewrite = _in_container() if local_rewrite is None else local_rewrite
@@ -148,6 +194,9 @@ class RequestClient:
         method: str = "POST",
         url: str = "",
         max_retries: int | None = None,
+        *,
+        interrupt: threading.Event | None = None,
+        deadline: float | None = None,
         **kwargs: Any,
     ) -> httpx.Response:
         safe_url = self._sanitize_url(url)
@@ -155,15 +204,26 @@ class RequestClient:
         safe_url, headers = self.local_target(safe_url, kwargs.pop("headers", None))
         retries = self.max_retries if max_retries is None else max(0, max_retries)
         attempts = retries + 1
+        self.last_retry_count = 0
+        self.last_waited_seconds = 0.0
+        self.last_attempt_seconds = 0.0
         with httpx.Client(
             timeout=timeout, follow_redirects=True, max_redirects=self.max_redirects
         ) as client:
             response: httpx.Response | None = None
             for attempt in range(attempts):
-                response = client.request(method, safe_url, headers=headers, **kwargs)
+                attempt_timeout = _remaining_timeout(timeout, deadline)
+                started = time.monotonic()
+                response = client.request(
+                    method, safe_url, headers=headers, timeout=attempt_timeout, **kwargs
+                )
+                self.last_attempt_seconds = time.monotonic() - started
+                self.last_retry_count = attempt
                 if response.status_code not in RETRYABLE_STATUSES or attempt == attempts - 1:
                     return response
-                time.sleep(retry_delay(response, attempt))
+                self.last_waited_seconds += _wait_for_retry(
+                    retry_delay(response, attempt), interrupt, deadline
+                )
         # Unreachable: the loop always returns on its last attempt.
         assert response is not None
         return response
@@ -174,6 +234,9 @@ class RequestClient:
         method: str = "POST",
         url: str = "",
         max_retries: int | None = None,
+        *,
+        interrupt: threading.Event | None = None,
+        deadline: float | None = None,
         **kwargs: Any,
     ) -> Iterator[httpx.Response]:
         """Open a streamed response with the same SSRF and retry rules.
@@ -187,13 +250,22 @@ class RequestClient:
         safe_url, headers = self.local_target(safe_url, kwargs.pop("headers", None))
         retries = self.max_retries if max_retries is None else max(0, max_retries)
         attempts = retries + 1
+        self.last_retry_count = 0
+        self.last_waited_seconds = 0.0
+        self.last_attempt_seconds = 0.0
         with httpx.Client(
             timeout=timeout, follow_redirects=True, max_redirects=self.max_redirects
         ) as client:
             for attempt in range(attempts):
                 delay: float | None = None
-                with client.stream(method, safe_url, headers=headers, **kwargs) as response:
+                attempt_timeout = _remaining_timeout(timeout, deadline)
+                started = time.monotonic()
+                with client.stream(
+                    method, safe_url, headers=headers, timeout=attempt_timeout, **kwargs
+                ) as response:
                     if response.status_code not in RETRYABLE_STATUSES or attempt == attempts - 1:
+                        self.last_retry_count = attempt
+                        self.last_attempt_seconds = time.monotonic() - started
                         yield response
                         return
                     # Drain the small "not now" body so the connection can be
@@ -201,8 +273,10 @@ class RequestClient:
                     response.read()
                     honoured = retry_after_seconds(response.headers.get("Retry-After"))
                     delay = honoured if honoured is not None else retry_delay(None, attempt)
+                    self.last_attempt_seconds = time.monotonic() - started
+                    self.last_retry_count = attempt
                 if delay is not None:
-                    time.sleep(delay)
+                    self.last_waited_seconds += _wait_for_retry(delay, interrupt, deadline)
 
 
 def retry_after_seconds(value: str | None) -> float | None:

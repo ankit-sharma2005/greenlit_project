@@ -298,15 +298,17 @@ def test_csv_report_is_case_level(
 
     rows = list(csv.reader(io.StringIO(response.text)))
     assert rows[0][:5] == ["row_index", "input", "expected", "actual", "state"]
+    # Retries and their waits sit next to the final attempt's latency.
+    assert rows[0][6:8] == ["retry_count", "waited_ms"]
     # Failure detail: what happened at the target, next to the case.
-    assert rows[0][9:13] == ["error_kind", "http_status", "target", "error_snippet"]
+    assert rows[0][11:15] == ["error_kind", "http_status", "target", "error_snippet"]
     assert len(rows) == 3  # header + two cases
     assert rows[1][1] == "What is GreenLit?"
     assert rows[1][2] == "GreenLit tests LLM apps."
     assert rows[2][4] == "failed"
-    assert rows[2][8] == "answer mismatch"
-    assert rows[2][13] == "NO_GO"
-    assert rows[2][14] == "0.42"
+    assert rows[2][10] == "answer mismatch"
+    assert rows[2][15] == "NO_GO"
+    assert rows[2][16] == "0.42"
 
 
 def test_report_never_contains_secrets(
@@ -457,6 +459,70 @@ def test_reports_name_who_allowed_testing_the_target(
         "safety_attacks_confirmed",
     ]
     assert rows[1][-3:] == ["True", reference, "False"]
+
+
+def test_reports_keep_retries_apart_from_latency(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    """A case that recovered is a success, and its waits are not its latency."""
+    _register(client)
+    dataset = _upload_and_approve(client)
+    owner = _user_id(session_factory)
+    snapshot: dict[str, object] = {
+        "entry_point": "http_endpoint",
+        "test_types": ["quality", "operations"],
+        "dataset_version_id": dataset["versions"][0]["id"],  # type: ignore[index]
+        "timeout_seconds": 30,
+        "url": "http://127.0.0.1:9099/ask",
+        "method": "POST",
+        "headers": {},
+        "body_template": '{"question": {{input}}}',
+        "answer_path": "answer",
+        "allow_private_targets": True,
+    }
+    with session_factory() as session:
+        run = create_run(
+            session,
+            owner_id=owner,
+            name="Retry run",
+            settings_snapshot=snapshot,
+            dataset_id=uuid.UUID(str(dataset["id"])),
+            dataset_version_id=uuid.UUID(str(dataset["versions"][0]["id"])),  # type: ignore[index]
+            criteria_profile="rag_chatbot",
+        )
+        item = create_run_item(session, run, row_index=1, input_text="What is GreenLit?")
+        session.commit()
+        update_run_item(
+            session,
+            item,
+            state="completed",
+            output="GreenLit tests LLM apps.",
+            latency_ms=120,
+            trace={"retry_count": 2, "waited_ms": 1500},
+        )
+        update_run(session, run, state="completed", verdict="GO", score=1.0, completed_at=utcnow())
+        session.commit()
+        run_id = run.id
+
+    document = json.loads(client.get(f"/api/v1/runs/{run_id}/report?format=json").text)
+    assert document["cases"][0]["retry_count"] == 2
+    assert document["cases"][0]["waited_ms"] == 1500
+    assert document["cases"][0]["latency_ms"] == 120
+    assert document["operations"]["retried_cases"] == 1
+
+    csv_response = client.get(f"/api/v1/runs/{run_id}/report?format=csv").text
+    rows = list(csv.reader(io.StringIO(csv_response)))
+    header = rows[0]
+    assert header.index("retry_count") >= 0
+    assert header.index("waited_ms") >= 0
+    assert rows[1][header.index("retry_count")] == "2"
+    assert rows[1][header.index("waited_ms")] == "1500"
+    assert rows[1][header.index("retried_cases")] == "1"
+
+    html = client.get(f"/api/v1/runs/{run_id}/report?format=html").text
+    assert "Retried cases" in html
+    assert "Cases retried" in html
+    assert "1500" in html
 
 
 def test_html_escapes_case_text(client: TestClient, session_factory: sessionmaker[Session]) -> None:

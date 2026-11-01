@@ -254,6 +254,7 @@ class OperationsRead(BaseModel):
     error_rate: float | None = None
     timeout_rate: float | None = None
     items_timed_out: int = 0
+    retried_cases: int = 0
     tokens_in_total: int | None = None
     tokens_out_total: int | None = None
     price_per_1k_tokens_in: float | None = None

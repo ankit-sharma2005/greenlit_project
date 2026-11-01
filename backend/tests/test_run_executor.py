@@ -554,6 +554,28 @@ def test_two_isolated_failures_keep_the_run_going(
 # ---- cancel ---------------------------------------------------------------
 
 
+def test_an_interrupted_case_is_cancelled_not_failed(
+    session_factory: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    """A retry wait stopped by Cancel is a cancellation, not a target failure."""
+    run_id = seed_run(session_factory, owner)
+    first_input = ROWS[0]["question"]
+
+    def raise_cancelled(input_text: str) -> None:
+        if input_text == first_input:
+            raise ConnectorError("this case was cancelled before the target answered", "cancelled")
+
+    sender = FakeSender(answers=echo_answers(), on_call=raise_cancelled)
+    report, _ = run_it(run_id, session_factory, sender)
+
+    assert report["items_cancelled"] == 1
+    assert report["items_failed"] == 0
+    with session_factory() as session:
+        items = list_run_items(session, run_id)
+        first = next(item for item in items if item.input_text == first_input)
+        assert first.state == "cancelled"
+
+
 def test_cancel_mid_run_keeps_partial_results(
     session_factory: sessionmaker[Session], owner: uuid.UUID
 ) -> None:

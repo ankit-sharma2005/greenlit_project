@@ -34,6 +34,7 @@ class _Handler(BaseHTTPRequestHandler):
     fail_times = 0
     retry_after: str | None = "0"
     always_fail = False
+    delay_answer = 0.0
     statuses: ClassVar[list[int]] = []
 
     def do_POST(self) -> None:
@@ -50,6 +51,8 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
+        if type(self).delay_answer:
+            time.sleep(type(self).delay_answer)
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(BODY)))
@@ -66,6 +69,7 @@ def server() -> Iterator[tuple[str, type[_Handler]]]:
     _Handler.fail_times = 0
     _Handler.always_fail = False
     _Handler.retry_after = "0"
+    _Handler.delay_answer = 0.0
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
     httpd.daemon_threads = True
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
@@ -161,6 +165,110 @@ def test_http_date_retry_after_is_understood_and_capped() -> None:
     assert retry_after_seconds("12") == 12.0
     assert retry_after_seconds("not a date") is None
     assert retry_after_seconds(None) is None
+
+
+def test_a_retried_case_records_the_final_attempt_and_the_wait_separately(
+    server: tuple[str, type[_Handler]],
+) -> None:
+    """Latency is the successful attempt alone; retries and waits are their own fields."""
+    url, handler = server
+    handler.fail_times = 2
+    handler.retry_after = None  # backoff, so the waits are real
+    handler.delay_answer = 0.1
+
+    started = time.monotonic()
+    trace = _connector(max_retries=3).render_and_send(
+        url=url,
+        body_template='{"question": {{input}}}',
+        input_text="hello",
+        timeout_seconds=10,
+    )
+    total_ms = int((time.monotonic() - started) * 1000)
+
+    assert trace.output == "ok"
+    assert trace.retry_count == 2
+    assert trace.waited_ms > 0
+    # The recorded latency is the last attempt (~100 ms), not the two waits.
+    assert 80 <= trace.latency_ms < total_ms
+    assert trace.latency_ms < trace.waited_ms + 400
+
+
+def test_zero_retries_sends_exactly_one_request(
+    server: tuple[str, type[_Handler]],
+) -> None:
+    """max_retries = 0 is allowed, and means no duplicate side effects."""
+    url, handler = server
+    handler.always_fail = True
+    with pytest.raises(ConnectorError) as caught:
+        _connector(max_retries=0).render_and_send(
+            url=url,
+            body_template='{"question": {{input}}}',
+            input_text="hello",
+            timeout_seconds=5,
+        )
+    assert len(handler.statuses) == 1
+    assert caught.value.details["status_code"] == 429
+
+
+def test_a_cancel_interrupts_the_retry_wait(
+    server: tuple[str, type[_Handler]],
+) -> None:
+    """A long Retry-After must not keep Cancel waiting."""
+    url, handler = server
+    handler.always_fail = True
+    handler.retry_after = "30"
+    interrupt = threading.Event()
+    connector = HttpConnector(
+        allow_private=True,
+        min_delay_ms=0,
+        max_retries=3,
+        interrupt=interrupt,
+    )
+    threading.Timer(0.2, interrupt.set).start()
+
+    started = time.monotonic()
+    with pytest.raises(ConnectorError) as caught:
+        connector.render_and_send(
+            url=url,
+            body_template='{"question": {{input}}}',
+            input_text="hello",
+            timeout_seconds=10,
+        )
+    elapsed = time.monotonic() - started
+
+    assert caught.value.code == "cancelled"
+    assert elapsed < 2.0, elapsed
+    assert len(handler.statuses) == 1
+
+
+def test_the_per_item_budget_ends_a_slow_case(
+    server: tuple[str, type[_Handler]],
+) -> None:
+    """A target that dribbles past the budget fails with a structured timeout."""
+    url, handler = server
+    handler.delay_answer = 3.0
+    connector = HttpConnector(
+        allow_private=True,
+        min_delay_ms=0,
+        max_retries=0,
+        item_budget_seconds=0.5,
+    )
+
+    started = time.monotonic()
+    with pytest.raises(ConnectorError) as caught:
+        connector.render_and_send(
+            url=url,
+            body_template='{"question": {{input}}}',
+            input_text="hello",
+            timeout_seconds=30,
+        )
+    elapsed = time.monotonic() - started
+
+    assert caught.value.code == "timeout"
+    assert "budget" in caught.value.message
+    assert caught.value.details["timeout_seconds"] == 0.5
+    # Well before the server's 3 s answer: the budget ended it.
+    assert elapsed < 2.5, elapsed
 
 
 def test_default_connector_waits_500_ms_and_tries_three_times() -> None:

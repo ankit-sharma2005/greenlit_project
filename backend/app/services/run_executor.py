@@ -178,6 +178,10 @@ def build_sender(snapshot: Mapping[str, Any], session_factory: Callable[[], Sess
             max_concurrency=int(snapshot.get("max_concurrency") or 1),
             min_delay_ms=int(snapshot.get("min_delay_ms", 500)),
             max_retries=int(snapshot.get("max_retries", 3)),
+            # A per-case budget, so politeness never turns into a hung worker;
+            # the interrupt lets Cancel stop a retry wait immediately.
+            item_budget_seconds=float(snapshot.get("item_budget_seconds", 150.0)),
+            interrupt=snapshot.get("_cancel_interrupt"),
         )
 
         def send_http(input_text: str) -> Trace:
@@ -698,6 +702,8 @@ def execute_run(
     lock = threading.Lock()
 
     sender: Sender | None = None
+    # Set when the run is cancelled; a waiting retry observes it immediately.
+    cancel_event = threading.Event()
     cases: list[_Case] = []
     work: list[tuple[uuid.UUID, _Case]] = []
     entry = "http_endpoint"
@@ -732,7 +738,11 @@ def execute_run(
             cases, item_tuples = _load_cases(session, run, entry)
             if entry != "upload_outputs":
                 choose_sender: SenderFactory = sender_factory or build_sender
-                sender = choose_sender(snapshot, factory)
+                # Cancel flips this event, so a retry wait stops at once instead
+                # of sleeping through the target's Retry-After.
+                sender_snapshot = dict(snapshot)
+                sender_snapshot["_cancel_interrupt"] = cancel_event
+                sender = choose_sender(sender_snapshot, factory)
             else:
                 # Match uploaded rows to dataset items by id, then by input text.
                 csv_content = str(snapshot.get("csv") or "").strip()
@@ -881,7 +891,11 @@ def execute_run(
             error_code = "unexpected_error"
             error_kind = "other"
         elapsed_ms = int((time.monotonic() - call_started) * 1000)
-        state = RunItemState.FAILED if error else RunItemState.COMPLETED
+        if error_code == "cancelled":
+            # A cancelled case is not a failure: it was stopped, not answered wrong.
+            state = RunItemState.CANCELLED
+        else:
+            state = RunItemState.FAILED if error else RunItemState.COMPLETED
 
         with lock:
             with factory() as session:
@@ -907,6 +921,10 @@ def execute_run(
                             "time_to_first_byte_ms": (
                                 trace.time_to_first_byte_ms if trace is not None else None
                             ),
+                            # The retries that preceded the final attempt, and their
+                            # waits: a case that recovered is still a success.
+                            "retry_count": trace.retry_count if trace is not None else 0,
+                            "waited_ms": trace.waited_ms if trace is not None else 0,
                             "raw": trace.raw if trace is not None else None,
                         },
                     )
@@ -914,6 +932,8 @@ def execute_run(
             counts["done"] += 1
             if state == RunItemState.COMPLETED:
                 counts["completed"] += 1
+            elif state == RunItemState.CANCELLED:
+                counts["cancelled"] += 1
             else:
                 counts["failed"] += 1
             payload = snapshot_progress("running")
@@ -927,6 +947,17 @@ def execute_run(
     target_failure: dict[str, Any] | None = None
     breaker: dict[str, Any] | None = None
     not_run: list[tuple[uuid.UUID, _Case]] = []
+    cancel_watch_stop = threading.Event()
+
+    def watch_cancel() -> None:
+        """Poll the run's state so a cancel reaches a waiting case quickly."""
+        while not cancel_watch_stop.wait(0.25):
+            if is_stopping():
+                cancel_event.set()
+                return
+
+    if sender is not None:
+        threading.Thread(target=watch_cancel, daemon=True).start()
     try:
         window = max(1, min(workers, total))
         remaining = list(work)
@@ -989,6 +1020,8 @@ def execute_run(
             "The worker hit an unexpected error while running the cases.",
         )
         raise
+    finally:
+        cancel_watch_stop.set()
 
     if target_failure is not None:
         # Nothing was scored: the run says it is a setup problem rather than

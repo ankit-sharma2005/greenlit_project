@@ -126,6 +126,8 @@ export interface RunOperations {
   error_rate: number | null;
   timeout_rate: number | null;
   items_timed_out: number;
+  /** Cases that needed a retry; they still count as successes. */
+  retried_cases: number;
   tokens_in_total: number | null;
   tokens_out_total: number | null;
   price_per_1k_tokens_in: number | null;

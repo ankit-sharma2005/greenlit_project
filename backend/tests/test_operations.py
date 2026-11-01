@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
 from app.services.operations import (
@@ -187,6 +189,35 @@ class TestPricesFromMetadata:
 
     def test_booleans_are_not_prices(self) -> None:
         assert prices_from_metadata({"price_per_1k_tokens_in": True}) == (None, None)
+
+
+class TestRetriedCases:
+    """A case that recovered after retries is a success that needed retries."""
+
+    def test_a_retried_success_is_not_an_error(self) -> None:
+        result = compute_operations(
+            [
+                ItemSample(state="completed", latency_ms=120, retry_count=2),
+                ItemSample(state="completed", latency_ms=90),
+            ]
+        )
+        assert result["retried_cases"] == 1
+        assert result["items_failed"] == 0
+        assert result["error_rate"] == 0.0
+
+    def test_no_retries_reports_zero_not_none(self) -> None:
+        result = compute_operations([ItemSample(state="completed", latency_ms=50)])
+        assert result["retried_cases"] == 0
+
+    def test_the_item_trace_supplies_the_count(self) -> None:
+        class Row:
+            state = "completed"
+            latency_ms = 30
+            trace: ClassVar[dict[str, int]] = {"retry_count": 3, "waited_ms": 1200}
+
+        samples = samples_from_items([Row()])
+        assert samples[0].retry_count == 3
+        assert compute_operations(samples)["retried_cases"] == 1
 
 
 class TestSamplesFromItems:
