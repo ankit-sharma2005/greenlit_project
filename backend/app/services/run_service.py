@@ -161,6 +161,8 @@ def build_snapshot(
                 "max_concurrency": payload.max_concurrency,
                 "min_delay_ms": payload.min_delay_ms,
                 "max_retries": payload.max_retries,
+                "response_format": payload.response_format,
+                "stream_content_path": payload.stream_content_path,
             }
         )
     elif entry_point == "prompt_app":
@@ -411,6 +413,8 @@ def create_quick_test(
         max_concurrency=payload.max_concurrency,
         min_delay_ms=payload.min_delay_ms,
         max_retries=payload.max_retries,
+        response_format=payload.response_format,
+        stream_content_path=payload.stream_content_path,
         safety_sets=payload.safety_sets,
     )
     run = create_run_from_request(session, user, request, enqueue)

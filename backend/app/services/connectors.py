@@ -14,6 +14,27 @@ from app.services.error_kinds import HTTP_ERROR, kind_for_code
 from app.services.target_error import redact_snippet, target_of
 from app.utils.request_client import RequestClient
 
+# A streamed answer must stay bounded: a chatbot that never stops talking is a
+# setup problem, not a bigger answer.
+MAX_ANSWER_BYTES = 100 * 1024
+RESPONSE_FORMATS = ("json", "sse", "ndjson", "text")
+
+# Where streamed pieces usually live, in the order auto-detect tries them.
+_STREAM_TEXT_PATHS = (
+    "choices.0.delta.content",
+    "choices.0.text",
+    "choices.0.message.content",
+    "delta.content",
+    "delta.text",
+    "token",
+    "content",
+    "text",
+    "answer",
+    "response",
+    "output",
+    "message",
+)
+
 
 class ConnectorError(Exception):
     """Connector failed with a friendly message."""
@@ -42,6 +63,8 @@ class Trace:
     tokens_out: int | None
     error: str | None
     raw: dict[str, Any] | str
+    # Only streamed answers can say when the first byte arrived.
+    time_to_first_byte_ms: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -49,6 +72,7 @@ class Trace:
             "retrieved_context": self.retrieved_context,
             "tool_calls": self.tool_calls,
             "latency_ms": self.latency_ms,
+            "time_to_first_byte_ms": self.time_to_first_byte_ms,
             "tokens_in": self.tokens_in,
             "tokens_out": self.tokens_out,
             "error": self.error,
@@ -102,6 +126,60 @@ def extract_by_path(data: Any, path: str | None) -> Any:
     return current
 
 
+def _text_piece(value: Any) -> str | None:
+    """One streamed piece as text; a list of strings is joined, numbers stringified."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, list) and all(isinstance(entry, str) for entry in value):
+        return "".join(value)
+    return None
+
+
+def _http_failure(status: int, snippet: str, target: str) -> ConnectorError:
+    """A non-2xx answer as the same structured failure for json and streams."""
+    code = "http_error"
+    message = f"target returned HTTP {status}"
+    if status == 404:
+        code = "not_found"
+        message = "your app answered but this path does not exist"
+    elif status in (401, 403):
+        code = "auth_error"
+        message = "your app rejected the request: check API key/auth"
+    return ConnectorError(
+        message,
+        code=code,
+        details={
+            "status_code": status,
+            "target": target,
+            "snippet": snippet,
+            "message": message,
+            "kind": HTTP_ERROR,
+        },
+    )
+
+
+def streamed_piece(payload: Any, content_path: str | None) -> str | None:
+    """The answer text inside one streamed event.
+
+    An explicit path wins; otherwise the OpenAI-style delta, a plain ``token``
+    field and the usual answer fields are tried. A non-JSON event is its own
+    text (the plain ``data:`` fallback).
+    """
+    if isinstance(payload, str):
+        return payload
+    if content_path:
+        return _text_piece(extract_by_path(payload, content_path))
+    for path in _STREAM_TEXT_PATHS:
+        piece = _text_piece(extract_by_path(payload, path))
+        if piece is not None:
+            return piece
+    return None
+
+
 class HttpConnector:
     """HTTP endpoint connector with shared request function.
 
@@ -148,6 +226,8 @@ class HttpConnector:
         timeout_seconds: int = 60,
         method: str = "POST",
         answer_path: str | None = None,
+        response_format: str = "json",
+        stream_content_path: str | None = None,
     ) -> Trace:
         """Shared function for test call and run items."""
         start = time.time()
@@ -161,6 +241,21 @@ class HttpConnector:
                     f"Invalid JSON in body template at position {e.pos}: {e.msg}",
                     code="template_error",
                 ) from e
+
+            target = target_of(url)
+            fmt = response_format if response_format in RESPONSE_FORMATS else "json"
+
+            if fmt != "json":
+                return self._stream_response(
+                    url=url,
+                    body=body,
+                    headers=headers,
+                    method=method,
+                    timeout_seconds=timeout_seconds,
+                    response_format=fmt,
+                    stream_content_path=stream_content_path,
+                    start=start,
+                )
 
             # Make request: at most ``max_concurrency`` in flight, with the
             # configured pause between starts and retries for a busy target.
@@ -179,31 +274,12 @@ class HttpConnector:
             status = response.status_code
             # A test double may not model the body; a real httpx response does.
             snippet = redact_snippet(getattr(response, "text", ""))
-            target = target_of(url)
 
             # Any non-2xx answer is a target failure, never a missing answer: a
             # 422 must not be reported as "wrong answer path" (the run would
             # then look like a quality problem instead of a setup problem).
             if not 200 <= status < 300:
-                code = "http_error"
-                message = f"target returned HTTP {status}"
-                if status == 404:
-                    code = "not_found"
-                    message = "your app answered but this path does not exist"
-                elif status in (401, 403):
-                    code = "auth_error"
-                    message = "your app rejected the request: check API key/auth"
-                raise ConnectorError(
-                    message,
-                    code=code,
-                    details={
-                        "status_code": status,
-                        "target": target,
-                        "snippet": snippet,
-                        "message": message,
-                        "kind": HTTP_ERROR,
-                    },
-                )
+                raise _http_failure(status, snippet, target)
 
             try:
                 data = response.json()
@@ -295,6 +371,171 @@ class HttpConnector:
             latency_ms = int((time.time() - start) * 1000)
             raise ConnectorError(str(e), code="connector_error") from e
 
+    def _stream_response(
+        self,
+        *,
+        url: str,
+        body: Any,
+        headers: dict[str, str] | None,
+        method: str,
+        timeout_seconds: int,
+        response_format: str,
+        stream_content_path: str | None,
+        start: float,
+    ) -> Trace:
+        """Read an SSE/NDJSON/plain-text answer and join its pieces."""
+        target = target_of(url)
+        with self._concurrency:
+            self._wait_for_turn()
+            with self.client.stream(
+                method=method,
+                url=url,
+                json=body,
+                headers=headers,
+                timeout=timeout_seconds,
+                max_retries=self.max_retries,
+            ) as response:
+                status = response.status_code
+                if not 200 <= status < 300:
+                    response.read()
+                    raise _http_failure(status, redact_snippet(response.text), target)
+                output, ttfb_ms, byte_count = self._collect_stream(
+                    response,
+                    response_format=response_format,
+                    content_path=stream_content_path,
+                    timeout_seconds=timeout_seconds,
+                    start=start,
+                    target=target,
+                )
+        latency_ms = int((time.time() - start) * 1000)
+        if not output.strip():
+            raise ConnectorError(
+                "the stream finished without any answer text; "
+                "check the response format or the stream answer path",
+                code="wrong_answer_path",
+                details={
+                    "target": target,
+                    "message": "the stream finished without any answer text",
+                },
+            )
+        return Trace(
+            output=output,
+            retrieved_context="not instrumented",
+            tool_calls="not instrumented",
+            latency_ms=latency_ms,
+            tokens_in=None,
+            tokens_out=None,
+            error=None,
+            raw={
+                "response_format": response_format,
+                "bytes": byte_count,
+                "time_to_first_byte_ms": ttfb_ms,
+            },
+            time_to_first_byte_ms=ttfb_ms,
+        )
+
+    def _collect_stream(
+        self,
+        response: httpx.Response,
+        *,
+        response_format: str,
+        content_path: str | None,
+        timeout_seconds: int,
+        start: float,
+        target: str,
+    ) -> tuple[str, int | None, int]:
+        """Join streamed pieces, enforcing the total timeout and the size cap."""
+        deadline = start + timeout_seconds
+        pieces: list[str] = []
+        size = 0
+        ttfb_ms: int | None = None
+
+        def mark_first_byte() -> None:
+            nonlocal ttfb_ms
+            if ttfb_ms is None:
+                ttfb_ms = int((time.time() - start) * 1000)
+
+        def check_deadline() -> None:
+            if time.time() > deadline:
+                raise ConnectorError(
+                    f"the stream did not finish within {timeout_seconds} s",
+                    code="timeout",
+                    details={
+                        "target": target,
+                        "timeout_seconds": timeout_seconds,
+                        "message": f"the stream did not finish within {timeout_seconds} s",
+                    },
+                )
+
+        def add(text: str) -> None:
+            nonlocal size
+            if not text:
+                return
+            size += len(text.encode("utf-8"))
+            if size > MAX_ANSWER_BYTES:
+                raise ConnectorError(
+                    f"the streamed answer grew past {MAX_ANSWER_BYTES // 1024} KB and was cut",
+                    code="response_too_large",
+                    details={
+                        "target": target,
+                        "message": (
+                            f"the streamed answer grew past {MAX_ANSWER_BYTES // 1024} KB; "
+                            "check that the app stops its answer"
+                        ),
+                    },
+                )
+            pieces.append(text)
+
+        def add_event(raw: str) -> None:
+            stripped = raw.strip()
+            if not stripped or stripped == "[DONE]":
+                return
+            try:
+                payload: Any = json.loads(stripped)
+            except json.JSONDecodeError:
+                # A plain data: event keeps its own whitespace (" world").
+                payload = raw
+            piece = streamed_piece(payload, content_path)
+            if piece:
+                add(piece)
+
+        if response_format == "text":
+            for chunk in response.iter_bytes():
+                check_deadline()
+                mark_first_byte()
+                add(chunk.decode("utf-8", errors="replace"))
+            return "".join(pieces), ttfb_ms, size
+
+        if response_format == "sse":
+            data_lines: list[str] = []
+
+            def flush() -> None:
+                if data_lines:
+                    add_event("\n".join(data_lines))
+                    data_lines.clear()
+
+            for line in response.iter_lines():
+                check_deadline()
+                mark_first_byte()
+                if line == "":
+                    flush()
+                elif line.startswith(":"):
+                    # A keepalive comment is not part of the answer.
+                    continue
+                elif line.startswith("data:"):
+                    value = line[5:]
+                    data_lines.append(value[1:] if value.startswith(" ") else value)
+                # event:, id: and retry: carry no answer text.
+            flush()
+            return "".join(pieces), ttfb_ms, size
+
+        # NDJSON: one JSON object (or plain line) per line.
+        for line in response.iter_lines():
+            check_deadline()
+            mark_first_byte()
+            add_event(line)
+        return "".join(pieces), ttfb_ms, size
+
     def auto_detect(
         self,
         url: str,
@@ -302,6 +543,8 @@ class HttpConnector:
         headers: dict[str, str] | None = None,
         timeout_seconds: int = 60,
         method: str = "POST",
+        response_format: str = "json",
+        stream_content_path: str | None = None,
     ) -> tuple[Trace, str, str | None, str | None]:
         """Try request shapes in order."""
         shapes = [
@@ -322,6 +565,8 @@ class HttpConnector:
                     timeout_seconds=timeout_seconds,
                     method=method,
                     answer_path=None,
+                    response_format=response_format,
+                    stream_content_path=stream_content_path,
                 )
                 # Detect paths from trace.raw
                 data = trace.raw if isinstance(trace.raw, dict) else {}
@@ -368,6 +613,8 @@ class HttpConnector:
                 timeout_seconds=timeout_seconds,
                 method=method,
                 answer_path=None,
+                response_format=response_format,
+                stream_content_path=stream_content_path,
             )
             data = trace.raw if isinstance(trace.raw, dict) else {}
             detected_answer = None

@@ -30,6 +30,7 @@ _KIND_BY_CODE: dict[str, str] = {
     "invalid_json": INVALID_RESPONSE,
     "invalid_response": INVALID_RESPONSE,
     "wrong_answer_path": INVALID_RESPONSE,
+    "response_too_large": INVALID_RESPONSE,
     "template_error": OTHER,
     "connector_error": OTHER,
     "auto_detect_failed": OTHER,

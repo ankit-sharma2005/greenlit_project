@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+ResponseFormat = Literal["json", "sse", "ndjson", "text"]
 
 
 class CurlParseRequest(BaseModel):
@@ -32,6 +34,8 @@ class ConnectTestRequest(BaseModel):
     max_retries: int = Field(default=3, ge=0, le=10)
     answer_path: str | None = None
     context_path: str | None = None
+    response_format: ResponseFormat = "json"
+    stream_content_path: str | None = Field(default=None, max_length=300)
     system_prompt: str | None = None
     model: str | None = None
     temperature: float | None = 0.2

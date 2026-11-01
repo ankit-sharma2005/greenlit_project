@@ -6,6 +6,8 @@ import ipaddress
 import os
 import random
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -165,6 +167,42 @@ class RequestClient:
         # Unreachable: the loop always returns on its last attempt.
         assert response is not None
         return response
+
+    @contextmanager
+    def stream(
+        self,
+        method: str = "POST",
+        url: str = "",
+        max_retries: int | None = None,
+        **kwargs: Any,
+    ) -> Iterator[httpx.Response]:
+        """Open a streamed response with the same SSRF and retry rules.
+
+        The caller reads the body inside the ``with`` block; a busy answer
+        (429/502/503/504) is retried before anything is yielded, so a caller
+        never sees half a retried stream.
+        """
+        safe_url = self._sanitize_url(url)
+        timeout = kwargs.pop("timeout", 60)
+        safe_url, headers = self.local_target(safe_url, kwargs.pop("headers", None))
+        retries = self.max_retries if max_retries is None else max(0, max_retries)
+        attempts = retries + 1
+        with httpx.Client(
+            timeout=timeout, follow_redirects=True, max_redirects=self.max_redirects
+        ) as client:
+            for attempt in range(attempts):
+                delay: float | None = None
+                with client.stream(method, safe_url, headers=headers, **kwargs) as response:
+                    if response.status_code not in RETRYABLE_STATUSES or attempt == attempts - 1:
+                        yield response
+                        return
+                    # Drain the small "not now" body so the connection can be
+                    # reused, then wait the target's own Retry-After or backoff.
+                    response.read()
+                    honoured = retry_after_seconds(response.headers.get("Retry-After"))
+                    delay = honoured if honoured is not None else retry_delay(None, attempt)
+                if delay is not None:
+                    time.sleep(delay)
 
 
 def retry_after_seconds(value: str | None) -> float | None:

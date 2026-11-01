@@ -86,6 +86,8 @@ export function NewTestPage() {
   const [maxConcurrency, setMaxConcurrency] = useState(1);
   const [minDelayMs, setMinDelayMs] = useState(500);
   const [maxRetries, setMaxRetries] = useState(3);
+  const [responseFormat, setResponseFormat] = useState<"json" | "sse" | "ndjson" | "text">("json");
+  const [streamContentPath, setStreamContentPath] = useState("");
   const [testTypes, setTestTypes] = useState<TestTypes>({
     quality: true,
     safety: true,
@@ -315,6 +317,8 @@ export function NewTestPage() {
           max_concurrency: maxConcurrency,
           min_delay_ms: minDelayMs,
           max_retries: maxRetries,
+          response_format: responseFormat,
+          stream_content_path: streamContentPath.trim() || undefined,
         });
         setDetectResult(result);
         setAnswerPath(result.detected_answer_path || "");
@@ -464,6 +468,8 @@ export function NewTestPage() {
       max_concurrency: maxConcurrency,
       min_delay_ms: minDelayMs,
       max_retries: maxRetries,
+      response_format: responseFormat,
+      stream_content_path: streamContentPath.trim() || undefined,
     };
     try {
       if (datasetVersionId) {
@@ -484,6 +490,8 @@ export function NewTestPage() {
           max_concurrency: maxConcurrency,
           min_delay_ms: minDelayMs,
           max_retries: maxRetries,
+          response_format: responseFormat,
+          stream_content_path: streamContentPath.trim() || undefined,
           generate: GENERATED_CASES,
         });
         setActiveRun(result.run);
@@ -505,7 +513,9 @@ export function NewTestPage() {
     maxConcurrency,
     maxRetries,
     minDelayMs,
+    responseFormat,
     runsOnMyComputer,
+    streamContentPath,
     testTypes,
     url,
   ]);
@@ -825,6 +835,37 @@ export function NewTestPage() {
                 />
               </label>
             </div>
+            <label className="form__label" htmlFor="response-format">
+              How the app answers:
+              <select
+                id="response-format"
+                data-testid="response-format"
+                value={responseFormat}
+                onChange={(e) =>
+                  setResponseFormat(e.target.value as "json" | "sse" | "ndjson" | "text")
+                }
+                disabled={loading}
+              >
+                <option value="json">One JSON body (default)</option>
+                <option value="sse">Server-sent events (SSE)</option>
+                <option value="ndjson">Streamed JSON lines (NDJSON)</option>
+                <option value="text">Plain text stream</option>
+              </select>
+            </label>
+            {responseFormat !== "json" && responseFormat !== "text" ? (
+              <label className="form__label" htmlFor="stream-content-path">
+                Where the text sits in each event (optional):
+                <input
+                  id="stream-content-path"
+                  data-testid="stream-content-path"
+                  type="text"
+                  value={streamContentPath}
+                  onChange={(e) => setStreamContentPath(e.target.value)}
+                  placeholder="choices.0.delta.content"
+                  disabled={loading}
+                />
+              </label>
+            ) : null}
           </details>
         )}
 

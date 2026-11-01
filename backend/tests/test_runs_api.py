@@ -161,6 +161,8 @@ def test_start_queues_without_executing(
         assert run.settings_snapshot["max_concurrency"] == 1
         assert run.settings_snapshot["min_delay_ms"] == 500
         assert run.settings_snapshot["max_retries"] == 3
+        assert run.settings_snapshot["response_format"] == "json"
+        assert run.settings_snapshot["stream_content_path"] is None
         # Automatic profile: context was detected, so the RAG template applies.
         assert run.criteria_profile == "rag_chatbot"
         assert run.dataset_version_id == uuid.UUID(str(dataset["versions"][0]["id"]))  # type: ignore[index]

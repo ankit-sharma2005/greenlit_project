@@ -56,6 +56,8 @@ def test_connection(
                     headers=payload.headers,
                     timeout_seconds=payload.timeout_seconds,
                     method=payload.method,
+                    response_format=payload.response_format,
+                    stream_content_path=payload.stream_content_path,
                 )
                 return ConnectTestResponse(
                     success=True,
@@ -73,6 +75,8 @@ def test_connection(
                 timeout_seconds=payload.timeout_seconds,
                 method=payload.method,
                 answer_path=payload.answer_path,
+                response_format=payload.response_format,
+                stream_content_path=payload.stream_content_path,
             )
             return ConnectTestResponse(
                 success=True,

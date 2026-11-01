@@ -11,6 +11,8 @@ export interface ConnectTestRequest {
   max_concurrency?: number;
   min_delay_ms?: number;
   max_retries?: number;
+  response_format?: "json" | "sse" | "ndjson" | "text";
+  stream_content_path?: string;
   answer_path?: string;
   context_path?: string;
   auto_detect?: boolean;

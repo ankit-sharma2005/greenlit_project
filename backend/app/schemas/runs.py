@@ -12,6 +12,7 @@ from app.schemas.evaluation import FailedCaseOut, MetricOut
 
 TestType = Literal["quality", "safety", "operations"]
 EntryPoint = Literal["http_endpoint", "prompt_app", "upload_outputs"]
+ResponseFormat = Literal["json", "sse", "ndjson", "text"]
 
 ALL_TEST_TYPES: list[TestType] = ["quality", "safety", "operations"]
 
@@ -59,6 +60,9 @@ class RunCreateRequest(BaseModel):
     max_concurrency: int = Field(default=1, ge=1, le=8)
     min_delay_ms: int = Field(default=500, ge=0, le=60_000)
     max_retries: int = Field(default=3, ge=0, le=10)
+    # How the target answers: one JSON body, or a stream of events.
+    response_format: ResponseFormat = "json"
+    stream_content_path: str | None = Field(default=None, max_length=300)
 
     # Prompt app connector settings.
     provider_id: UUID | None = None
@@ -104,6 +108,8 @@ class QuickTestRequest(BaseModel):
     max_concurrency: int = Field(default=1, ge=1, le=8)
     min_delay_ms: int = Field(default=500, ge=0, le=60_000)
     max_retries: int = Field(default=3, ge=0, le=10)
+    response_format: ResponseFormat = "json"
+    stream_content_path: str | None = Field(default=None, max_length=300)
     name: str | None = Field(default=None, max_length=120)
     # Safety settings: which built-in sets to send. Omitted means every set.
     safety_sets: list[str] | None = Field(default=None, max_length=40)

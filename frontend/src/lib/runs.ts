@@ -144,6 +144,8 @@ export interface RunCreateRequest {
   max_concurrency?: number;
   min_delay_ms?: number;
   max_retries?: number;
+  response_format?: "json" | "sse" | "ndjson" | "text";
+  stream_content_path?: string;
   provider_id?: string;
   model?: string;
   system_prompt?: string;
@@ -170,6 +172,8 @@ export interface QuickTestRequest {
   max_concurrency?: number;
   min_delay_ms?: number;
   max_retries?: number;
+  response_format?: "json" | "sse" | "ndjson" | "text";
+  stream_content_path?: string;
   name?: string;
 }
 

@@ -164,6 +164,9 @@ def build_sender(snapshot: Mapping[str, Any], session_factory: Callable[[], Sess
         answer_path = str(raw_answer_path) if raw_answer_path else None
         body_template = str(snapshot.get("body_template") or _DEFAULT_BODY_TEMPLATE)
         allow_private = bool(snapshot.get("allow_private_targets", False))
+        response_format = str(snapshot.get("response_format") or "json")
+        raw_stream_path = snapshot.get("stream_content_path")
+        stream_content_path = str(raw_stream_path) if raw_stream_path else None
         connector = HttpConnector(
             allow_private=allow_private,
             max_concurrency=int(snapshot.get("max_concurrency") or 1),
@@ -180,6 +183,8 @@ def build_sender(snapshot: Mapping[str, Any], session_factory: Callable[[], Sess
                 timeout_seconds=timeout_seconds,
                 method=method,
                 answer_path=answer_path,
+                response_format=response_format,
+                stream_content_path=stream_content_path,
             )
 
         return send_http
@@ -893,6 +898,9 @@ def execute_run(
                             "error_kind": error_kind,
                             "error_detail": failure_detail,
                             "elapsed_ms": elapsed_ms,
+                            "time_to_first_byte_ms": (
+                                trace.time_to_first_byte_ms if trace is not None else None
+                            ),
                             "raw": trace.raw if trace is not None else None,
                         },
                     )
