@@ -155,9 +155,7 @@ bash scripts/run-e2e.sh
   outputs, and PDF dataset generation through preview and approval.
   It runs against fake apps started inside the test process (`tests/helpers.ts`), so no
   real model is needed. The last full run from a clean stack passed all of them:
-  `17 passed (7.1m)`, exit code 0. `e2e-report.spec.ts` then gained a second test (a
-  streamed SSE target reaches a GO, and the permission box is required first); running
-  that spec alone on a clean stack passed: `2 passed (1.5m)`, exit code 0.
+  `18 passed (9.8m)`, exit code 0.
 - `scripts/run-e2e.sh` uses a uniquely named Compose project per invocation (Postgres 5536,
   Redis 6482, fresh volume), the API on 8103, a solo Celery worker, Vite on 5277 and the two
   demo helpdesks on 9501/9502. It stops only that invocation's containers, preserves its

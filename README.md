@@ -284,9 +284,7 @@ project and therefore a fresh database:
   `e2e-report`, `e2e-safety`, `e2e-setup-audit`, `e2e-upload-outputs`) against
   `http://localhost:5277` (`E2E_BASE_URL`), then stops only that project with
   `docker compose down`; its volume is preserved. The last full run from a clean stack
-  passed every test: `17 passed (7.1m)`. `e2e-report.spec.ts` has since grown a second
-  test (a streamed target and the required permission), and running that one spec alone
-  on a clean stack passed both: `2 passed (1.5m)`.
+  passed every test: `18 passed (9.8m)`, exit code 0.
 
 Because the whole suite takes longer than one command on a slow machine, a single spec can
 be run on the same disposable stack:
