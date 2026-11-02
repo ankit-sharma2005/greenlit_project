@@ -331,6 +331,18 @@ running (`docker compose --profile demo up -d`). Use `--dataset-id` instead of `
 to select an existing approved dataset. Only enable `--allow-private-targets` for a target
 you trust. To use the runner against your own application, replace the target and dataset.
 
+## Testing a real company app
+
+A first real test against somebody else's chatbot has its own hazards: an expiring
+session, bot protection, redirects, TLS, a stream that stops halfway. The connector
+reports each of those as its own structured failure instead of a crash or a wrong
+score — a `403` challenge page is "blocked by the site", a cross-host redirect is
+refused and named, an unreadable body says which paths were tried, and a stream that
+stops early keeps its text marked incomplete so it is never scored as a whole answer.
+Read [docs/REAL_WORLD_CHECKLIST.md](docs/REAL_WORLD_CHECKLIST.md) before the first
+request: permission first, a test account, concurrency 1, attack probes off unless
+written permission covers them, and never production customer data.
+
 ## Drive GreenLit from an MCP client
 
 `mcp_server/` is a small stdio MCP server that lets an MCP client (Claude, Freebuff,

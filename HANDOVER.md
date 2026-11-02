@@ -183,6 +183,35 @@ bash scripts/run-e2e.sh
   verdict, weighted score and failed instrumented metrics, and returns documented CI exit
   codes. Fake-server tests cover GO, NO_GO, REVIEW, timeout and authentication failure.
 
+## Real-world failure classes
+
+`backend/tests/support/quirk_server.py` is one loopback server that mimics the ways a
+real app (or a company website chatbot) misbehaves; each row below is proven by a named
+test in `backend/tests/test_quirk_failures.py` unless the row says otherwise. Status is
+honest: PARTLY means the truth is narrower than the row reads.
+
+| Quirk | Status | Proof |
+| --- | --- | --- |
+| Basic / bearer / API-key / cookie auth | HANDLED | `test_each_auth_style_is_sent_and_accepted` |
+| Token expiring mid-run | PARTLY | `test_a_token_that_expires_mid_run_stops_with_a_clear_error` — a clear `auth_error`, exactly one further request, no retry storm. The run-level "answered cases are kept" comes from the normal per-case failure path, not a dedicated test. |
+| CSRF / anti-bot 403 challenge page | HANDLED | `test_an_anti_bot_challenge_is_a_blocked_site_not_a_wrong_answer` (and `test_a_secret_in_a_challenge_page_is_redacted`) |
+| Redirects | HANDLED | `test_a_same_host_redirect_is_followed`, `test_a_cross_host_redirect_is_refused_and_names_the_target` (the other host is never contacted), `test_a_redirect_loop_stops_after_three_hops` |
+| TLS, DNS, reset | PARTLY | `test_a_self_signed_certificate_is_named_as_such`, `test_an_expired_certificate_says_expired`, `test_a_dns_failure_is_not_a_timeout`, `test_a_connection_reset_is_reported`. Connect has its own shorter clock but no test trips a hanging host. |
+| Response shapes | HANDLED | `test_a_known_response_shape_is_mapped` (OpenAI, nested JSON path, messages array, gzip), `test_an_unreadable_answer_names_what_was_tried` (HTML 200, empty, invalid UTF-8, plain text, null answer), `test_a_huge_json_body_is_capped_not_parsed` |
+| Streams | HANDLED | existing SSE/NDJSON/keepalive tests plus `test_a_stream_without_a_final_event_is_flagged_incomplete`, `test_a_stream_that_stalls_keeps_its_partial_answer`, and `test_an_incomplete_streamed_answer_is_a_failed_case_not_a_correct_one` |
+| Conversations / sessions | MISSING | No session or conversation id, no multi-turn history, no per-case cookie isolation. Only the request template's escaping is proven: `test_a_template_with_quotes_newlines_backslashes_emoji_and_hindi_stays_json`. |
+| Refusals and guardrails | PARTLY | Safety already counts a refusal as resisted; there is no REFUSED badge or reason for an ordinary case. |
+| Rate limits and quotas | HANDLED | `tests/test_http_rate_control.py` (429 with and without `Retry-After`, 503 bursts) and `tests/test_run_executor.py::test_circuit_breaker_marks_the_rest_not_run_and_says_target_failing`; there is no quota-body-specific wording. |
+| Slow apps | PARTLY | Per-run timeout 1–300 s (`RunCreateRequest.timeout_seconds`) and a 150 s per-case budget; no cold-start handling and no per-project setting (there is no project record). |
+| Sensitive data in exports | MISSING | Only request headers are redacted (`tests/test_report.py`); emails, phones, card-like numbers and keys inside answers are exported as written. |
+| Judge problems | HANDLED | `tests/test_judge.py`, `tests/test_run_executor_judge.py`: unavailable or off-contract judge → not measured + REVIEW, never a 0. |
+| Worker crash / duplicate start | MISSING | A restart leaves the run stuck; there is no resume or "interrupted" state. Cancel does interrupt a retry wait (`test_a_cancel_interrupts_the_retry_wait`). |
+| Cost and time caps | MISSING | No max-cases, max-duration or max-token run caps and no "stopped by limit" status. |
+
+Not built in this milestone: the "Check before full run" step (one harmless case, an
+accepted extraction, then a 5-case smoke run) and any frontend change that would go
+with it.
+
 ## Known limitations
 
 - **The shipped defaults are not a deployment.** Change `APP_SECRET_KEY` and

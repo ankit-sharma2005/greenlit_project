@@ -261,3 +261,14 @@ def test_a_connection_reset_is_reported(quirk: Callable[..., QuirkServer]) -> No
     error = caught.value
     assert error.code == "connection_reset"
     assert "closed" in error.message.lower()
+
+
+def test_a_template_with_quotes_newlines_backslashes_emoji_and_hindi_stays_json() -> None:
+    """The input is embedded as a JSON string, so any text must survive rendering."""
+    import json
+
+    from app.services.connectors import render_body_template
+
+    text = 'He said "hi"\then\nbroke\tit 🙂 नमस्ते \ "quoted"'
+    rendered = render_body_template('{"question": {{input}}}', text)
+    assert json.loads(rendered) == {"question": text}
