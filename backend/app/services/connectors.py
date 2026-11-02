@@ -13,9 +13,11 @@ import httpx
 from app.services.error_kinds import HTTP_ERROR, kind_for_code
 from app.services.target_error import redact_snippet, target_of
 from app.utils.request_client import (
+    RedirectBlockedError,
     RequestClient,
     RequestDeadlineExceededError,
     RequestInterruptedError,
+    TooManyRedirectsError,
 )
 
 # One case may not hold a worker for longer than this, however politely the
@@ -25,7 +27,89 @@ DEFAULT_ITEM_BUDGET_SECONDS = 150.0
 # A streamed answer must stay bounded: a chatbot that never stops talking is a
 # setup problem, not a bigger answer.
 MAX_ANSWER_BYTES = 100 * 1024
+# One JSON answer is never a document: a body past this is a download or a
+# misconfigured URL, and reading it would only waste the worker's memory.
+MAX_JSON_BODY_BYTES = 10 * 1024 * 1024
 RESPONSE_FORMATS = ("json", "sse", "ndjson", "text")
+
+# What a bot-protection or CSRF page says instead of answering the question.
+_CHALLENGE_MARKERS = (
+    "verify you are human",
+    "just a moment",
+    "checking your browser",
+    "cf-challenge",
+    "attention required",
+    "captcha",
+    "csrf",
+)
+
+_ANSWER_PATHS = (
+    "answer",
+    "response",
+    "output",
+    "text",
+    "message",
+    "content",
+    "result",
+    "choices.0.message.content",
+)
+
+
+def _looks_like_html(text: str) -> bool:
+    """Whether a body is a web page rather than the app's JSON answer."""
+    head = text.lstrip()[:300].lower()
+    return (
+        head.startswith("<!doctype html")
+        or head.startswith("<html")
+        or "<body" in head
+        or "<title" in head
+    )
+
+
+def _is_challenge_page(status: int, snippet: str) -> bool:
+    """A 401/403 body that is bot protection or a missing CSRF token."""
+    if status not in (401, 403):
+        return False
+    lowered = snippet.lower()
+    return any(marker in lowered for marker in _CHALLENGE_MARKERS) or _looks_like_html(snippet)
+
+
+def _too_large_message() -> str:
+    megabytes = MAX_JSON_BODY_BYTES // (1024 * 1024)
+    return (
+        f"the response body is larger than {megabytes} MB and was not read; "
+        "check that the app answers one question at a time"
+    )
+
+
+def _default_answer(data: Any) -> str | None:
+    """The answer inside the shapes real apps return, without being told the path."""
+    for path in _ANSWER_PATHS:
+        value = extract_by_path(data, path)
+        if isinstance(value, str) and value.strip():
+            return value
+    if isinstance(data, list):
+        # A conversation array: the assistant's last message is the answer.
+        for entry in reversed(data):
+            if isinstance(entry, dict):
+                for key in ("content", "message", "answer", "text", "output", "response"):
+                    value = entry.get(key)
+                    if isinstance(value, str) and value.strip():
+                        return value
+    return None
+
+
+def _unreadable_body_message(snippet: str) -> str:
+    """Why a 2xx body could not be read, in words that suggest the next step."""
+    if not snippet:
+        return "the app answered with an empty body; check the URL, the method and the body"
+    if _looks_like_html(snippet):
+        return (
+            "the app answered with an HTML page instead of JSON; check that the URL "
+            "points at the API, not at a web page"
+        )
+    return "the response could not be read as JSON; check the answer path and the response format"
+
 
 # Where streamed pieces usually live, in the order auto-detect tries them.
 _STREAM_TEXT_PATHS = (
@@ -78,10 +162,14 @@ class Trace:
     # alone, so a retried case never looks slow.
     retry_count: int = 0
     waited_ms: int = 0
+    # A stream that stopped before a final event: the text is real, but it is
+    # not the whole answer and must not be scored as one.
+    incomplete: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "output": self.output,
+            "incomplete": self.incomplete,
             "retrieved_context": self.retrieved_context,
             "tool_calls": self.tool_calls,
             "latency_ms": self.latency_ms,
@@ -156,6 +244,25 @@ def _text_piece(value: Any) -> str | None:
 
 def _http_failure(status: int, snippet: str, target: str) -> ConnectorError:
     """A non-2xx answer as the same structured failure for json and streams."""
+    if _is_challenge_page(status, snippet):
+        # A bot-protection or CSRF page is the site protecting itself, not a
+        # wrong password and not a wrong answer. Asking again is what gets you
+        # blocked harder, so this is never retried.
+        message = (
+            f"the site blocked this request with an anti-bot or CSRF challenge (HTTP {status}); "
+            "use a test account and a browser-like session, or ask the owner to allow it"
+        )
+        return ConnectorError(
+            message,
+            code="blocked_by_site",
+            details={
+                "status_code": status,
+                "target": target,
+                "snippet": snippet,
+                "message": message,
+                "kind": HTTP_ERROR,
+            },
+        )
     code = "http_error"
     message = f"target returned HTTP {status}"
     if status == 404:
@@ -313,42 +420,68 @@ class HttpConnector:
             if not 200 <= status < 300:
                 raise _http_failure(status, snippet, target)
 
+            # A 10 MB "answer" is a download, not an answer: refuse it before
+            # parsing so one misconfigured URL cannot exhaust the worker.
+            declared = getattr(response, "headers", {}).get("content-length")
+            if declared and str(declared).isdigit() and int(declared) > MAX_JSON_BODY_BYTES:
+                raise ConnectorError(
+                    _too_large_message(),
+                    code="response_too_large",
+                    details={
+                        "status_code": status,
+                        "target": target,
+                        "limit_bytes": MAX_JSON_BODY_BYTES,
+                        "message": _too_large_message(),
+                    },
+                )
+            body_size = len(getattr(response, "content", b"") or b"")
+            if body_size > MAX_JSON_BODY_BYTES:
+                raise ConnectorError(
+                    _too_large_message(),
+                    code="response_too_large",
+                    details={
+                        "status_code": status,
+                        "target": target,
+                        "limit_bytes": MAX_JSON_BODY_BYTES,
+                        "message": _too_large_message(),
+                    },
+                )
+
             try:
                 data = response.json()
             except Exception as e:
+                message = _unreadable_body_message(snippet)
                 raise ConnectorError(
-                    "Response was not valid JSON",
+                    message,
                     code="invalid_json",
                     details={
                         "status_code": status,
                         "target": target,
                         "snippet": snippet,
-                        "message": "Response was not valid JSON",
+                        "message": message,
                     },
                 ) from e
 
-            # Extract answer
+            # Extract answer: the configured path first, then the shapes apps use.
             output = extract_by_path(data, answer_path) if answer_path else None
-            if output is None:
-                # Try common paths
-                for path in [
-                    "answer",
-                    "response",
-                    "output",
-                    "text",
-                    "message",
-                    "content",
-                    "result",
-                    "choices.0.message.content",
-                ]:
-                    output = extract_by_path(data, path)
-                    if output is not None:
-                        break
-            if output is None or not isinstance(output, str):
+            if not isinstance(output, str) or not output.strip():
+                output = _default_answer(data)
+            if not isinstance(output, str) or not output.strip():
+                tried = ([answer_path] if answer_path else []) + list(_ANSWER_PATHS)
+                tried = list(dict.fromkeys(path for path in tried if path))
+                message = (
+                    "could not read the answer from the response; check the answer path "
+                    f"(tried {', '.join(tried)})"
+                )
                 raise ConnectorError(
-                    "wrong answer path (show real response to pick key)",
+                    message,
                     code="wrong_answer_path",
-                    details={"response": data},
+                    details={
+                        "target": target,
+                        "response": data,
+                        "paths_tried": tried,
+                        "message": message,
+                    },
                 )
 
             # Extract context
@@ -423,6 +556,30 @@ class HttpConnector:
                     "message": f"the app did not answer within {timeout_seconds} s",
                 },
             ) from e
+        except RedirectBlockedError as e:
+            message = (
+                f"the app redirected to another host ({e.target_host}); "
+                "GreenLit follows only redirects that stay on the host you typed"
+            )
+            raise ConnectorError(
+                message,
+                code="redirect_blocked",
+                details={
+                    "target": target_of(url),
+                    "redirect_target": e.target_host,
+                    "message": message,
+                },
+            ) from e
+        except TooManyRedirectsError as e:
+            message = (
+                f"the app redirected more than {max(e.hops - 1, 1)} times without answering; "
+                "check the URL"
+            )
+            raise ConnectorError(
+                message,
+                code="redirect_loop",
+                details={"target": target_of(url), "message": message},
+            ) from e
         except httpx.ConnectError as e:
             # The app is not listening at all, which is not a timeout.
             raise ConnectorError(
@@ -467,7 +624,7 @@ class HttpConnector:
                 if not 200 <= status < 300:
                     response.read()
                     raise _http_failure(status, redact_snippet(response.text), target)
-                output, ttfb_ms, byte_count = self._collect_stream(
+                output, ttfb_ms, byte_count, complete = self._collect_stream(
                     response,
                     response_format=response_format,
                     content_path=stream_content_path,
@@ -478,6 +635,16 @@ class HttpConnector:
         waited_ms = int(self.client.last_waited_seconds * 1000)
         latency_ms = max(0, int((time.time() - start) * 1000) - waited_ms)
         if not output.strip():
+            if not complete:
+                raise ConnectorError(
+                    f"the stream stopped after {timeout_seconds} s before any answer text",
+                    code="timeout",
+                    details={
+                        "target": target,
+                        "timeout_seconds": timeout_seconds,
+                        "message": f"the stream stopped after {timeout_seconds} s",
+                    },
+                )
             raise ConnectorError(
                 "the stream finished without any answer text; "
                 "check the response format or the stream answer path",
@@ -501,10 +668,12 @@ class HttpConnector:
                 "time_to_first_byte_ms": ttfb_ms,
                 "retry_count": self.client.last_retry_count,
                 "waited_ms": waited_ms,
+                "incomplete": not complete,
             },
             time_to_first_byte_ms=ttfb_ms,
             retry_count=self.client.last_retry_count,
             waited_ms=waited_ms,
+            incomplete=not complete,
         )
 
     def _collect_stream(
@@ -516,12 +685,18 @@ class HttpConnector:
         timeout_seconds: int,
         start: float,
         target: str,
-    ) -> tuple[str, int | None, int]:
-        """Join streamed pieces, enforcing the total timeout and the size cap."""
+    ) -> tuple[str, int | None, int, bool]:
+        """Join streamed pieces; also say whether the stream reached an end.
+
+        A stream that stops early (an idle timeout, or no ``[DONE]`` event) keeps
+        the text it produced and is reported as incomplete, so a truncated answer
+        is never scored as a whole one.
+        """
         deadline = start + timeout_seconds
         pieces: list[str] = []
         size = 0
         ttfb_ms: int | None = None
+        finished = {"final": False}
 
         def mark_first_byte() -> None:
             nonlocal ttfb_ms
@@ -561,7 +736,10 @@ class HttpConnector:
 
         def add_event(raw: str) -> None:
             stripped = raw.strip()
-            if not stripped or stripped == "[DONE]":
+            if not stripped:
+                return
+            if stripped == "[DONE]":
+                finished["final"] = True
                 return
             try:
                 payload: Any = json.loads(stripped)
@@ -572,12 +750,20 @@ class HttpConnector:
             if piece:
                 add(piece)
 
+        def collected(complete: bool) -> tuple[str, int | None, int, bool]:
+            return "".join(pieces), ttfb_ms, size, complete
+
         if response_format == "text":
-            for chunk in response.iter_bytes():
-                check_deadline()
-                mark_first_byte()
-                add(chunk.decode("utf-8", errors="replace"))
-            return "".join(pieces), ttfb_ms, size
+            try:
+                for chunk in response.iter_bytes():
+                    check_deadline()
+                    mark_first_byte()
+                    add(chunk.decode("utf-8", errors="replace"))
+            except httpx.TimeoutException:
+                if not pieces:
+                    raise
+                return collected(False)
+            return collected(True)
 
         if response_format == "sse":
             data_lines: list[str] = []
@@ -587,27 +773,39 @@ class HttpConnector:
                     add_event("\n".join(data_lines))
                     data_lines.clear()
 
+            try:
+                for line in response.iter_lines():
+                    check_deadline()
+                    mark_first_byte()
+                    if line == "":
+                        flush()
+                    elif line.startswith(":"):
+                        # A keepalive comment is not part of the answer.
+                        continue
+                    elif line.startswith("data:"):
+                        value = line[5:]
+                        data_lines.append(value[1:] if value.startswith(" ") else value)
+                    # event:, id: and retry: carry no answer text.
+            except httpx.TimeoutException:
+                # An idle stream: keep what arrived and mark it incomplete.
+                flush()
+                if not pieces:
+                    raise
+                return collected(False)
+            flush()
+            return collected(finished["final"])
+
+        # NDJSON: one JSON object (or plain line) per line.
+        try:
             for line in response.iter_lines():
                 check_deadline()
                 mark_first_byte()
-                if line == "":
-                    flush()
-                elif line.startswith(":"):
-                    # A keepalive comment is not part of the answer.
-                    continue
-                elif line.startswith("data:"):
-                    value = line[5:]
-                    data_lines.append(value[1:] if value.startswith(" ") else value)
-                # event:, id: and retry: carry no answer text.
-            flush()
-            return "".join(pieces), ttfb_ms, size
-
-        # NDJSON: one JSON object (or plain line) per line.
-        for line in response.iter_lines():
-            check_deadline()
-            mark_first_byte()
-            add_event(line)
-        return "".join(pieces), ttfb_ms, size
+                add_event(line)
+        except httpx.TimeoutException:
+            if not pieces:
+                raise
+            return collected(False)
+        return collected(True)
 
     def auto_detect(
         self,

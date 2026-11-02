@@ -1182,3 +1182,43 @@ def test_safety_is_not_instrumented_for_upload_outputs_runs(
     # Not instrumented means excluded from the weighted score, never counted 0.
     assert metrics["answer_match"].instrumented is True
     assert metrics["answer_match"].passed is True
+
+
+def test_an_incomplete_streamed_answer_is_a_failed_case_not_a_correct_one(
+    session_factory: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    """A stream that stopped early keeps its text but must not score as an answer."""
+    run_id = seed_run(session_factory, owner)
+
+    def factory(
+        snapshot: Mapping[str, Any], inner: Callable[[], Session]
+    ) -> Callable[[str], Trace]:
+        def send(input_text: str) -> Trace:
+            return Trace(
+                output=ROWS[0]["answer"],
+                retrieved_context="not instrumented",
+                tool_calls="not instrumented",
+                latency_ms=10,
+                tokens_in=None,
+                tokens_out=None,
+                error=None,
+                raw={"stream": "cut"},
+                incomplete=True,
+            )
+
+        return send
+
+    report, _ = run_it(run_id, session_factory, sender_factory=factory)
+
+    assert report["items_completed"] == 0, report
+    with session_factory() as session:
+        items = list_run_items(session, run_id)
+        assert items
+        states = {item.state for item in items}
+        # Whatever the breaker does to the remaining cases, none of them counts
+        # as answered: a truncated stream is never a correct answer.
+        assert "completed" not in states, states
+        failed = [item for item in items if item.state == "failed"]
+        assert failed
+        assert all(item.trace["incomplete"] is True for item in failed)
+        assert all("stopped before it was complete" in (item.error or "") for item in failed)

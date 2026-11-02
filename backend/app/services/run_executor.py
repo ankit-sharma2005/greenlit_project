@@ -873,6 +873,14 @@ def execute_run(
             # upload_outputs: answers come from the file, nothing is called.
             trace = _precomputed_trace(case) if sender is None else sender(case.input_text)
             error = trace.error
+            if error is None and trace.incomplete:
+                # A truncated stream is real text but not the whole answer, so it
+                # is a failed case — never a correct one scored against the golden
+                # answer. The partial text stays on the item for diagnosis.
+                error = "the streamed answer stopped before it was complete"
+                error_code = "incomplete_stream"
+                error_kind = "invalid_response"
+                failure_detail = _failure_detail(error_kind, error, {"message": error})
         except ConnectorError as exc:
             error = exc.message
             error_code = exc.code
@@ -925,6 +933,7 @@ def execute_run(
                             # waits: a case that recovered is still a success.
                             "retry_count": trace.retry_count if trace is not None else 0,
                             "waited_ms": trace.waited_ms if trace is not None else 0,
+                            "incomplete": trace.incomplete if trace is not None else False,
                             "raw": trace.raw if trace is not None else None,
                         },
                     )

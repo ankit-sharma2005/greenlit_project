@@ -161,16 +161,18 @@ def test_plain_text_stream_is_the_answer(serve: Any) -> None:
 def test_a_stalled_stream_times_out_cleanly(serve: Any) -> None:
     url = serve("stall", stall_after_first=5.0)
     started = time.monotonic()
-    with pytest.raises(ConnectorError) as caught:
-        _connector().render_and_send(
-            url=url,
-            body_template='{"question": {{input}}}',
-            input_text="hello",
-            timeout_seconds=1,
-            response_format="sse",
-        )
+    trace = _connector().render_and_send(
+        url=url,
+        body_template='{"question": {{input}}}',
+        input_text="hello",
+        timeout_seconds=1,
+        response_format="sse",
+    )
     elapsed = time.monotonic() - started
-    assert caught.value.code == "timeout"
+    # The idle timeout still ends the read quickly; the text that did arrive is
+    # kept and flagged, so it is never mistaken for a whole answer.
+    assert trace.output == "partial"
+    assert trace.incomplete is True
     assert elapsed < 4.0
 
 

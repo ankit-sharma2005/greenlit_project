@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -22,6 +22,12 @@ RETRYABLE_STATUSES = frozenset({429, 502, 503, 504})
 RETRY_AFTER_CAP_SECONDS = 60.0
 RETRY_BASE_SECONDS = 0.25
 RETRY_DELAY_CAP_SECONDS = 10.0
+
+# Redirects are followed only while they stay on the host the user typed, and
+# only a few times: a target must not be able to bounce the request to a host
+# the SSRF guard never checked.
+MAX_SAME_HOST_REDIRECTS = 3
+REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 
 # Inside a dev container ``127.0.0.1`` is the container itself, so a target the user
 # runs on their own computer is reached through the Docker gateway instead. The name
@@ -69,6 +75,22 @@ class BlockedPrivateURLError(SSLError):
 
 
 BlockedPrivateURL = BlockedPrivateURLError
+
+
+class RedirectBlockedError(Exception):
+    """A redirect pointed at another host and was not followed."""
+
+    def __init__(self, target_host: str) -> None:
+        super().__init__(target_host)
+        self.target_host = target_host
+
+
+class TooManyRedirectsError(Exception):
+    """The target kept redirecting past the same-host limit."""
+
+    def __init__(self, hops: int) -> None:
+        super().__init__(hops)
+        self.hops = hops
 
 
 class RequestInterruptedError(Exception):
@@ -189,6 +211,50 @@ class RequestClient:
         connect_url = parsed._replace(netloc=f"{LOCAL_GATEWAY_HOST}{port}").geturl()
         return connect_url, rewritten
 
+    def _redirect_target(self, response: httpx.Response, current_url: str) -> str | None:
+        """Where this response wants the request to go, if anywhere."""
+        if response.status_code not in REDIRECT_STATUSES:
+            return None
+        location = response.headers.get("location")
+        if not location:
+            return None
+        return str(urljoin(current_url, location))
+
+    @staticmethod
+    def _same_host(original: str, candidate: str) -> bool:
+        """Same hostname as the URL the user typed (scheme and port may differ)."""
+        left = (urlparse(original).hostname or "").lower()
+        right = (urlparse(candidate).hostname or "").lower()
+        return left == right
+
+    def _request_following(
+        self,
+        client: httpx.Client,
+        method: str,
+        safe_url: str,
+        headers: dict[str, str] | None,
+        timeout: float,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        """Send the request, following only same-host redirects.
+
+        A redirect to another host is refused instead of followed: the SSRF
+        guard checked the URL the user gave, not the one the target chose.
+        """
+        url = safe_url
+        for hop in range(MAX_SAME_HOST_REDIRECTS + 1):
+            response = client.request(method, url, headers=headers, timeout=timeout, **kwargs)
+            target = self._redirect_target(response, url)
+            if target is None:
+                return response
+            if not self._same_host(safe_url, target):
+                raise RedirectBlockedError((urlparse(target).hostname or "").lower())
+            if hop == MAX_SAME_HOST_REDIRECTS:
+                raise TooManyRedirectsError(hop + 1)
+            response.close()
+            url = target
+        raise TooManyRedirectsError(MAX_SAME_HOST_REDIRECTS + 1)
+
     def request(
         self,
         method: str = "POST",
@@ -207,15 +273,13 @@ class RequestClient:
         self.last_retry_count = 0
         self.last_waited_seconds = 0.0
         self.last_attempt_seconds = 0.0
-        with httpx.Client(
-            timeout=timeout, follow_redirects=True, max_redirects=self.max_redirects
-        ) as client:
+        with httpx.Client(timeout=timeout, follow_redirects=False) as client:
             response: httpx.Response | None = None
             for attempt in range(attempts):
                 attempt_timeout = _remaining_timeout(timeout, deadline)
                 started = time.monotonic()
-                response = client.request(
-                    method, safe_url, headers=headers, timeout=attempt_timeout, **kwargs
+                response = self._request_following(
+                    client, method, safe_url, headers, attempt_timeout, **kwargs
                 )
                 self.last_attempt_seconds = time.monotonic() - started
                 self.last_retry_count = attempt
@@ -253,28 +317,47 @@ class RequestClient:
         self.last_retry_count = 0
         self.last_waited_seconds = 0.0
         self.last_attempt_seconds = 0.0
-        with httpx.Client(
-            timeout=timeout, follow_redirects=True, max_redirects=self.max_redirects
-        ) as client:
+        with httpx.Client(timeout=timeout, follow_redirects=False) as client:
             for attempt in range(attempts):
                 delay: float | None = None
                 attempt_timeout = _remaining_timeout(timeout, deadline)
                 started = time.monotonic()
-                with client.stream(
-                    method, safe_url, headers=headers, timeout=attempt_timeout, **kwargs
-                ) as response:
-                    if response.status_code not in RETRYABLE_STATUSES or attempt == attempts - 1:
-                        self.last_retry_count = attempt
+                url = safe_url
+                hops = 0
+                while True:
+                    with client.stream(
+                        method, url, headers=headers, timeout=attempt_timeout, **kwargs
+                    ) as response:
+                        target = self._redirect_target(response, url)
+                        if target is not None:
+                            # Same-host only, and only a few hops: read the empty
+                            # body, then ask the next URL for the real answer.
+                            response.read()
+                            if not self._same_host(safe_url, target):
+                                raise RedirectBlockedError(
+                                    (urlparse(target).hostname or "").lower()
+                                )
+                            if hops >= MAX_SAME_HOST_REDIRECTS:
+                                raise TooManyRedirectsError(hops + 1)
+                            hops += 1
+                            url = target
+                            continue
+                        if (
+                            response.status_code not in RETRYABLE_STATUSES
+                            or attempt == attempts - 1
+                        ):
+                            self.last_retry_count = attempt
+                            self.last_attempt_seconds = time.monotonic() - started
+                            yield response
+                            return
+                        # Drain the small "not now" body so the connection can be
+                        # reused, then wait the target's own Retry-After or backoff.
+                        response.read()
+                        honoured = retry_after_seconds(response.headers.get("Retry-After"))
+                        delay = honoured if honoured is not None else retry_delay(None, attempt)
                         self.last_attempt_seconds = time.monotonic() - started
-                        yield response
-                        return
-                    # Drain the small "not now" body so the connection can be
-                    # reused, then wait the target's own Retry-After or backoff.
-                    response.read()
-                    honoured = retry_after_seconds(response.headers.get("Retry-After"))
-                    delay = honoured if honoured is not None else retry_delay(None, attempt)
-                    self.last_attempt_seconds = time.monotonic() - started
-                    self.last_retry_count = attempt
+                        self.last_retry_count = attempt
+                    break
                 if delay is not None:
                     self.last_waited_seconds += _wait_for_retry(delay, interrupt, deadline)
 
