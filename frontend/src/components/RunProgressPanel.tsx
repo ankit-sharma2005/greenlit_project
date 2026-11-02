@@ -27,6 +27,7 @@ const STATE_LABEL: Record<string, string> = {
   cancelled: "Cancelled",
   failed: "Failed",
   completed: "Completed",
+  stopped_by_limit: "Stopped by limit",
 };
 
 export interface RunProgressPanelProps {
@@ -71,6 +72,21 @@ export function RunProgressPanel({ run, onCancel, cancelling = false }: RunProgr
             ? ` · ${run.progress.elapsed_seconds.toFixed(0)} s elapsed`
             : ""}
         </p>
+
+        {run.limits ? (
+          <p className="card__hint" data-testid="run-limits">
+            Limits: {run.limits.max_cases ? `at most ${run.limits.max_cases} cases` : "no case cap"}
+            {run.limits.max_duration_seconds
+              ? ` · ${run.limits.max_duration_seconds} s of requests`
+              : ""}
+            {run.limits.max_total_tokens
+              ? run.limits.tokens_not_instrumented
+                ? ` · token cap ${run.limits.max_total_tokens} not instrumented (the app reported no tokens)`
+                : ` · token cap ${run.limits.max_total_tokens}`
+              : ""}
+            {run.limits.stopped_by ? ` · stopped by limit: ${run.limits.stopped_by}` : ""}
+          </p>
+        ) : null}
 
         {active ? (
           <div className="datasets__actions" style={{ marginTop: "var(--space-3)" }}>

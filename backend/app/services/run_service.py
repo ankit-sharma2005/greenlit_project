@@ -147,6 +147,11 @@ def build_snapshot(
         "test_types": list(payload.test_types),
         "dataset_version_id": str(dataset_version_id),
         "timeout_seconds": payload.timeout_seconds,
+        # Run caps: the worker reads them from here, so a changed default never
+        # rewrites what an already queued run was allowed to spend (quirk 14).
+        "max_cases": payload.max_cases,
+        "max_duration_seconds": payload.max_duration_seconds,
+        "max_total_tokens": payload.max_total_tokens,
     }
     if entry_point == "http_endpoint":
         remote = not payload.allow_private_targets
@@ -451,6 +456,9 @@ def create_quick_test(
         response_format=payload.response_format,
         stream_content_path=payload.stream_content_path,
         safety_sets=payload.safety_sets,
+        max_cases=payload.max_cases,
+        max_duration_seconds=payload.max_duration_seconds,
+        max_total_tokens=payload.max_total_tokens,
     )
     run = create_run_from_request(session, user, request, enqueue)
     return run, version, generated

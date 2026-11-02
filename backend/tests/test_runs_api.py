@@ -703,3 +703,86 @@ def test_run_created_directly_can_be_read(
     assert body["state"] == "failed"
     assert body["entry_point"] == "http_endpoint"
     assert body["verdict_reason"] == "boom"
+
+
+# ---- run caps (quirk 14) --------------------------------------------------
+
+
+def test_run_caps_are_stored_in_the_snapshot_and_read_back(
+    client: TestClient, runtime: SimpleNamespace
+) -> None:
+    _register(client)
+    dataset = _upload_and_approve(client)
+    body = _body(dataset)
+    body["max_cases"] = 5
+    body["max_duration_seconds"] = 120
+    body["max_total_tokens"] = 4000
+
+    response = client.post("/api/v1/runs", json=body)
+    assert response.status_code == 202, response.text
+    limits = response.json()["limits"]
+    assert limits["max_cases"] == 5
+    assert limits["max_duration_seconds"] == 120
+    assert limits["max_total_tokens"] == 4000
+    assert limits["stopped_by"] is None
+    assert limits["stop_reason"] is None
+    assert limits["tokens_not_instrumented"] is False
+
+
+def test_a_run_without_caps_still_reports_the_duration_default(
+    client: TestClient, runtime: SimpleNamespace
+) -> None:
+    _register(client)
+    dataset = _upload_and_approve(client)
+
+    response = client.post("/api/v1/runs", json=_body(dataset))
+    assert response.status_code == 202, response.text
+    limits = response.json()["limits"]
+    assert limits["max_cases"] is None
+    assert limits["max_duration_seconds"] == 1800
+    assert limits["max_total_tokens"] is None
+
+
+@pytest.mark.parametrize(
+    "caps",
+    [
+        {"max_cases": 0},
+        {"max_cases": 1001},
+        {"max_duration_seconds": 29},
+        {"max_duration_seconds": 14401},
+        {"max_total_tokens": 0},
+    ],
+)
+def test_out_of_range_caps_are_rejected_with_422(
+    client: TestClient, runtime: SimpleNamespace, caps: dict[str, int]
+) -> None:
+    _register(client)
+    dataset = _upload_and_approve(client)
+    body = _body(dataset)
+    body.update(caps)
+
+    response = client.post("/api/v1/runs", json=body)
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "validation_error"
+    # Nothing was queued for a request that never validated.
+    assert runtime.queue == []
+
+
+def test_a_quick_test_carries_the_same_caps(client: TestClient, runtime: SimpleNamespace) -> None:
+    _register(client)
+    response = client.post(
+        "/api/v1/quick-test",
+        json={
+            "entry_point": "http_endpoint",
+            "target": "http://127.0.0.1:9099/ask",
+            "tests": ["quality"],
+            "csv": CSV_BYTES.decode(),
+            "allow_private_targets": True,
+            "max_cases": 2,
+            "max_total_tokens": 900,
+        },
+    )
+    assert response.status_code == 202, response.text
+    limits = response.json()["run"]["limits"]
+    assert limits["max_cases"] == 2
+    assert limits["max_total_tokens"] == 900

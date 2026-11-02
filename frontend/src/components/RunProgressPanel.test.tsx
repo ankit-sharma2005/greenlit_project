@@ -309,3 +309,55 @@ describe("RunProgressPanel", () => {
     expect(screen.queryByTestId("run-verdict-judge-cap")).not.toBeInTheDocument();
   });
 });
+
+describe("RunProgressPanel run limits", () => {
+  it("shows the caps and which one stopped the run", () => {
+    render(
+      <RunProgressPanel
+        run={makeRun({
+          state: "stopped_by_limit",
+          is_partial: true,
+          verdict: "GO",
+          score: 0.91,
+          verdict_reason: "Stopped by limit (max_cases): the run was capped at 5 of 12 cases.",
+          limits: {
+            max_cases: 5,
+            max_duration_seconds: 600,
+            max_total_tokens: null,
+            stopped_by: "max_cases",
+            stop_reason: "the run was capped at 5 of 12 cases",
+            tokens_not_instrumented: false,
+          },
+        })}
+        onCancel={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("run-state")).toHaveTextContent("Stopped by limit");
+    expect(screen.getByTestId("run-limits")).toHaveTextContent("at most 5 cases");
+    expect(screen.getByTestId("run-limits")).toHaveTextContent("600 s");
+    expect(screen.getByTestId("run-limits")).toHaveTextContent("stopped by limit: max_cases");
+    expect(screen.getByTestId("run-verdict-reason")).toHaveTextContent("Stopped by limit");
+  });
+
+  it("says a token cap was not instrumented instead of showing zero", () => {
+    render(
+      <RunProgressPanel
+        run={makeRun({
+          limits: {
+            max_cases: null,
+            max_duration_seconds: 1800,
+            max_total_tokens: 9000,
+            stopped_by: null,
+            stop_reason: null,
+            tokens_not_instrumented: true,
+          },
+        })}
+        onCancel={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("run-limits")).toHaveTextContent("no case cap");
+    expect(screen.getByTestId("run-limits")).toHaveTextContent("not instrumented");
+  });
+});

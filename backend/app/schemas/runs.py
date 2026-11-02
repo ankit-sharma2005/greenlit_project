@@ -86,6 +86,14 @@ class RunCreateRequest(BaseModel):
     # Safety settings: which built-in sets to send. Omitted means every set.
     safety_sets: list[str] | None = Field(default=None, max_length=40)
 
+    # Run caps (quirk 14). The worker stops the run when one is reached and
+    # keeps what it already measured; the state becomes ``stopped_by_limit``.
+    # ``max_cases`` has no default; the duration cap applies to every run.
+    max_cases: int | None = Field(default=None, ge=1, le=1000)
+    max_duration_seconds: int = Field(default=1800, ge=30, le=14_400)
+    # Only enforced when the target reports tokens; never counted as 0.
+    max_total_tokens: int | None = Field(default=None, ge=1, le=100_000_000)
+
 
 class QuickTestRequest(BaseModel):
     """Everything a CI job needs: entry point, target and the test types."""
@@ -124,6 +132,10 @@ class QuickTestRequest(BaseModel):
     name: str | None = Field(default=None, max_length=120)
     # Safety settings: which built-in sets to send. Omitted means every set.
     safety_sets: list[str] | None = Field(default=None, max_length=40)
+    # The same run caps a normal run takes (quirk 14).
+    max_cases: int | None = Field(default=None, ge=1, le=1000)
+    max_duration_seconds: int = Field(default=1800, ge=30, le=14_400)
+    max_total_tokens: int | None = Field(default=None, ge=1, le=100_000_000)
 
 
 class RunPermissionRead(BaseModel):
@@ -132,6 +144,19 @@ class RunPermissionRead(BaseModel):
     confirmed: bool = False
     reference: str | None = None
     safety_attacks_confirmed: bool = False
+
+
+class RunLimitsRead(BaseModel):
+    """The caps a run carried, and which one ended it (quirk 14)."""
+
+    max_cases: int | None = None
+    max_duration_seconds: int | None = None
+    max_total_tokens: int | None = None
+    # "max_cases", "max_duration_seconds" or "max_total_tokens" when a cap hit.
+    stopped_by: str | None = None
+    stop_reason: str | None = None
+    # A token cap was set but no case reported tokens, so it could not apply.
+    tokens_not_instrumented: bool = False
 
 
 class RunProgressRead(BaseModel):
@@ -290,6 +315,8 @@ class RunRead(BaseModel):
     is_baseline: bool = False
     # Stored by the worker when the run finishes; absent on older runs.
     operations: OperationsRead | None = None
+    # The caps the run carried; null on runs that predate them.
+    limits: RunLimitsRead | None = None
 
 
 class RunListResponse(BaseModel):

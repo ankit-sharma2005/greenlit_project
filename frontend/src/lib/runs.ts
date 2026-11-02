@@ -3,9 +3,15 @@
 import { apiRequest } from "./api";
 import type { FailedCase, MetricRow, Verdict } from "./evaluations";
 
-export type RunState = "queued" | "running" | "cancelling" | "cancelled" | "failed" | "completed";
+export type RunState =
+  "queued" | "running" | "cancelling" | "cancelled" | "failed" | "completed" | "stopped_by_limit";
 
-export const TERMINAL_STATES: readonly RunState[] = ["cancelled", "failed", "completed"];
+export const TERMINAL_STATES: readonly RunState[] = [
+  "cancelled",
+  "failed",
+  "completed",
+  "stopped_by_limit",
+];
 
 export function isTerminal(state: RunState): boolean {
   return TERMINAL_STATES.includes(state);
@@ -73,6 +79,18 @@ export interface RunRegression {
   regressed_cases: RegressedCase[];
 }
 
+/** The caps a run carried, and which one ended it (quirk 14). */
+export interface RunLimits {
+  max_cases: number | null;
+  max_duration_seconds: number | null;
+  max_total_tokens: number | null;
+  /** "max_cases", "max_duration_seconds" or "max_total_tokens" when a cap hit. */
+  stopped_by: string | null;
+  stop_reason: string | null;
+  /** A token cap was set but no case reported tokens, so it could not apply. */
+  tokens_not_instrumented: boolean;
+}
+
 /** Who allowed GreenLit to test a target that is not the user's own app. */
 export interface RunPermission {
   confirmed: boolean;
@@ -109,6 +127,8 @@ export interface Run {
   is_baseline?: boolean;
   /** Speed, reliability and token use; null on runs that predate the block. */
   operations?: RunOperations | null;
+  /** The caps this run carried; null on runs that predate them. */
+  limits?: RunLimits | null;
 }
 
 /**
@@ -166,6 +186,10 @@ export interface RunCreateRequest {
   system_prompt?: string;
   temperature?: number;
   judge_profile_id?: string;
+  /** Run caps: no default for cases or tokens, 1800 s for duration. */
+  max_cases?: number;
+  max_duration_seconds?: number;
+  max_total_tokens?: number;
 }
 
 export interface QuickTestRequest {
@@ -195,6 +219,9 @@ export interface QuickTestRequest {
   response_format?: "json" | "sse" | "ndjson" | "text";
   stream_content_path?: string;
   name?: string;
+  max_cases?: number;
+  max_duration_seconds?: number;
+  max_total_tokens?: number;
 }
 
 export interface QuickTestResponse {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "../components/Button";
 import { DemoPanel } from "../components/DemoPanel";
@@ -94,6 +94,10 @@ export function NewTestPage() {
   const [maxConcurrency, setMaxConcurrency] = useState(1);
   const [minDelayMs, setMinDelayMs] = useState(500);
   const [maxRetries, setMaxRetries] = useState(3);
+  // Run caps (quirk 14): empty means "no cap" for cases and tokens.
+  const [maxCases, setMaxCases] = useState("");
+  const [maxDurationSeconds, setMaxDurationSeconds] = useState("1800");
+  const [maxTotalTokens, setMaxTotalTokens] = useState("");
   const [responseFormat, setResponseFormat] = useState<"json" | "sse" | "ndjson" | "text">("json");
   const [streamContentPath, setStreamContentPath] = useState("");
   const [testTypes, setTestTypes] = useState<TestTypes>({
@@ -136,6 +140,16 @@ export function NewTestPage() {
     import("../lib/connectors").ConnectTestResponse | null
   >(null);
   const [answerPath, setAnswerPath] = useState("");
+
+  // The caps sent with every run; an empty box means "no cap", not zero.
+  const runCaps = useMemo(
+    () => ({
+      max_cases: maxCases.trim() ? Number(maxCases) : undefined,
+      max_duration_seconds: Number(maxDurationSeconds) || undefined,
+      max_total_tokens: maxTotalTokens.trim() ? Number(maxTotalTokens) : undefined,
+    }),
+    [maxCases, maxDurationSeconds, maxTotalTokens],
+  );
 
   // Approved dataset versions are the only thing a run may execute.
   useEffect(() => {
@@ -397,6 +411,7 @@ export function NewTestPage() {
               timeout_seconds: 60,
               allow_private_targets: runsOnMyComputer,
               dataset_version_id: promptDatasetId,
+              ...runCaps,
             }),
           );
           setNotice("Run queued. A worker executes the cases, this page polls its progress.");
@@ -410,6 +425,7 @@ export function NewTestPage() {
             timeout_seconds: 60,
             allow_private_targets: runsOnMyComputer,
             generate: GENERATED_CASES,
+            ...runCaps,
           });
           setActiveRun(result.run);
           setNotice(
@@ -463,6 +479,7 @@ export function NewTestPage() {
           timeout_seconds: 60,
           allow_private_targets: runsOnMyComputer,
           body_template: text,
+          ...runCaps,
         });
         setActiveRun(run);
         setNotice("Run queued. A worker scores the uploaded outputs against the golden dataset.");
@@ -507,6 +524,7 @@ export function NewTestPage() {
       max_retries: maxRetries,
       response_format: responseFormat,
       stream_content_path: streamContentPath.trim() || undefined,
+      ...runCaps,
     };
     try {
       if (datasetVersionId) {
@@ -536,6 +554,7 @@ export function NewTestPage() {
           response_format: responseFormat,
           stream_content_path: streamContentPath.trim() || undefined,
           generate: GENERATED_CASES,
+          ...runCaps,
         });
         setActiveRun(result.run);
         setNotice(
@@ -560,6 +579,7 @@ export function NewTestPage() {
     permissionConfirmed,
     permissionReference,
     responseFormat,
+    runCaps,
     runsOnMyComputer,
     safetyAttacksConfirmed,
     streamContentPath,
@@ -840,6 +860,61 @@ export function NewTestPage() {
             </p>
           ) : null}
         </fieldset>
+
+        <details className="form__advanced" data-testid="run-limits-options">
+          <summary>Run limits</summary>
+          <p className="form__hint">
+            A run stops when it reaches one of these limits and keeps what it already measured, so
+            the verdict then covers only the cases that ran. Leave a box empty for no limit.
+          </p>
+          <div className="datasets__actions">
+            <label htmlFor="max-cases">
+              Stop after at most (cases):{" "}
+              <input
+                id="max-cases"
+                data-testid="max-cases"
+                type="number"
+                min={1}
+                max={1000}
+                value={maxCases}
+                placeholder="every case"
+                onChange={(e) => setMaxCases(e.target.value)}
+                disabled={loading}
+              />
+            </label>
+            <label htmlFor="max-duration">
+              Time cap (seconds):{" "}
+              <input
+                id="max-duration"
+                data-testid="max-duration"
+                type="number"
+                min={30}
+                max={14400}
+                step={30}
+                value={maxDurationSeconds}
+                onChange={(e) => setMaxDurationSeconds(e.target.value)}
+                disabled={loading}
+              />
+            </label>
+            <label htmlFor="max-tokens">
+              Token cap (optional):{" "}
+              <input
+                id="max-tokens"
+                data-testid="max-tokens"
+                type="number"
+                min={1}
+                value={maxTotalTokens}
+                placeholder="no cap"
+                onChange={(e) => setMaxTotalTokens(e.target.value)}
+                disabled={loading}
+              />
+            </label>
+          </div>
+          <p className="form__hint">
+            The token cap applies only when the app reports token counts; otherwise it is shown as
+            not instrumented instead of being counted as zero.
+          </p>
+        </details>
 
         {connector === "http_endpoint" && (
           <details className="form__advanced" data-testid="advanced-connector">

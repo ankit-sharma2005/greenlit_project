@@ -26,6 +26,7 @@ from app.schemas.runs import (
     RunItemRead,
     RunItemsResponse,
     RunJudgeRead,
+    RunLimitsRead,
     RunListResponse,
     RunPermissionRead,
     RunProgressRead,
@@ -140,6 +141,35 @@ def _count(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return 0
     return int(value)
+
+
+def _optional_count(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return int(value)
+
+
+def _limits_read(snapshot: dict[str, Any]) -> RunLimitsRead | None:
+    """The caps the run carried, and which one stopped it (quirk 14)."""
+    raw_stop = snapshot.get("limit_stop")
+    stop = raw_stop if isinstance(raw_stop, dict) else {}
+    limits = RunLimitsRead(
+        max_cases=_optional_count(snapshot.get("max_cases")),
+        max_duration_seconds=_optional_count(snapshot.get("max_duration_seconds")),
+        max_total_tokens=_optional_count(snapshot.get("max_total_tokens")),
+        stopped_by=_text_or_none(stop.get("kind")),
+        stop_reason=_text_or_none(stop.get("detail")),
+        tokens_not_instrumented=bool(snapshot.get("tokens_not_instrumented")),
+    )
+    if (
+        limits.max_cases is None
+        and limits.max_duration_seconds is None
+        and limits.max_total_tokens is None
+        and limits.stopped_by is None
+    ):
+        # A run from before caps existed carries no limits block at all.
+        return None
+    return limits
 
 
 def _permission_read(snapshot: dict[str, Any]) -> RunPermissionRead | None:
@@ -330,6 +360,7 @@ def _run_read(
             else None
         ),
         is_baseline=is_baseline,
+        limits=_limits_read(snapshot),
         operations=(
             OperationsRead.model_validate(operations_payload)
             if operations_payload is not None

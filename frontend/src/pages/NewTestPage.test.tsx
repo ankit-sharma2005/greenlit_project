@@ -153,3 +153,97 @@ describe("NewTestPage permission record", () => {
     expect(body.permission_confirmed).toBe(false);
   });
 });
+
+describe("NewTestPage run limits", () => {
+  beforeEach(() => {
+    mocks.testConnection.mockReset().mockResolvedValue(DETECTED);
+    mocks.startRun.mockReset();
+    mocks.quickTest.mockReset().mockResolvedValue({
+      run: {
+        id: "run-1",
+        name: "Run",
+        state: "queued",
+        verdict: null,
+        score: null,
+        verdict_reason: null,
+        is_partial: false,
+        criteria_profile: "plain_chatbot",
+        test_types: ["quality"],
+        dataset_id: null,
+        dataset_version_id: null,
+        created_at: "2026-11-02T10:00:00Z",
+        started_at: null,
+        completed_at: null,
+        progress: {
+          items_done: 0,
+          items_total: 0,
+          items_failed: 0,
+          items_cancelled: 0,
+          stage: "queued",
+          started_at: null,
+          updated_at: null,
+          elapsed_seconds: null,
+        },
+        metrics: [],
+        failed_cases: [],
+        judge: null,
+        judge_skipped_reason: null,
+        limits: null,
+      },
+      dataset_id: "dataset-1",
+      dataset_version_id: "version-1",
+      generated: true,
+    });
+    mocks.listDatasets.mockReset().mockResolvedValue({ items: [] });
+    mocks.listProviders.mockReset().mockResolvedValue([]);
+    mocks.loadDemo.mockReset();
+  });
+
+  async function detectLocalTarget() {
+    await userEvent.click(screen.getByLabelText("This app runs on my computer"));
+    await userEvent.type(screen.getByTestId("target-url"), "http://localhost:8000/chat");
+    await userEvent.click(screen.getByTestId("start-test"));
+    await screen.findByTestId("detect-result");
+  }
+
+  it("sends the caps the user typed with the run", async () => {
+    renderPage();
+    await detectLocalTarget();
+
+    const cases = screen.getByTestId("max-cases");
+    const duration = screen.getByTestId("max-duration");
+    const tokens = screen.getByTestId("max-tokens");
+    expect((duration as HTMLInputElement).value).toBe("1800");
+
+    await userEvent.type(cases, "3");
+    await userEvent.clear(duration);
+    await userEvent.type(duration, "60");
+    await userEvent.type(tokens, "5000");
+    await userEvent.click(screen.getByTestId("run-test"));
+
+    await waitFor(() => expect(mocks.quickTest).toHaveBeenCalledTimes(1));
+    const [body] = mocks.quickTest.mock.calls[0] as [
+      { max_cases?: number; max_duration_seconds?: number; max_total_tokens?: number },
+    ];
+    expect(body.max_cases).toBe(3);
+    expect(body.max_duration_seconds).toBe(60);
+    expect(body.max_total_tokens).toBe(5000);
+  });
+
+  it("sends no case or token cap when the boxes are empty", async () => {
+    renderPage();
+    await detectLocalTarget();
+
+    expect((screen.getByTestId("max-cases") as HTMLInputElement).value).toBe("");
+    await userEvent.click(screen.getByTestId("run-test"));
+
+    await waitFor(() => expect(mocks.quickTest).toHaveBeenCalledTimes(1));
+    const [body] = mocks.quickTest.mock.calls[0] as [
+      { max_cases?: number; max_duration_seconds?: number; max_total_tokens?: number },
+    ];
+    // An empty box is "no cap", never a cap of zero (which would send nothing).
+    expect(body.max_cases).toBeUndefined();
+    expect(body.max_total_tokens).toBeUndefined();
+    expect(body.max_duration_seconds).toBe(1800);
+  });
+});

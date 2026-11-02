@@ -283,6 +283,9 @@ class RunState(enum.StrEnum):
     CANCELLED = "cancelled"
     FAILED = "failed"
     COMPLETED = "completed"
+    # A run the user's own caps stopped (quirk 14). The cases that were measured
+    # still carry a verdict; the rest are "not run", never failures.
+    STOPPED_BY_LIMIT = "stopped_by_limit"
 
 
 class RunItemState(enum.StrEnum):

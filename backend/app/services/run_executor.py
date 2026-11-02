@@ -275,6 +275,28 @@ def _setup_problem_block(
     }
 
 
+def _cap_value(value: Any) -> int | None:
+    """A positive integer cap, or None when the setting is absent."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if value <= 0:
+        return None
+    return int(value)
+
+
+def _limit_block(kind: str, detail: str) -> dict[str, Any]:
+    """What a reached cap records on the run (quirk 14).
+
+    ``kind`` is the setting's own name, so the remaining cases and the run page
+    say exactly which cap stopped the run.
+    """
+    return {
+        "kind": kind,
+        "detail": detail,
+        "item_reason": f"stopped by limit: {kind}",
+    }
+
+
 def _breaker_block(kind: str | None, detail: Mapping[str, Any] | None) -> dict[str, Any]:
     """Why the target was dropped: the same failure three times in a row."""
     summary = str((detail or {}).get("summary") or f"{kind or 'unknown'} failure")
@@ -805,6 +827,53 @@ def execute_run(
     total = len(work)
     counts = {"done": 0, "completed": 0, "failed": 0, "cancelled": 0}
 
+    # ---- run caps (quirk 14) ---------------------------------------------
+    # A cap never changes how a case is scored: it only decides when the run
+    # stops asking. Everything measured before the cap keeps its verdict.
+    max_cases = _cap_value(snapshot.get("max_cases"))
+    max_duration = _cap_value(snapshot.get("max_duration_seconds"))
+    max_tokens = _cap_value(snapshot.get("max_total_tokens"))
+    duration_deadline = time.monotonic() + max_duration if max_duration else None
+    limit_stop: dict[str, Any] | None = None
+    overflow: list[tuple[uuid.UUID, _Case]] = []
+    if max_cases is not None and len(work) > max_cases:
+        overflow = work[max_cases:]
+        work = work[:max_cases]
+        limit_stop = _limit_block(
+            "max_cases", f"the run was capped at {max_cases} of {total} cases"
+        )
+    if overflow:
+        with lock, factory() as session:
+            for item_id, _case in overflow:
+                item = session.get(RunItem, item_id)
+                if item is not None:
+                    update_run_item(
+                        session,
+                        item,
+                        state=RunItemState.CANCELLED,
+                        trace={
+                            "not_run": True,
+                            "reason": limit_stop["item_reason"] if limit_stop else "not run",
+                        },
+                    )
+            session.commit()
+            counts["cancelled"] += len(overflow)
+            counts["done"] += len(overflow)
+
+    # Tokens are counted only when the target reports them; a case that reports
+    # nothing is not a zero, so a token cap cannot fire on unreported answers.
+    tokens_seen = 0
+    tokens_reported = 0
+
+    def tokens_cap_hit() -> bool:
+        return max_tokens is not None and tokens_reported > 0 and tokens_seen >= max_tokens
+
+    def token_limit_block() -> dict[str, Any]:
+        return _limit_block(
+            "max_total_tokens",
+            f"the run reported {tokens_seen} tokens, at its cap of {max_tokens}",
+        )
+
     def snapshot_progress(stage: str) -> RunProgress:
         """Build the payload to publish; the caller must hold the lock."""
         return RunProgress(
@@ -840,6 +909,7 @@ def execute_run(
         The return value is what the fail-fast logic reads: a run decides to stop
         on the kind of failure, not by parsing the message afterwards.
         """
+        nonlocal tokens_seen, tokens_reported
         # Cancel check first: a cancelling run takes on no new cases.
         if is_stopping():
             with lock:
@@ -938,6 +1008,10 @@ def execute_run(
                         },
                     )
                     session.commit()
+            if trace is not None and (trace.tokens_in is not None or trace.tokens_out is not None):
+                # One reporting case is enough for the token cap to apply.
+                tokens_reported += 1
+                tokens_seen += (trace.tokens_in or 0) + (trace.tokens_out or 0)
             counts["done"] += 1
             if state == RunItemState.COMPLETED:
                 counts["completed"] += 1
@@ -983,7 +1057,25 @@ def execute_run(
             with ThreadPoolExecutor(max_workers=window) as pool:
                 pending: list[Any] = []
                 while remaining or pending:
-                    while remaining and len(pending) < window and breaker is None:
+                    # The time cap is checked before each request is sent, so a
+                    # long run stops between cases instead of mid-answer.
+                    if (
+                        limit_stop is None
+                        and duration_deadline is not None
+                        and time.monotonic() >= duration_deadline
+                    ):
+                        limit_stop = _limit_block(
+                            "max_duration_seconds",
+                            f"the run reached its {max_duration} s time cap",
+                        )
+                    if limit_stop is None and tokens_cap_hit():
+                        limit_stop = token_limit_block()
+                    while (
+                        remaining
+                        and len(pending) < window
+                        and breaker is None
+                        and limit_stop is None
+                    ):
                         item_id, case = remaining.pop(0)
                         pending.append((pool.submit(execute_item, item_id, case), item_id))
                     if not pending:
@@ -999,7 +1091,9 @@ def execute_run(
                     if streak >= _BREAKER_THRESHOLD:
                         breaker = _breaker_block(kind, detail)
                         break
-            if breaker is not None:
+                    if limit_stop is None and tokens_cap_hit():
+                        limit_stop = token_limit_block()
+            if breaker is not None or limit_stop is not None:
                 not_run = list(remaining)
                 remaining = []
         if not_run:
@@ -1013,7 +1107,11 @@ def execute_run(
                             state=RunItemState.CANCELLED,
                             trace={
                                 "not_run": True,
-                                "reason": "the target was failing, so this case was not sent",
+                                "reason": (
+                                    limit_stop["item_reason"]
+                                    if breaker is None and limit_stop is not None
+                                    else "the target was failing, so this case was not sent"
+                                ),
                             },
                         )
                 session.commit()
@@ -1114,6 +1212,13 @@ def execute_run(
     if judge_result.metric is not None:
         extra_metrics[ANSWER_QUALITY] = judge_result.metric
 
+    limits_recorded = limit_stop is not None or (max_tokens is not None and tokens_reported == 0)
+    if limit_stop is not None:
+        snapshot["limit_stop"] = limit_stop
+    if max_tokens is not None and tokens_reported == 0:
+        # The cap could not apply: say that, instead of counting missing tokens as 0.
+        snapshot["tokens_not_instrumented"] = True
+
     # ---- phase 3: score the finished items and store the verdict ---------
     report: dict[str, Any]
     final_payload: RunProgress
@@ -1130,7 +1235,7 @@ def execute_run(
                 snapshot_update["judge"] = judge_result.metadata
             if judge_result.skipped_reason is not None:
                 snapshot_update["judge_skipped_reason"] = judge_result.skipped_reason
-            if snapshot_update != snapshot:
+            if snapshot_update != snapshot or limits_recorded:
                 update_run(session, run, settings_snapshot=snapshot_update)
             was_cancelled = run.state in (
                 RunState.CANCELLING.value,
@@ -1143,12 +1248,23 @@ def execute_run(
             ]
             if not finished:
                 # Cancelled (or nothing ever finished): no verdict, labelled partial.
-                reason = (
-                    "The run was cancelled before any case finished; there is nothing to score."
-                    if was_cancelled
-                    else "No case finished; there is nothing to score."
-                )
-                final_state = RunState.CANCELLED if was_cancelled else RunState.FAILED
+                if limit_stop is not None:
+                    reason = (
+                        f"Stopped by limit ({limit_stop['kind']}): {limit_stop['detail']}. "
+                        "No case had finished, so there is nothing to score."
+                    )
+                elif was_cancelled:
+                    reason = (
+                        "The run was cancelled before any case finished; there is nothing to score."
+                    )
+                else:
+                    reason = "No case finished; there is nothing to score."
+                if limit_stop is not None:
+                    final_state = RunState.STOPPED_BY_LIMIT
+                elif was_cancelled:
+                    final_state = RunState.CANCELLED
+                else:
+                    final_state = RunState.FAILED
                 update_run(
                     session,
                     run,
@@ -1156,7 +1272,7 @@ def execute_run(
                     verdict=None,
                     score=None,
                     verdict_reason=reason,
-                    is_partial=True if was_cancelled else run.is_partial,
+                    is_partial=True if was_cancelled or limit_stop is not None else run.is_partial,
                     completed_at=utcnow(),
                 )
                 session.commit()
@@ -1280,7 +1396,17 @@ def execute_run(
                         # rate instead of counting as zero-quality answers.
                         final_verdict = "REVIEW"
                         reason = f"Target failing: {breaker['summary']}"
-                    final_state = RunState.CANCELLED if was_cancelled else RunState.COMPLETED
+                    if limit_stop is not None:
+                        # The cap stopped the run, not the app: the verdict is what
+                        # the existing rules say about the cases that WERE measured,
+                        # and the reason says the run is not the whole dataset.
+                        reason = (
+                            f"Stopped by limit ({limit_stop['kind']}): "
+                            f"{limit_stop['detail']}. {reason}"
+                        )
+                        final_state = RunState.STOPPED_BY_LIMIT
+                    else:
+                        final_state = RunState.CANCELLED if was_cancelled else RunState.COMPLETED
                     update_run(
                         session,
                         run,
@@ -1288,7 +1414,7 @@ def execute_run(
                         verdict=final_verdict,
                         score=decision.score,
                         verdict_reason=reason,
-                        is_partial=was_cancelled or breaker is not None,
+                        is_partial=was_cancelled or breaker is not None or limit_stop is not None,
                         operations=_operations_block(session, snapshot, finished),
                         completed_at=utcnow(),
                     )
@@ -1306,7 +1432,7 @@ def execute_run(
                         cancelled=counts["cancelled"],
                         verdict=final_verdict,
                         score=decision.score,
-                        partial=was_cancelled or breaker is not None,
+                        partial=was_cancelled or breaker is not None or limit_stop is not None,
                         reason=reason,
                     )
             final_payload = snapshot_progress(str(report["state"]))
