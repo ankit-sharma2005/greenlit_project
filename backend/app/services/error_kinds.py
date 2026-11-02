@@ -22,7 +22,11 @@ ERROR_KINDS: tuple[str, ...] = (TIMEOUT, CONNECTION, HTTP_ERROR, INVALID_RESPONS
 # because the API maps them to statuses and the UI shows their messages.
 _KIND_BY_CODE: dict[str, str] = {
     "timeout": TIMEOUT,
+    "connect_timeout": TIMEOUT,
     "connection_error": CONNECTION,
+    "connection_reset": CONNECTION,
+    "tls_error": CONNECTION,
+    "dns_error": CONNECTION,
     "provider_unavailable": CONNECTION,
     "http_error": HTTP_ERROR,
     "auth_error": HTTP_ERROR,

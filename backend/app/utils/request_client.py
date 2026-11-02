@@ -142,9 +142,13 @@ class RequestClient:
         max_redirects: int = 5,
         local_rewrite: bool | None = None,
         max_retries: int = 3,
+        connect_timeout: float = 10.0,
     ):
         self.allow_private_targets = allow_private_targets
         self.max_redirects = max_redirects
+        # Connecting and reading fail for different reasons, so they get their
+        # own clocks: a dead host must not look like a slow answer.
+        self.connect_timeout = max(0.001, float(connect_timeout))
         self.max_retries = max(0, max_retries)
         # What the last call did, so a caller can record a final-attempt latency
         # and the retries separately (a retried case is still a success).
@@ -211,6 +215,10 @@ class RequestClient:
         connect_url = parsed._replace(netloc=f"{LOCAL_GATEWAY_HOST}{port}").geturl()
         return connect_url, rewritten
 
+    def _timeout(self, seconds: float) -> httpx.Timeout:
+        """Per-attempt timeouts with a separate, shorter connect clock."""
+        return httpx.Timeout(seconds, connect=min(self.connect_timeout, seconds))
+
     def _redirect_target(self, response: httpx.Response, current_url: str) -> str | None:
         """Where this response wants the request to go, if anywhere."""
         if response.status_code not in REDIRECT_STATUSES:
@@ -233,7 +241,7 @@ class RequestClient:
         method: str,
         safe_url: str,
         headers: dict[str, str] | None,
-        timeout: float,
+        timeout: httpx.Timeout,
         **kwargs: Any,
     ) -> httpx.Response:
         """Send the request, following only same-host redirects.
@@ -279,7 +287,7 @@ class RequestClient:
                 attempt_timeout = _remaining_timeout(timeout, deadline)
                 started = time.monotonic()
                 response = self._request_following(
-                    client, method, safe_url, headers, attempt_timeout, **kwargs
+                    client, method, safe_url, headers, self._timeout(attempt_timeout), **kwargs
                 )
                 self.last_attempt_seconds = time.monotonic() - started
                 self.last_retry_count = attempt
@@ -326,7 +334,11 @@ class RequestClient:
                 hops = 0
                 while True:
                     with client.stream(
-                        method, url, headers=headers, timeout=attempt_timeout, **kwargs
+                        method,
+                        url,
+                        headers=headers,
+                        timeout=self._timeout(attempt_timeout),
+                        **kwargs,
                     ) as response:
                         target = self._redirect_target(response, url)
                         if target is not None:

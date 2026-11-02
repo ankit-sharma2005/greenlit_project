@@ -12,6 +12,7 @@ import gzip
 import json
 import threading
 from collections.abc import Iterator
+from contextlib import suppress
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -178,6 +179,11 @@ def start_quirk(mode: str, *, expire_after: int = 1) -> QuirkServer:
                 return
             if mode == "stream_stall":
                 self._stream_stall()
+                return
+            if mode == "reset":
+                # A server that dies mid-answer: no status line, just a closed socket.
+                with suppress(OSError):
+                    self.connection.close()
                 return
             self._respond(*shaped())
 

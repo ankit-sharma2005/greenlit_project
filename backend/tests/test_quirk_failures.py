@@ -209,3 +209,55 @@ def test_a_secret_in_a_challenge_page_is_redacted(quirk: Callable[..., QuirkServ
     with pytest.raises(ConnectorError) as caught:
         _send_with_headers(server, {"Authorization": "Bearer super-secret-token"})
     assert "super-secret-token" not in str(caught.value.details)
+
+
+def _send_url(url: str, *, timeout_seconds: int = 5) -> Trace:
+    return _connector(max_retries=0).render_and_send(
+        url=url,
+        body_template='{"question": {{input}}}',
+        input_text="hello",
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def test_a_self_signed_certificate_is_named_as_such() -> None:
+    from tests.support.tls_server import TlsQuirkServer
+
+    server = TlsQuirkServer(expired=False)
+    try:
+        with pytest.raises(ConnectorError) as caught:
+            _send_url(server.url)
+    finally:
+        server.close()
+    assert caught.value.code == "tls_error"
+    assert "certificate" in caught.value.message.lower()
+
+
+def test_an_expired_certificate_says_expired() -> None:
+    from tests.support.tls_server import TlsQuirkServer
+
+    server = TlsQuirkServer(expired=True)
+    try:
+        with pytest.raises(ConnectorError) as caught:
+            _send_url(server.url)
+    finally:
+        server.close()
+    assert caught.value.code == "tls_error"
+    assert "expired" in caught.value.message.lower()
+
+
+def test_a_dns_failure_is_not_a_timeout() -> None:
+    with pytest.raises(ConnectorError) as caught:
+        _send_url("http://greenlit-no-such-host.invalid/chat")
+    error = caught.value
+    assert error.code == "dns_error"
+    assert "greenlit-no-such-host.invalid" in error.message
+
+
+def test_a_connection_reset_is_reported(quirk: Callable[..., QuirkServer]) -> None:
+    server = quirk("reset")
+    with pytest.raises(ConnectorError) as caught:
+        _send(server)
+    error = caught.value
+    assert error.code == "connection_reset"
+    assert "closed" in error.message.lower()

@@ -7,6 +7,7 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -19,6 +20,7 @@ from app.utils.request_client import (
     RequestInterruptedError,
     TooManyRedirectsError,
 )
+from app.utils.tls_certificate import certificate_expired
 
 # One case may not hold a worker for longer than this, however politely the
 # target keeps saying "not now".
@@ -242,6 +244,43 @@ def _text_piece(value: Any) -> str | None:
     return None
 
 
+def _connection_failure(error: Exception, url: str, expired: bool | None = None) -> ConnectorError:
+    """Name the reason a connection never opened: TLS, DNS, or nothing there."""
+    target = target_of(url)
+    host = urlsplit(url).hostname or ""
+    text = f"{error} {error.__cause__!r}".lower()
+    details: dict[str, Any] = {"target": target}
+    if "certificate verify failed" in text or "certificate_verify_failed" in text:
+        if expired is True or (expired is None and "expired" in text):
+            message = (
+                "the app's TLS certificate has expired; renew it, or test a local app over http"
+            )
+        else:
+            message = (
+                "the app's TLS certificate is not trusted (self-signed or an incomplete "
+                "chain); use a trusted certificate, or test a local app over http"
+            )
+        details["message"] = message
+        return ConnectorError(message, code="tls_error", details=details)
+    if any(
+        marker in text
+        for marker in (
+            "getaddrinfo",
+            "name or service not known",
+            "nodename nor servname",
+            "name resolution",
+            "no address associated",
+        )
+    ):
+        message = f"could not resolve the host {host}; check the URL for a typo"
+        details["message"] = message
+        return ConnectorError(message, code="dns_error", details=details)
+    message = f"could not connect to the app at {target}; check that it is running"
+    details["message"] = message
+    details["reason"] = str(error)[:160]
+    return ConnectorError(message, code="connection_error", details=details)
+
+
 def _http_failure(status: int, snippet: str, target: str) -> ConnectorError:
     """A non-2xx answer as the same structured failure for json and streams."""
     if _is_challenge_page(status, snippet):
@@ -323,6 +362,7 @@ class HttpConnector:
         max_retries: int = 3,
         item_budget_seconds: float = DEFAULT_ITEM_BUDGET_SECONDS,
         interrupt: threading.Event | None = None,
+        connect_timeout: float = 10.0,
     ):
         self.max_concurrency = max(1, int(max_concurrency))
         self.min_delay_ms = max(0, int(min_delay_ms))
@@ -330,8 +370,11 @@ class HttpConnector:
         self.item_budget_seconds = max(0.001, float(item_budget_seconds))
         # Set by the worker when the run is cancelled: retry waits stop early.
         self.interrupt = interrupt
+        self.connect_timeout = max(0.001, float(connect_timeout))
         self.client = RequestClient(
-            allow_private_targets=allow_private, max_retries=self.max_retries
+            allow_private_targets=allow_private,
+            max_retries=self.max_retries,
+            connect_timeout=self.connect_timeout,
         )
         self._concurrency = threading.BoundedSemaphore(self.max_concurrency)
         self._pace_lock = threading.Lock()
@@ -580,13 +623,42 @@ class HttpConnector:
                 code="redirect_loop",
                 details={"target": target_of(url), "message": message},
             ) from e
-        except httpx.ConnectError as e:
-            # The app is not listening at all, which is not a timeout.
+        except httpx.ConnectTimeout as e:
+            # A dead host is not a slow answer: it gets its own connect clock.
+            message = (
+                f"could not connect within {self.connect_timeout:g} s; "
+                "the host may be down or firewalled"
+            )
             raise ConnectorError(
-                f"could not connect to the app: {str(e)[:200]}",
-                code="connection_error",
-                details={"target": target_of(url), "message": "could not connect to the app"},
+                message,
+                code="connect_timeout",
+                details={
+                    "target": target_of(url),
+                    "timeout_seconds": self.connect_timeout,
+                    "message": message,
+                },
             ) from e
+        except (httpx.ReadError, httpx.RemoteProtocolError, httpx.WriteError) as e:
+            message = (
+                "the connection was closed while the app was answering; "
+                "check that the app stays up for the whole answer"
+            )
+            raise ConnectorError(
+                message,
+                code="connection_reset",
+                details={
+                    "target": target_of(url),
+                    "reason": str(e)[:160],
+                    "message": message,
+                },
+            ) from e
+        except httpx.ConnectError as e:
+            # The app is not listening, the name does not resolve, or the
+            # certificate is not trusted: say which, rather than "connect failed".
+            expired: bool | None = None
+            if "certificate" in f"{e} {e.__cause__!r}".lower():
+                expired = certificate_expired(url, timeout=min(self.connect_timeout, 5.0))
+            raise _connection_failure(e, url, expired) from e
         except ConnectorError:
             raise
         except Exception as e:
