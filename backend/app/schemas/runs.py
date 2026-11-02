@@ -54,6 +54,9 @@ class RunCreateRequest(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
     # cURL-imported headers and cookies, already encrypted by the server.
     headers_secret: str | None = Field(default=None, max_length=20_000)
+    # Header names only: the target fingerprint is bound to which headers are
+    # sent, never to a value the server cannot read back.
+    header_names: list[str] | None = Field(default=None, max_length=60)
     answer_path: str | None = Field(default=None, max_length=300)
     context_path: str | None = Field(default=None, max_length=300)
     timeout_seconds: int = Field(default=60, ge=1, le=300)
@@ -94,6 +97,12 @@ class RunCreateRequest(BaseModel):
     # Only enforced when the target reports tokens; never counted as 0.
     max_total_tokens: int | None = Field(default=None, ge=1, le=100_000_000)
 
+    # STEP 2: a remote target needs an accepted first-contact check whose
+    # settings fingerprint matches this run's. Local targets skip it.
+    target_check_id: UUID | None = None
+    # A smoke run is a short rehearsal: labelled, never a verdict or a baseline.
+    is_smoke: bool = False
+
 
 class QuickTestRequest(BaseModel):
     """Everything a CI job needs: entry point, target and the test types."""
@@ -116,6 +125,7 @@ class QuickTestRequest(BaseModel):
     body_template: str | None = Field(default=None, max_length=20_000)
     headers: dict[str, str] = Field(default_factory=dict)
     headers_secret: str | None = Field(default=None, max_length=20_000)
+    header_names: list[str] | None = Field(default=None, max_length=60)
     answer_path: str | None = Field(default=None, max_length=300)
     context_path: str | None = Field(default=None, max_length=300)
 
@@ -136,6 +146,9 @@ class QuickTestRequest(BaseModel):
     max_cases: int | None = Field(default=None, ge=1, le=1000)
     max_duration_seconds: int = Field(default=1800, ge=30, le=14_400)
     max_total_tokens: int | None = Field(default=None, ge=1, le=100_000_000)
+    # STEP 2: a remote quick test needs the same accepted target check.
+    target_check_id: UUID | None = None
+    is_smoke: bool = False
 
 
 class RunPermissionRead(BaseModel):
@@ -317,6 +330,8 @@ class RunRead(BaseModel):
     operations: OperationsRead | None = None
     # The caps the run carried; null on runs that predate them.
     limits: RunLimitsRead | None = None
+    # A smoke run is labelled "Smoke run, not a verdict" and never a baseline.
+    is_smoke: bool = False
 
 
 class RunListResponse(BaseModel):

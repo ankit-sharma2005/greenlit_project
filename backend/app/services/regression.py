@@ -334,6 +334,12 @@ def set_baseline(
     """Make ``run`` the baseline for its dataset version, replacing any earlier one."""
     if run.state != "completed":
         raise RegressionError("Only a completed run can be a baseline.", status=409)
+    if (run.settings_snapshot or {}).get("is_smoke"):
+        raise RegressionError(
+            "A smoke run is a rehearsal, not a baseline. Run the full test and set that "
+            "as the baseline.",
+            status=409,
+        )
     if run.dataset_version_id is None:
         raise RegressionError(
             "This run has no dataset version, so it cannot be compared with later runs.",

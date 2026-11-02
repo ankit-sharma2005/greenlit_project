@@ -235,6 +235,9 @@ def _regression_read(
     only when the baseline has been changed since, so the card never shows a
     comparison against a run that is no longer the baseline.
     """
+    if snapshot.get("is_smoke"):
+        # A rehearsal is compared with nothing and can never be a baseline.
+        return None, False
     baseline = baseline_for_run(db, run)
     if baseline is None:
         return None, False
@@ -361,6 +364,7 @@ def _run_read(
         ),
         is_baseline=is_baseline,
         limits=_limits_read(snapshot),
+        is_smoke=bool(snapshot.get("is_smoke")),
         operations=(
             OperationsRead.model_validate(operations_payload)
             if operations_payload is not None

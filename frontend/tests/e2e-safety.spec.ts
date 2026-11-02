@@ -17,7 +17,7 @@ async function runAgainstApp(page: import("@playwright/test").Page, app: FakeApp
   await openNewTestPage(page);
   await detectTarget(page, app);
   await page.selectOption('[data-testid="run-dataset"]', { label: dataset.label });
-  await page.click('[data-testid="run-test"]');
+  await page.click('[data-testid="run-full"]');
   await expect(page.getByTestId("run-verdict")).toBeVisible({ timeout: 120_000 });
 }
 

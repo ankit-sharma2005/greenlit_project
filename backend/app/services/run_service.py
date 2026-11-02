@@ -29,10 +29,13 @@ from app.services.datasets import (
 from app.services.generation import ChatFn, GenerationError, generate_test_cases
 from app.services.judge_profiles import get_judge_profile, selected_judge_profile
 from app.services.run_repository import create_run
+from app.services.target_check import TargetCheckError, require_accepted_check
 
 Enqueue = Callable[[uuid.UUID], None]
 
 _DEFAULT_BODY_TEMPLATE = '{"question": {{input}}}'
+# How many cases a smoke run sends when the request does not say otherwise.
+_SMOKE_CASES = 5
 
 
 class RunServiceError(ValueError):
@@ -138,21 +141,25 @@ def _approved_version(
 def build_snapshot(
     payload: RunCreateRequest,
     *,
-    dataset_version_id: uuid.UUID,
+    dataset_version_id: uuid.UUID | None,
     entry_point: str,
 ) -> dict[str, Any]:
     """The settings a queued run executes with (never read live again)."""
     snapshot: dict[str, Any] = {
         "entry_point": entry_point,
         "test_types": list(payload.test_types),
-        "dataset_version_id": str(dataset_version_id),
+        "dataset_version_id": str(dataset_version_id) if dataset_version_id else None,
         "timeout_seconds": payload.timeout_seconds,
         # Run caps: the worker reads them from here, so a changed default never
         # rewrites what an already queued run was allowed to spend (quirk 14).
         "max_cases": payload.max_cases,
         "max_duration_seconds": payload.max_duration_seconds,
         "max_total_tokens": payload.max_total_tokens,
+        "is_smoke": bool(payload.is_smoke),
     }
+    if payload.is_smoke and payload.max_cases is None:
+        # A smoke run is a 5-case rehearsal; asking for more is still a smoke run.
+        snapshot["max_cases"] = _SMOKE_CASES
     if entry_point == "http_endpoint":
         remote = not payload.allow_private_targets
         if remote and not payload.permission_confirmed:
@@ -170,6 +177,8 @@ def build_snapshot(
                 # names are readable in the report.
                 "headers": {} if payload.headers_secret else dict(payload.headers),
                 "headers_encrypted": payload.headers_secret,
+                # Names only: the check's fingerprint is bound to them.
+                "header_names": list(payload.header_names or []),
                 "body_template": payload.body_template or _DEFAULT_BODY_TEMPLATE,
                 "answer_path": payload.answer_path,
                 "context_path": payload.context_path,
@@ -266,6 +275,18 @@ def create_run_from_request(
         dataset_version_id=payload.dataset_version_id,
     )
     snapshot = build_snapshot(payload, dataset_version_id=version.id, entry_point=entry)
+    if entry == "http_endpoint" and not payload.allow_private_targets:
+        # A first contact against somebody else's app is checked once and its
+        # extraction accepted; the check is bound to these exact settings.
+        try:
+            require_accepted_check(
+                owner_id=user.id,
+                check_id=str(payload.target_check_id) if payload.target_check_id else None,
+                snapshot=snapshot,
+            )
+        except TargetCheckError as exc:
+            raise RunServiceError(exc.message, status=exc.status, code=exc.code) from exc
+        snapshot["target_check_id"] = str(payload.target_check_id)
     # Attack probes against somebody else's app stay off until that is its own
     # explicit yes; quality and operations testing are unaffected.
     if (
@@ -443,6 +464,7 @@ def create_quick_test(
         ),
         headers=payload.headers,
         headers_secret=payload.headers_secret,
+        header_names=payload.header_names,
         answer_path=payload.answer_path,
         context_path=payload.context_path,
         timeout_seconds=payload.timeout_seconds,
@@ -459,6 +481,8 @@ def create_quick_test(
         max_cases=payload.max_cases,
         max_duration_seconds=payload.max_duration_seconds,
         max_total_tokens=payload.max_total_tokens,
+        target_check_id=payload.target_check_id,
+        is_smoke=payload.is_smoke,
     )
     run = create_run_from_request(session, user, request, enqueue)
     return run, version, generated

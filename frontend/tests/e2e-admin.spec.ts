@@ -263,7 +263,7 @@ test("new test page runs a test to a GO verdict", async ({ page }) => {
     await page.selectOption('[data-testid="run-dataset"]', {
       label: `${datasetName} · v1 (2 cases)`,
     });
-    await page.click('[data-testid="run-test"]');
+    await page.click('[data-testid="run-full"]');
 
     // Live progress comes from the worker, polled by the page.
     await expect(page.getByTestId("run-progress")).toBeVisible({ timeout: 15_000 });
@@ -300,10 +300,10 @@ test("results page lists runs, opens a verdict and compares two runs", async ({ 
     await page.selectOption('[data-testid="run-dataset"]', {
       label: `${datasetName} · v1 (2 cases)`,
     });
-    await page.click('[data-testid="run-test"]');
+    await page.click('[data-testid="run-full"]');
     await expect(page.getByTestId("run-verdict-word")).toHaveText("Go", { timeout: 60_000 });
 
-    await page.click('[data-testid="run-test"]');
+    await page.click('[data-testid="run-full"]');
     await expect(page.getByTestId("run-verdict-word")).toHaveText("Go", { timeout: 60_000 });
 
     // Both runs are in the history with their stored verdict.
@@ -347,7 +347,7 @@ test("cancel stops a running test and keeps partial results", async ({ page }) =
     await page.selectOption('[data-testid="run-dataset"]', {
       label: `${datasetName} · v1 (6 cases)`,
     });
-    await page.click('[data-testid="run-test"]');
+    await page.click('[data-testid="run-full"]');
 
     await expect(page.getByTestId("run-progress")).toBeVisible({ timeout: 15_000 });
     await page.click('[data-testid="cancel-run"]');

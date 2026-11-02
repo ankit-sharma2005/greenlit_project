@@ -129,6 +129,8 @@ export interface Run {
   operations?: RunOperations | null;
   /** The caps this run carried; null on runs that predate them. */
   limits?: RunLimits | null;
+  /** A rehearsal: no GO/REVIEW/NO-GO badge and never a baseline. */
+  is_smoke?: boolean;
 }
 
 /**
@@ -169,6 +171,8 @@ export interface RunCreateRequest {
   headers?: Record<string, string>;
   /** cURL-imported headers and cookies, encrypted by the server. */
   headers_secret?: string;
+  /** Names only, so a target check is bound to the same headers. */
+  header_names?: string[];
   answer_path?: string;
   context_path?: string;
   timeout_seconds?: number;
@@ -190,6 +194,10 @@ export interface RunCreateRequest {
   max_cases?: number;
   max_duration_seconds?: number;
   max_total_tokens?: number;
+  /** The accepted check that unlocks a remote run. */
+  target_check_id?: string;
+  /** A five-case rehearsal: labelled, never a verdict or a baseline. */
+  is_smoke?: boolean;
 }
 
 export interface QuickTestRequest {
@@ -206,6 +214,8 @@ export interface QuickTestRequest {
   headers?: Record<string, string>;
   /** cURL-imported headers and cookies, encrypted by the server. */
   headers_secret?: string;
+  /** Names only, so a target check is bound to the same headers. */
+  header_names?: string[];
   answer_path?: string;
   context_path?: string;
   timeout_seconds?: number;
@@ -222,6 +232,8 @@ export interface QuickTestRequest {
   max_cases?: number;
   max_duration_seconds?: number;
   max_total_tokens?: number;
+  target_check_id?: string;
+  is_smoke?: boolean;
 }
 
 export interface QuickTestResponse {

@@ -27,8 +27,17 @@ test("a finished run exports a self-contained HTML report with its verdict", asy
 
     await openNewTestPage(page);
     await detectTarget(page, app);
+
+    // A target on this computer is not gated on the first-contact check, so the
+    // full run is ready at once. The check panel and the smoke button are the
+    // two things this page gained; a local target must never lose its run.
+    await expect(page.getByTestId("target-check-panel")).toHaveCount(0);
+    await expect(page.getByTestId("run-full")).toBeEnabled();
+    await expect(page.getByTestId("run-smoke")).toBeVisible();
+    await expect(page.getByTestId("run-smoke")).toBeEnabled();
+
     await page.selectOption('[data-testid="run-dataset"]', { label: dataset.label });
-    await page.click('[data-testid="run-test"]');
+    await page.click('[data-testid="run-full"]');
 
     await expect(page.getByTestId("run-verdict")).toBeVisible({ timeout: 120_000 });
     await expect(page.getByTestId("run-verdict-word")).toHaveText("Go");
@@ -93,7 +102,7 @@ test("a streamed answer is joined into a verdict and permission is required", as
     await expect(page.getByTestId("detect-result")).toBeVisible({ timeout: 60_000 });
 
     await page.selectOption('[data-testid="run-dataset"]', { label: dataset.label });
-    await page.click('[data-testid="run-test"]');
+    await page.click('[data-testid="run-full"]');
 
     // Only a joined stream can match the golden answers, so a GO proves it.
     await expect(page.getByTestId("run-verdict")).toBeVisible({ timeout: 120_000 });

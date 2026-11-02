@@ -1253,6 +1253,8 @@ def execute_run(
                         f"Stopped by limit ({limit_stop['kind']}): {limit_stop['detail']}. "
                         "No case had finished, so there is nothing to score."
                     )
+                    if snapshot.get("is_smoke"):
+                        reason = f"Smoke run, not a verdict. {reason}"
                 elif was_cancelled:
                     reason = (
                         "The run was cancelled before any case finished; there is nothing to score."
@@ -1388,7 +1390,7 @@ def execute_run(
                         reason = f"{reason} Suggested fixes: {'; '.join(decision.suggested_fixes)}."
                     if was_cancelled:
                         reason = f"This run was cancelled, so the results are partial. {reason}"
-                    final_verdict = decision.verdict
+                    final_verdict: str | None = decision.verdict
                     if breaker is not None:
                         # The target kept failing, so the score only covers the few
                         # cases that came back. REVIEW with a reason that names the
@@ -1407,6 +1409,12 @@ def execute_run(
                         final_state = RunState.STOPPED_BY_LIMIT
                     else:
                         final_state = RunState.CANCELLED if was_cancelled else RunState.COMPLETED
+                    is_smoke = bool(snapshot.get("is_smoke"))
+                    if is_smoke:
+                        # A rehearsal of the first few cases is not a decision
+                        # about the app: keep the evidence, drop the verdict word.
+                        final_verdict = None
+                        reason = f"Smoke run, not a verdict. {reason}"
                     update_run(
                         session,
                         run,
@@ -1414,13 +1422,18 @@ def execute_run(
                         verdict=final_verdict,
                         score=decision.score,
                         verdict_reason=reason,
-                        is_partial=was_cancelled or breaker is not None or limit_stop is not None,
+                        is_partial=was_cancelled
+                        or breaker is not None
+                        or limit_stop is not None
+                        or is_smoke,
                         operations=_operations_block(session, snapshot, finished),
                         completed_at=utcnow(),
                     )
                     # Regression is recorded as the run finishes, so the card and
                     # the report read the comparison the worker stored (spec 8.5).
-                    store_regression(session, run)
+                    # A smoke run is never compared and never becomes a baseline.
+                    if not is_smoke:
+                        store_regression(session, run)
                     session.commit()
                     report = _report(
                         rid,

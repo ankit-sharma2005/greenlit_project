@@ -10,11 +10,13 @@ import {
   UploadOutputsPanel,
 } from "../components/UploadOutputsPanel";
 import { Spinner } from "../components/Spinner";
+import { TargetCheckPanel } from "../components/TargetCheckPanel";
 import { parseCurl as parseCurlLocally } from "../lib/curl";
 import { parseCurl, testConnection } from "../lib/connectors";
 import { ApiError } from "../lib/api";
 import { listDatasets } from "../lib/datasets";
 import { listProviders } from "../lib/providers";
+import type { TargetCheckRequest } from "../lib/targets";
 import {
   cancelRun,
   getRun,
@@ -112,6 +114,9 @@ export function NewTestPage() {
   const [datasetVersionId, setDatasetVersionId] = useState("");
   const [activeRun, setActiveRun] = useState<Run | null>(null);
   const [startingRun, setStartingRun] = useState(false);
+  const [startingSmoke, setStartingSmoke] = useState(false);
+  // The accepted check that unlocks a full run against a remote target.
+  const [targetCheckId, setTargetCheckId] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [providerOptions, setProviderOptions] = useState<ProviderOption[]>([]);
@@ -150,6 +155,52 @@ export function NewTestPage() {
     }),
     [maxCases, maxDurationSeconds, maxTotalTokens],
   );
+
+  // The exact connector settings the check sends: the same ones a run uses.
+  const checkRequest = useMemo<TargetCheckRequest | null>(() => {
+    if (connector !== "http_endpoint" || !detectResult) return null;
+    return {
+      target: url.trim(),
+      dataset_version_id: datasetVersionId || undefined,
+      method: "POST",
+      body_template: detectResult.detected_request_shape || '{"question": {{input}}}',
+      headers_secret: curlSecret || undefined,
+      header_names: curlHeaderNames.length > 0 ? curlHeaderNames : undefined,
+      answer_path: answerPath || detectResult.detected_answer_path || undefined,
+      context_path: detectResult.detected_context_path || undefined,
+      timeout_seconds: 60,
+      allow_private_targets: runsOnMyComputer,
+      permission_confirmed: !runsOnMyComputer && permissionConfirmed,
+      permission_reference: !runsOnMyComputer ? permissionReference.trim() || undefined : undefined,
+      safety_attacks_confirmed: !runsOnMyComputer && safetyAttacksConfirmed,
+      max_concurrency: maxConcurrency,
+      min_delay_ms: minDelayMs,
+      max_retries: maxRetries,
+      response_format: responseFormat,
+      stream_content_path: streamContentPath.trim() || undefined,
+    };
+  }, [
+    answerPath,
+    connector,
+    curlHeaderNames,
+    curlSecret,
+    datasetVersionId,
+    detectResult,
+    maxConcurrency,
+    maxRetries,
+    minDelayMs,
+    permissionConfirmed,
+    permissionReference,
+    responseFormat,
+    runsOnMyComputer,
+    safetyAttacksConfirmed,
+    streamContentPath,
+    url,
+  ]);
+
+  const handleCheckAccepted = useCallback((checkId: string | null) => {
+    setTargetCheckId(checkId);
+  }, []);
 
   // Approved dataset versions are the only thing a run may execute.
   useEffect(() => {
@@ -499,93 +550,118 @@ export function NewTestPage() {
     );
   };
 
-  const handleRunTest = useCallback(async () => {
-    if (!detectResult) return;
-    setRunError(null);
-    setActiveRun(null);
-    setStartingRun(true);
-    const target = url.trim();
-    const common: RunCreateRequest = {
-      entry_point: "http_endpoint",
-      target,
-      test_types: chosenTestTypes(testTypes),
-      method: "POST",
-      body_template: detectResult.detected_request_shape || '{"question": {{input}}}',
-      headers_secret: curlSecret || undefined,
-      answer_path: answerPath || detectResult.detected_answer_path || undefined,
-      context_path: detectResult.detected_context_path || undefined,
-      timeout_seconds: 60,
-      allow_private_targets: runsOnMyComputer,
-      permission_confirmed: !runsOnMyComputer && permissionConfirmed,
-      permission_reference: !runsOnMyComputer ? permissionReference.trim() || undefined : undefined,
-      safety_attacks_confirmed: !runsOnMyComputer && safetyAttacksConfirmed,
-      max_concurrency: maxConcurrency,
-      min_delay_ms: minDelayMs,
-      max_retries: maxRetries,
-      response_format: responseFormat,
-      stream_content_path: streamContentPath.trim() || undefined,
-      ...runCaps,
-    };
-    try {
-      if (datasetVersionId) {
-        setActiveRun(await startRun({ ...common, dataset_version_id: datasetVersionId }));
-        setNotice("Run queued. A worker executes the cases, this page polls its progress.");
-      } else {
-        // No dataset chosen: GreenLit writes the cases with the model first.
-        const result = await quickTest({
-          entry_point: "http_endpoint",
-          target,
-          tests: chosenTestTypes(testTypes),
-          method: "POST",
-          body_template: detectResult.detected_request_shape || '{"question": {{input}}}',
-          headers_secret: curlSecret || undefined,
-          answer_path: answerPath || detectResult.detected_answer_path || undefined,
-          context_path: detectResult.detected_context_path || undefined,
-          timeout_seconds: 60,
-          allow_private_targets: runsOnMyComputer,
-          permission_confirmed: !runsOnMyComputer && permissionConfirmed,
-          permission_reference: !runsOnMyComputer
-            ? permissionReference.trim() || undefined
-            : undefined,
-          safety_attacks_confirmed: !runsOnMyComputer && safetyAttacksConfirmed,
-          max_concurrency: maxConcurrency,
-          min_delay_ms: minDelayMs,
-          max_retries: maxRetries,
-          response_format: responseFormat,
-          stream_content_path: streamContentPath.trim() || undefined,
-          generate: GENERATED_CASES,
-          ...runCaps,
-        });
-        setActiveRun(result.run);
-        setNotice(
-          `GreenLit generated ${GENERATED_CASES} test cases, approved them and queued the run.`,
-        );
+  const handleRunTest = useCallback(
+    async (options: { smoke?: boolean } = {}) => {
+      if (!detectResult) return;
+      const smoke = options.smoke === true;
+      setRunError(null);
+      // A remote target may not be run until its extraction was accepted.
+      if (connector === "http_endpoint" && !runsOnMyComputer && !targetCheckId) {
+        setRunError("Check the target and confirm the answer looks right before starting a run.");
+        return;
       }
-    } catch (caught) {
-      setRunError(
-        caught instanceof ApiError ? caught.message : "Could not start the test. Try again.",
-      );
-    } finally {
-      setStartingRun(false);
-    }
-  }, [
-    answerPath,
-    curlSecret,
-    datasetVersionId,
-    detectResult,
-    maxConcurrency,
-    maxRetries,
-    minDelayMs,
-    permissionConfirmed,
-    permissionReference,
-    responseFormat,
-    runCaps,
-    runsOnMyComputer,
-    safetyAttacksConfirmed,
-    streamContentPath,
-    testTypes,
-    url,
-  ]);
+      setActiveRun(null);
+      if (smoke) setStartingSmoke(true);
+      else setStartingRun(true);
+      const target = url.trim();
+      // A smoke run is a five-case rehearsal whatever the limits say.
+      const caps = smoke ? { ...runCaps, max_cases: 5 } : runCaps;
+      const checkId = !runsOnMyComputer ? (targetCheckId ?? undefined) : undefined;
+      const common: RunCreateRequest = {
+        entry_point: "http_endpoint",
+        target,
+        test_types: chosenTestTypes(testTypes),
+        method: "POST",
+        body_template: detectResult.detected_request_shape || '{"question": {{input}}}',
+        headers_secret: curlSecret || undefined,
+        header_names: curlHeaderNames.length > 0 ? curlHeaderNames : undefined,
+        answer_path: answerPath || detectResult.detected_answer_path || undefined,
+        context_path: detectResult.detected_context_path || undefined,
+        timeout_seconds: 60,
+        allow_private_targets: runsOnMyComputer,
+        permission_confirmed: !runsOnMyComputer && permissionConfirmed,
+        permission_reference: !runsOnMyComputer
+          ? permissionReference.trim() || undefined
+          : undefined,
+        safety_attacks_confirmed: !runsOnMyComputer && safetyAttacksConfirmed,
+        max_concurrency: maxConcurrency,
+        min_delay_ms: minDelayMs,
+        max_retries: maxRetries,
+        response_format: responseFormat,
+        stream_content_path: streamContentPath.trim() || undefined,
+        is_smoke: smoke,
+        target_check_id: checkId,
+        ...caps,
+      };
+      try {
+        if (datasetVersionId) {
+          setActiveRun(await startRun({ ...common, dataset_version_id: datasetVersionId }));
+          setNotice("Run queued. A worker executes the cases, this page polls its progress.");
+        } else {
+          // No dataset chosen: GreenLit writes the cases with the model first.
+          const result = await quickTest({
+            entry_point: "http_endpoint",
+            target,
+            tests: chosenTestTypes(testTypes),
+            method: "POST",
+            body_template: detectResult.detected_request_shape || '{"question": {{input}}}',
+            headers_secret: curlSecret || undefined,
+            header_names: curlHeaderNames.length > 0 ? curlHeaderNames : undefined,
+            answer_path: answerPath || detectResult.detected_answer_path || undefined,
+            context_path: detectResult.detected_context_path || undefined,
+            timeout_seconds: 60,
+            allow_private_targets: runsOnMyComputer,
+            permission_confirmed: !runsOnMyComputer && permissionConfirmed,
+            permission_reference: !runsOnMyComputer
+              ? permissionReference.trim() || undefined
+              : undefined,
+            safety_attacks_confirmed: !runsOnMyComputer && safetyAttacksConfirmed,
+            max_concurrency: maxConcurrency,
+            min_delay_ms: minDelayMs,
+            max_retries: maxRetries,
+            response_format: responseFormat,
+            stream_content_path: streamContentPath.trim() || undefined,
+            generate: GENERATED_CASES,
+            is_smoke: smoke,
+            target_check_id: checkId,
+            ...caps,
+          });
+          setActiveRun(result.run);
+          setNotice(
+            `GreenLit generated ${GENERATED_CASES} test cases, approved them and queued the run.`,
+          );
+        }
+      } catch (caught) {
+        setRunError(
+          caught instanceof ApiError ? caught.message : "Could not start the test. Try again.",
+        );
+      } finally {
+        setStartingRun(false);
+        setStartingSmoke(false);
+      }
+    },
+    [
+      answerPath,
+      connector,
+      curlHeaderNames,
+      curlSecret,
+      datasetVersionId,
+      detectResult,
+      maxConcurrency,
+      maxRetries,
+      minDelayMs,
+      permissionConfirmed,
+      permissionReference,
+      responseFormat,
+      runCaps,
+      runsOnMyComputer,
+      safetyAttacksConfirmed,
+      streamContentPath,
+      targetCheckId,
+      testTypes,
+      url,
+    ],
+  );
 
   const handleCancelRun = async () => {
     if (!activeRun) return;
@@ -1120,6 +1196,14 @@ export function NewTestPage() {
                 />
               </div>
 
+              {connector === "http_endpoint" && !runsOnMyComputer && checkRequest ? (
+                <TargetCheckPanel
+                  request={checkRequest}
+                  onAccepted={handleCheckAccepted}
+                  disabled={startingRun || startingSmoke}
+                />
+              ) : null}
+
               <div style={{ marginTop: "var(--space-4)" }}>
                 <label className="form__label" htmlFor="run-dataset">
                   Test cases:
@@ -1153,12 +1237,31 @@ export function NewTestPage() {
                   variant="primary"
                   loading={startingRun}
                   onClick={() => void handleRunTest()}
-                  disabled={startingRun}
-                  data-testid="run-test"
+                  disabled={startingRun || startingSmoke || (!runsOnMyComputer && !targetCheckId)}
+                  data-testid="run-full"
                 >
-                  {startingRun ? <Spinner size="sm" label="Starting your test" /> : "Run test"}
+                  {startingRun ? <Spinner size="sm" label="Starting your test" /> : "Run full test"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  loading={startingSmoke}
+                  onClick={() => void handleRunTest({ smoke: true })}
+                  disabled={startingRun || startingSmoke || (!runsOnMyComputer && !targetCheckId)}
+                  data-testid="run-smoke"
+                >
+                  {startingSmoke ? (
+                    <Spinner size="sm" label="Starting the smoke run" />
+                  ) : (
+                    "Run 5-case smoke test"
+                  )}
                 </Button>
               </div>
+              {!runsOnMyComputer && !targetCheckId ? (
+                <p className="form__hint" data-testid="run-full-blocked">
+                  Accept the extraction from the check above before starting a run. A smoke run is
+                  five cases and is not a verdict.
+                </p>
+              ) : null}
             </div>
           </div>
         )}

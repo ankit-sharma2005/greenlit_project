@@ -86,6 +86,9 @@ def test_create_run_stores_settings_snapshot(db: Session, owner: User) -> None:
 
 
 def test_run_states_match_the_spec() -> None:
+    # ``stopped_by_limit`` is the state a run cap ends in (quirk 14): it keeps a
+    # verdict for the cases that were measured, but it is not a whole-dataset
+    # result, so it is its own state rather than "completed".
     assert {state.value for state in RunState} == {
         "queued",
         "running",
@@ -93,6 +96,7 @@ def test_run_states_match_the_spec() -> None:
         "cancelled",
         "failed",
         "completed",
+        "stopped_by_limit",
     }
     assert RunState.QUEUED.value == "queued"
     assert {state.value for state in RunItemState} == {

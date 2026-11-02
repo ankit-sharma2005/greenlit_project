@@ -73,6 +73,13 @@ export function RunProgressPanel({ run, onCancel, cancelling = false }: RunProgr
             : ""}
         </p>
 
+        {run.is_smoke ? (
+          <p className="card__hint" data-testid="run-smoke-label">
+            Smoke run, not a verdict: at most five cases, so you can see the plumbing. It is never a
+            baseline.
+          </p>
+        ) : null}
+
         {run.limits ? (
           <p className="card__hint" data-testid="run-limits">
             Limits: {run.limits.max_cases ? `at most ${run.limits.max_cases} cases` : "no case cap"}

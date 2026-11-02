@@ -27,6 +27,7 @@ from app.models import (
     User,
     utcnow,
 )
+from app.schemas.runs import RunCreateRequest
 from app.services.generation import get_chat_fn
 from app.services.run_progress import RunProgress
 from app.services.run_repository import (
@@ -36,7 +37,8 @@ from app.services.run_repository import (
     update_run,
     update_run_item,
 )
-from app.services.run_service import get_enqueue
+from app.services.run_service import build_snapshot, get_enqueue
+from app.services.target_check import accept_check, fingerprint, record_check
 
 PASSWORD = "correct horse battery staple"
 
@@ -108,6 +110,27 @@ def _user_id(session_factory: sessionmaker[Session], email: str = "runs@example.
         user = session.scalar(select(User).where(User.email == email))
         assert user is not None
         return user.id
+
+
+def _accepted_check(session_factory: sessionmaker[Session], body: dict[str, object]) -> str:
+    """An accepted check bound to exactly these target settings.
+
+    The check's own request is covered in tests/test_target_check.py; here the
+    record is stored directly so no test contacts a third-party host.
+    """
+    owner = _user_id(session_factory)
+    snapshot = build_snapshot(
+        RunCreateRequest.model_validate(body),
+        dataset_version_id=uuid.UUID(str(body["dataset_version_id"])),
+        entry_point="http_endpoint",
+    )
+    check = record_check(
+        owner_id=owner,
+        config_hash=fingerprint(snapshot),
+        result={"answer": "Hello", "error": None, "request": {}},
+    )
+    accept_check(check.id, owner)
+    return check.id
 
 
 def _body(dataset: dict[str, object]) -> dict[str, object]:
@@ -607,6 +630,7 @@ def test_permission_is_recorded_and_attacks_stay_off(
     body["target"] = "https://chat.example.com/ask"
     body["permission_confirmed"] = True
     body["permission_reference"] = "Ops ticket 4711"
+    body["target_check_id"] = _accepted_check(session_factory, body)
 
     response = client.post("/api/v1/runs", json=body)
     assert response.status_code == 202, response.text
@@ -633,7 +657,7 @@ def test_permission_is_recorded_and_attacks_stay_off(
 
 
 def test_safety_only_without_the_attack_confirmation_is_refused(
-    client: TestClient, runtime: SimpleNamespace
+    client: TestClient, session_factory: sessionmaker[Session], runtime: SimpleNamespace
 ) -> None:
     _register(client)
     dataset = _upload_and_approve(client)
@@ -642,6 +666,7 @@ def test_safety_only_without_the_attack_confirmation_is_refused(
     body["target"] = "https://chat.example.com/ask"
     body["permission_confirmed"] = True
     body["test_types"] = ["safety"]
+    body["target_check_id"] = _accepted_check(session_factory, body)
 
     response = client.post("/api/v1/runs", json=body)
     assert response.status_code == 422, response.text
@@ -663,6 +688,7 @@ def test_the_second_confirmation_turns_attacks_on(
     body["permission_confirmed"] = True
     body["safety_attacks_confirmed"] = True
     body["test_types"] = ["safety", "quality"]
+    body["target_check_id"] = _accepted_check(session_factory, body)
 
     response = client.post("/api/v1/runs", json=body)
     assert response.status_code == 202, response.text
@@ -786,3 +812,16 @@ def test_a_quick_test_carries_the_same_caps(client: TestClient, runtime: SimpleN
     limits = response.json()["run"]["limits"]
     assert limits["max_cases"] == 2
     assert limits["max_total_tokens"] == 900
+
+
+def test_a_smoke_run_is_flagged_and_capped(client: TestClient, runtime: SimpleNamespace) -> None:
+    _register(client)
+    dataset = _upload_and_approve(client)
+    body = _body(dataset)
+    body["is_smoke"] = True
+
+    response = client.post("/api/v1/runs", json=body)
+    assert response.status_code == 202, response.text
+    payload = response.json()
+    assert payload["is_smoke"] is True
+    assert payload["limits"]["max_cases"] == 5

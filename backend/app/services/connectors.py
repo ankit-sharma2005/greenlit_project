@@ -175,11 +175,15 @@ class Trace:
     # A stream that stopped before a final event: the text is real, but it is
     # not the whole answer and must not be scored as one.
     incomplete: bool = False
+    # The HTTP status of the answer that succeeded; the first-contact check
+    # shows it, and a run's items do not need it.
+    status_code: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "output": self.output,
             "incomplete": self.incomplete,
+            "status_code": self.status_code,
             "retrieved_context": self.retrieved_context,
             "tool_calls": self.tool_calls,
             "latency_ms": self.latency_ms,
@@ -564,6 +568,7 @@ class HttpConnector:
                 raw=data,
                 retry_count=retry_count,
                 waited_ms=waited_ms,
+                status_code=status,
             )
         except RequestInterruptedError as e:
             raise ConnectorError(
@@ -755,6 +760,7 @@ class HttpConnector:
             retry_count=self.client.last_retry_count,
             waited_ms=waited_ms,
             incomplete=not complete,
+            status_code=status,
         )
 
     def _collect_stream(

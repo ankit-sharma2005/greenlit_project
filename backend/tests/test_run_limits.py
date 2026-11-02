@@ -19,7 +19,7 @@ from app.models import Run, RunItemState, User
 from app.services.connectors import Trace
 from app.services.run_executor import execute_run
 from app.services.run_progress import MemoryProgress
-from app.services.run_repository import list_run_items
+from app.services.run_repository import get_metric_results, list_run_items
 from tests.test_run_executor import ROWS, FakeSender, echo_answers, seed_run
 
 
@@ -189,3 +189,79 @@ def test_a_missing_or_invalid_cap_is_ignored(
 
     assert report["status"] == "completed", report
     assert report["items_completed"] == len(ROWS)
+
+
+# ---- smoke runs (STEP 2) --------------------------------------------------
+
+
+def test_a_smoke_run_is_a_rehearsal_not_a_verdict(
+    session_factory: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    run_id = seed_run(session_factory, owner, settings_extra={"is_smoke": True})
+    report = run_with_limits(run_id, session_factory, FakeSender(answers=echo_answers()))
+
+    assert report["status"] == "completed", report
+    assert report["verdict"] is None, "a smoke run must not carry a GO/REVIEW/NO-GO"
+    run = load_run(session_factory, run_id)
+    assert run.verdict is None
+    assert run.is_partial is True
+    assert run.verdict_reason is not None
+    assert run.verdict_reason.startswith("Smoke run, not a verdict.")
+    # The evidence is still there; only the verdict word is withheld.
+    assert run.score is not None
+    with session_factory() as session:
+        assert get_metric_results(session, run_id)
+
+
+def test_a_smoke_run_is_never_a_baseline(
+    session_factory: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    from app.services.regression import RegressionError, set_baseline
+
+    run_id = seed_run(session_factory, owner, settings_extra={"is_smoke": True})
+    run_with_limits(run_id, session_factory, FakeSender(answers=echo_answers()))
+
+    with session_factory() as session:
+        run = session.get(Run, run_id)
+        assert run is not None
+        # The worker stored no comparison for it either.
+        assert "regression" not in (run.settings_snapshot or {})
+        with pytest.raises(RegressionError) as caught:
+            set_baseline(session, run)
+        assert "smoke" in caught.value.message.lower()
+
+
+def test_a_smoke_request_defaults_to_five_cases() -> None:
+    from app.schemas.runs import RunCreateRequest
+    from app.services.run_service import build_snapshot
+
+    snapshot = build_snapshot(
+        RunCreateRequest(
+            entry_point="http_endpoint",
+            target="http://127.0.0.1:9099/ask",
+            allow_private_targets=True,
+            is_smoke=True,
+        ),
+        dataset_version_id=None,
+        entry_point="http_endpoint",
+    )
+    assert snapshot["max_cases"] == 5
+    assert snapshot["is_smoke"] is True
+
+
+def test_an_explicit_case_cap_wins_over_the_smoke_default() -> None:
+    from app.schemas.runs import RunCreateRequest
+    from app.services.run_service import build_snapshot
+
+    snapshot = build_snapshot(
+        RunCreateRequest(
+            entry_point="http_endpoint",
+            target="http://127.0.0.1:9099/ask",
+            allow_private_targets=True,
+            is_smoke=True,
+            max_cases=10,
+        ),
+        dataset_version_id=None,
+        entry_point="http_endpoint",
+    )
+    assert snapshot["max_cases"] == 10
