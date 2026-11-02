@@ -521,3 +521,27 @@ load. Safety and operations remain selectable on normal runs and have their own 
 `/quick-test`, polls `/runs/{id}` to a terminal verdict and maps GO/NO_GO/REVIEW and request
 errors to the documented exit codes. Unit tests use a local fake HTTP server; the disposable
 e2e runner invokes the CLI against its healthy demo app after Playwright.
+
+## M11 — MCP server
+
+### D11.1 The MCP server reuses the CI runner's authentication, not a new token type
+There is no non-browser token in GreenLit: sessions are httpOnly cookies. Rather than
+invent a token, the MCP server signs in with `GREENLIT_EMAIL`/`GREENLIT_PASSWORD` exactly
+like `scripts/greenlit_ci.py`, keeps the cookie in memory and re-signs in once after a 401.
+No backend change was needed, the API's own ownership and permission checks still apply,
+and the docs tell the operator to use a dedicated low-privilege account rather than the
+admin one. The password and email are redacted from every error and tool response.
+
+### D11.2 `greenlit_list_projects` reports the one implicit project
+The API has no projects resource; the UI has always shown a single disabled "Default
+project" switcher. The tool therefore returns exactly one entry derived from
+`GET /api/v1/auth/me` plus the real dataset and run totals, marked `implicit`, instead of
+inventing a project list or adding a projects endpoint.
+
+### D11.3 The start tool is local-only and off by default
+GreenLit keeps the permission record on the run (checkbox plus reference), and the MCP
+server must never set or change it, so there is no record it could check for a remote
+target. `greenlit_start_run` is therefore registered only when
+`GREENLIT_MCP_ALLOW_START=1`, accepts only targets on the user's own machine, sends
+`allow_private_targets: true` for them, and caps starts at one per 10 seconds. Remote
+starts remain a UI action, which keeps the permission decision with a human.

@@ -112,6 +112,17 @@ properties with a dark default and a light theme.
 - `lib/` — typed API clients, one module per area, all going through `lib/api.ts` so the
   session cookie and the error envelope are handled in one place.
 
+**MCP server (`mcp_server/`)** — a separate stdio process for MCP clients (Claude,
+Freebuff, Copilot). It is a thin client over the same REST API: `client.py` signs in with
+`GREENLIT_EMAIL`/`GREENLIT_PASSWORD` like `scripts/greenlit_ci.py`, keeps the httpOnly
+session cookie in memory and re-signs in once after a 401; `server.py` exposes five
+read-only tools (`greenlit_list_projects`, `greenlit_get_run_status`,
+`greenlit_get_verdict`, `greenlit_get_report`, `greenlit_get_criteria`) and the opt-in
+`greenlit_start_run` (only when `GREENLIT_MCP_ALLOW_START=1`, local targets only, one
+start per 10 s). It imports no app module, reads no database and changes no decision
+rule. Every response is size-capped with a `truncated` flag, and credentials are
+redacted from every error. Setup and the security rules are in [docs/MCP.md](docs/MCP.md).
+
 **Data flow of one run:** `POST /api/v1/quick-test` (or `/runs`) snapshots settings and
 queues → Celery executes case by case, writing items and metric rows → the decision rules
 produce the verdict and reason → the worker compares the run with its dataset version's
@@ -161,6 +172,12 @@ bash scripts/run-e2e.sh
   demo helpdesks on 9501/9502. It stops only that invocation's containers, preserves its
   volume, and never touches the stack you use in the browser. After Playwright it runs the
   CI runner against the healthy demo app.
+- MCP server: `python -m pytest mcp_server/tests -q` (16 tests, no network: the SDK's
+  in-memory client drives a local fake GreenLit server), `mypy --strict` on
+  `mcp_server/client.py`, `server.py`, `__main__.py` and `__init__.py`, and
+  `ruff check --config backend/pyproject.toml mcp_server` plus `ruff format --check` on
+  the same path. The server needs only `mcp>=1,<2` (`mcp_server/requirements.txt`); it is
+  not a dependency of the backend image or of `backend/`'s test suite.
 - `scripts/greenlit_ci.py` uses only the Python standard library: it logs in with
   `GREENLIT_EMAIL`/`GREENLIT_PASSWORD`, creates a quick test, polls to completion, prints the
   verdict, weighted score and failed instrumented metrics, and returns documented CI exit
@@ -207,6 +224,25 @@ bash scripts/run-e2e.sh
   badge there is static; provider health is real on Settings → Providers.
 - **No production deploy path.** Only the dev servers (Vite + uvicorn) and the Compose
   stack exist; there is no image build for production or a hosting story.
+
+## MCP server limitations
+
+- **One project, and it is implicit.** There is no projects endpoint, so
+  `greenlit_list_projects` returns the single "Default project" entry built from
+  `GET /api/v1/auth/me` plus the datasets and runs totals; it invents no second project.
+- **Starts are local-only.** GreenLit stores the permission record on the run, and the MCP
+  server never sets that record, so `greenlit_start_run` refuses anything that is not
+  `localhost`/`127.0.0.1`/`::1`/`host.docker.internal`. Starting a run against a remote app
+  stays a UI action.
+- **No separate reasons list yet.** `greenlit_get_verdict` returns the API's single
+  `verdict_reason` as the headline, sets `reasons` to null and says so instead of
+  fabricating a breakdown.
+- **Reports are truncated.** `greenlit_get_report` returns at most 100,000 characters with
+  `truncated: true`; the small tools cap at 20,000. Fetch the full file from the API or the
+  UI when the flag is set.
+- **The live check is manual.** The MCP tests never touch a real GreenLit: they use a local
+  fake API. Pointing the server at the dev stack needs real `GREENLIT_EMAIL`/
+  `GREENLIT_PASSWORD` from the environment.
 
 ## Still marked "Coming soon"
 

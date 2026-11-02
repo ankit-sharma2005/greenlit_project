@@ -331,13 +331,32 @@ running (`docker compose --profile demo up -d`). Use `--dataset-id` instead of `
 to select an existing approved dataset. Only enable `--allow-private-targets` for a target
 you trust. To use the runner against your own application, replace the target and dataset.
 
+## Drive GreenLit from an MCP client
+
+`mcp_server/` is a small stdio MCP server that lets an MCP client (Claude, Freebuff,
+Copilot) read GreenLit through the same REST API: the project and its counts, a run's
+state and case counts, the verdict and weights, the engine's criteria, and a run's report
+as JSON, CSV or HTML. It is a thin client — no app imports, no database access, and it
+never changes a decision rule or threshold. Responses are size-capped with a `truncated`
+flag, and API failures come back as plain-language tool errors naming the HTTP status and
+path.
+
+`greenlit_start_run` exists only when `GREENLIT_MCP_ALLOW_START=1`, starts at most one run
+every 10 seconds and refuses any target that is not on your own machine, because testing
+somebody else's app needs the permission record this server never sets.
+
+It signs in with `GREENLIT_EMAIL` and `GREENLIT_PASSWORD` like the CI runner does, so give
+it a dedicated low-privilege account and never the admin one. Setup, the copy-paste client
+config and the security rules are in [docs/MCP.md](docs/MCP.md).
+
 ## Repository layout
 
 ```
 backend/    FastAPI app, SQLAlchemy, Alembic migrations, worker, tests
 frontend/   React + TypeScript + Vite UI, Vitest components, Playwright suite
 demo/       Shipped demo dataset (the demo app itself lives in backend/app/demo_server.py)
-docs/       Documentation and brand assets
+docs/       Documentation and brand assets (incl. MCP.md for the MCP client)
+mcp_server/ stdio MCP server: a thin client over the REST API, with its own tests
 scripts/    Developer utilities (brand assets, disposable e2e stack, CI runner)
 ```
 
