@@ -1,6 +1,8 @@
 # Freebuff workspace metadata and user attachments (they can hold tokens)
 .freebuff/
 .cloud-attachments/
+# Local demo screenshots captured while poking the UI; never part of the deliverable.
+greenlit-demo-*.png
 
 # Secrets
 .env
