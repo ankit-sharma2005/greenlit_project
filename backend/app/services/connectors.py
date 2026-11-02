@@ -147,6 +147,14 @@ class ConnectorError(Exception):
         return kind_for_code(self.code)
 
 
+class _StreamDeadlineError(Exception):
+    """The stream's own deadline passed; carries the error to raise if nothing arrived."""
+
+    def __init__(self, error: ConnectorError) -> None:
+        super().__init__(error.message)
+        self.error = error
+
+
 @dataclass
 class Trace:
     output: str
@@ -701,6 +709,7 @@ class HttpConnector:
                     response_format=response_format,
                     content_path=stream_content_path,
                     timeout_seconds=timeout_seconds,
+                    budget_seconds=self.item_budget_seconds,
                     start=start,
                     target=target,
                 )
@@ -755,6 +764,7 @@ class HttpConnector:
         response_format: str,
         content_path: str | None,
         timeout_seconds: int,
+        budget_seconds: float,
         start: float,
         target: str,
     ) -> tuple[str, int | None, int, bool]:
@@ -764,7 +774,10 @@ class HttpConnector:
         the text it produced and is reported as incomplete, so a truncated answer
         is never scored as a whole one.
         """
-        deadline = start + timeout_seconds
+        # ``timeout_seconds`` is the idle read timeout; the whole stream is
+        # bounded by the case budget instead, so a slow first byte is not
+        # mistaken for a stream that will never end.
+        deadline = time.monotonic() + budget_seconds
         pieces: list[str] = []
         size = 0
         ttfb_ms: int | None = None
@@ -776,15 +789,19 @@ class HttpConnector:
                 ttfb_ms = int((time.time() - start) * 1000)
 
         def check_deadline() -> None:
-            if time.time() > deadline:
-                raise ConnectorError(
-                    f"the stream did not finish within {timeout_seconds} s",
-                    code="timeout",
-                    details={
-                        "target": target,
-                        "timeout_seconds": timeout_seconds,
-                        "message": f"the stream did not finish within {timeout_seconds} s",
-                    },
+            if time.monotonic() > deadline:
+                raise _StreamDeadlineError(
+                    ConnectorError(
+                        f"this case hit the {budget_seconds:g} s budget and was stopped",
+                        code="timeout",
+                        details={
+                            "target": target,
+                            "timeout_seconds": budget_seconds,
+                            "message": (
+                                f"this case hit the {budget_seconds:g} s budget and was stopped"
+                            ),
+                        },
+                    )
                 )
 
         def add(text: str) -> None:
@@ -825,16 +842,22 @@ class HttpConnector:
         def collected(complete: bool) -> tuple[str, int | None, int, bool]:
             return "".join(pieces), ttfb_ms, size, complete
 
+        def stopped(exc: Exception) -> tuple[str, int | None, int, bool]:
+            """An interrupted stream: keep what arrived, or raise when nothing did."""
+            if pieces:
+                return collected(False)
+            if isinstance(exc, _StreamDeadlineError):
+                raise exc.error
+            raise exc
+
         if response_format == "text":
             try:
                 for chunk in response.iter_bytes():
                     check_deadline()
                     mark_first_byte()
                     add(chunk.decode("utf-8", errors="replace"))
-            except httpx.TimeoutException:
-                if not pieces:
-                    raise
-                return collected(False)
+            except (httpx.TimeoutException, _StreamDeadlineError) as exc:
+                return stopped(exc)
             return collected(True)
 
         if response_format == "sse":
@@ -858,12 +881,10 @@ class HttpConnector:
                         value = line[5:]
                         data_lines.append(value[1:] if value.startswith(" ") else value)
                     # event:, id: and retry: carry no answer text.
-            except httpx.TimeoutException:
+            except (httpx.TimeoutException, _StreamDeadlineError) as exc:
                 # An idle stream: keep what arrived and mark it incomplete.
                 flush()
-                if not pieces:
-                    raise
-                return collected(False)
+                return stopped(exc)
             flush()
             return collected(finished["final"])
 
@@ -873,10 +894,8 @@ class HttpConnector:
                 check_deadline()
                 mark_first_byte()
                 add_event(line)
-        except httpx.TimeoutException:
-            if not pieces:
-                raise
-            return collected(False)
+        except (httpx.TimeoutException, _StreamDeadlineError) as exc:
+            return stopped(exc)
         return collected(True)
 
     def auto_detect(
