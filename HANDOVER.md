@@ -136,7 +136,7 @@ bash scripts/run-e2e.sh
 - Backend tests live in `backend/tests`, one module per area. They never touch a real
   provider: `ChatFn` is injected, and so are the queue and the progress reader. Dataset
   source-generation tests build a small PDF fixture at test time and fake the model call.
-  The suite currently collects 542 tests (1 skipped), and a full run on 2026-11-01 exited
+  The suite currently collects 551 tests (550 passed, 1 skipped), and a full run on 2026-11-02 exited
   0; `tests/test_operations.py` covers the
   percentile edge cases (one case, even and odd counts, all failures), and
   `tests/test_error_kind_timeout.py` proves a real timeout against a local slow server
