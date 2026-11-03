@@ -9,6 +9,7 @@ import "../styles/auth.css";
 
 interface LocationState {
   from?: string;
+  sessionExpired?: boolean;
 }
 
 export function LoginPage() {
@@ -20,7 +21,9 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const redirectTo = (location.state as LocationState | null)?.from ?? "/";
+  const state = location.state as LocationState | null;
+  const redirectTo = state?.from ?? "/";
+  const sessionExpired = state?.sessionExpired === true;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -53,7 +56,9 @@ export function LoginPage() {
         <header>
           <h1>Sign in</h1>
           <p className="page__description">
-            Sign in to run tests, review verdicts and manage your projects.
+            {sessionExpired
+              ? "Your session expired. Please sign in again."
+              : "Sign in to run tests, review verdicts and manage your projects."}
           </p>
         </header>
 

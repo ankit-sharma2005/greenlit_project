@@ -1,5 +1,7 @@
 /** Browser API client. Sessions live in httpOnly cookies, so every request sends credentials. */
 
+import { refreshSession } from "./session";
+
 export const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8003";
 
@@ -28,6 +30,41 @@ interface RequestOptions {
   method?: "GET" | "POST" | "PATCH" | "DELETE";
   body?: unknown;
   timeoutMs?: number;
+}
+
+// Signing in, refreshing and signing out answer 401 for their own reasons; a
+// refresh there would either recurse or hide the message the form shows.
+const AUTH_PATHS = ["/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/auth/refresh", "/api/v1/auth/logout"];
+
+interface PreparedBody {
+  init: BodyInit | undefined;
+  json: boolean;
+  /** False for a stream, which cannot be read twice. */
+  replayable: boolean;
+}
+
+function prepareBody(body: unknown): PreparedBody {
+  if (body === undefined) return { init: undefined, json: false, replayable: true };
+  if (
+    typeof body === "string" ||
+    body instanceof URLSearchParams ||
+    body instanceof FormData ||
+    body instanceof Blob
+  ) {
+    return { init: body, json: false, replayable: true };
+  }
+  if (typeof ReadableStream !== "undefined" && body instanceof ReadableStream) {
+    return { init: body, json: false, replayable: false };
+  }
+  return { init: JSON.stringify(body), json: true, replayable: true };
+}
+
+function fetchOnce(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...init, signal: controller.signal }).finally(() =>
+    window.clearTimeout(timeout),
+  );
 }
 
 /** Multipart upload (files travel as FormData; the browser sets the boundary). */
@@ -90,20 +127,27 @@ interface ErrorEnvelope {
 }
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(
-    () => controller.abort(),
-    options.timeoutMs ?? REQUEST_TIMEOUT_MS,
-  );
+  const prepared = prepareBody(options.body);
+  const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  const init: RequestInit = {
+    method: options.method ?? "GET",
+    credentials: "include",
+    headers: prepared.json ? { "Content-Type": "application/json" } : undefined,
+    body: prepared.init,
+  };
+  const url = `${API_BASE_URL}${path}`;
 
   try {
-    const response = await fetch(`${API_BASE_URL}${path}`, {
-      method: options.method ?? "GET",
-      credentials: "include",
-      headers: options.body === undefined ? undefined : { "Content-Type": "application/json" },
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
-      signal: controller.signal,
-    });
+    let response = await fetchOnce(url, init, timeoutMs);
+    // An expired access cookie looks like a 401 on any endpoint. Refresh once
+    // (shared across concurrent 401s) and replay the request exactly once; a
+    // second 401 after a good refresh falls through and throws below.
+    const mayRefresh = !AUTH_PATHS.some((authPath) => path.startsWith(authPath));
+    if (response.status === 401 && mayRefresh && prepared.replayable) {
+      if ((await refreshSession()) === "ok") {
+        response = await fetchOnce(url, init, timeoutMs);
+      }
+    }
 
     const data: unknown = await response.json().catch(() => null);
 
@@ -134,7 +178,5 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
       0,
       "network_error",
     );
-  } finally {
-    window.clearTimeout(timeout);
   }
 }

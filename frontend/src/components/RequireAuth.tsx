@@ -1,6 +1,7 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 
 import { useAuth } from "../auth/authContext";
+import { isSessionExpired } from "../lib/session";
 import { Spinner } from "./Spinner";
 
 /** Blocks the app shell until the session check finishes, then requires a signed-in user. */
@@ -17,7 +18,13 @@ export function RequireAuth() {
   }
 
   if (status === "anonymous") {
-    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ from: location.pathname, sessionExpired: isSessionExpired() }}
+      />
+    );
   }
 
   return <Outlet />;

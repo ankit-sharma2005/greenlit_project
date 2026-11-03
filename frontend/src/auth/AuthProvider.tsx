@@ -9,11 +9,20 @@ import {
   type CurrentUser,
   type RegisterPayload,
 } from "../lib/authApi";
+import { onSessionExpired, resetSessionExpired } from "../lib/session";
 import { AuthContext, type AuthContextValue, type AuthStatus } from "./authContext";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [status, setStatus] = useState<AuthStatus>("loading");
+
+  useEffect(() => {
+    const unsubscribe = onSessionExpired(() => {
+      setUser(null);
+      setStatus("anonymous");
+    });
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -42,6 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
+    resetSessionExpired();
     const result = await loginRequest(email, password);
     setUser(result.user);
     setStatus("authenticated");
@@ -49,6 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const register = useCallback(async (payload: RegisterPayload) => {
+    resetSessionExpired();
     const result = await registerRequest(payload);
     setUser(result.user);
     setStatus("authenticated");
@@ -56,6 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    resetSessionExpired();
     try {
       await logoutRequest();
     } finally {
