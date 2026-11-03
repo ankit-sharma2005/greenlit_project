@@ -8,9 +8,11 @@ run is cancelled directly, so a late worker task just skips it.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urlparse
 
@@ -36,6 +38,8 @@ Enqueue = Callable[[uuid.UUID], None]
 _DEFAULT_BODY_TEMPLATE = '{"question": {{input}}}'
 # How many cases a smoke run sends when the request does not say otherwise.
 _SMOKE_CASES = 5
+# Two identical starts inside this window are one run (quirk 13).
+IDEMPOTENCY_WINDOW_SECONDS = 60
 
 
 class RunServiceError(ValueError):
@@ -259,13 +263,68 @@ def resolve_judge_profile(session: Session, user: User, requested: uuid.UUID | N
     return str(selected.id) if selected is not None else None
 
 
+def _idempotency_hash(payload: RunCreateRequest, snapshot: Mapping[str, Any]) -> str:
+    """A stable hash of "the same test, asked for again"."""
+    from app.services.target_check import fingerprint
+
+    material = {
+        "target": fingerprint(snapshot),
+        "dataset_version_id": snapshot.get("dataset_version_id"),
+        "entry_point": payload.entry_point,
+        "test_types": sorted(payload.test_types),
+        "max_cases": snapshot.get("max_cases"),
+        "is_smoke": bool(payload.is_smoke),
+    }
+    encoded = json.dumps(material, sort_keys=True, default=str)
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def find_duplicate_run(
+    session: Session,
+    user: User,
+    payload: RunCreateRequest,
+    snapshot: Mapping[str, Any],
+    key: str | None,
+) -> Run | None:
+    """The run this request already started in the last minute, if any.
+
+    An explicit ``Idempotency-Key`` wins; without one, an identical target,
+    dataset and test types within the window is the same start.
+    """
+    since = utcnow() - timedelta(seconds=IDEMPOTENCY_WINDOW_SECONDS)
+    computed = _idempotency_hash(payload, snapshot)
+    recent = (
+        session.scalars(
+            select(Run)
+            .where(Run.owner_id == user.id, Run.created_at >= since)
+            .order_by(Run.created_at.desc())
+        )
+        .unique()
+        .all()
+    )
+    for run in recent:
+        stored = run.settings_snapshot or {}
+        if key is not None:
+            if stored.get("idempotency_key") == key:
+                return run
+        elif stored.get("idempotency_hash") == computed:
+            return run
+    return None
+
+
 def create_run_from_request(
     session: Session,
     user: User,
     payload: RunCreateRequest,
     enqueue: Enqueue,
+    idempotency_key: str | None = None,
+    dedupe: bool = False,
 ) -> Run:
-    """Validate, snapshot, persist and queue one run."""
+    """Validate, snapshot, persist and queue one run.
+
+    A repeated start (same key, or the same settings within a minute) returns
+    the existing run instead of sending the cases twice.
+    """
     test_types = list(_check_test_types(payload.test_types))
     entry = payload.entry_point
     dataset, version = _approved_version(
@@ -275,6 +334,13 @@ def create_run_from_request(
         dataset_version_id=payload.dataset_version_id,
     )
     snapshot = build_snapshot(payload, dataset_version_id=version.id, entry_point=entry)
+    if idempotency_key is not None or dedupe:
+        existing = find_duplicate_run(session, user, payload, snapshot, idempotency_key)
+        if existing is not None:
+            return existing
+        snapshot["idempotency_hash"] = _idempotency_hash(payload, snapshot)
+        if idempotency_key:
+            snapshot["idempotency_key"] = idempotency_key
     if entry == "http_endpoint" and not payload.allow_private_targets:
         # A first contact against somebody else's app is checked once and its
         # extraction accepted; the check is bound to these exact settings.

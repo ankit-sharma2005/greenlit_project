@@ -24,39 +24,6 @@ class RepositoryError(ValueError):
     """Invalid repository call, for example an unknown field or state."""
 
 
-_RUN_FIELDS: frozenset[str] = frozenset(
-    {
-        "name",
-        "state",
-        "verdict",
-        "score",
-        "verdict_reason",
-        "is_partial",
-        "settings_snapshot",
-        "criteria_profile",
-        "operations",
-        "started_at",
-        "completed_at",
-    }
-)
-
-_RUN_ITEM_FIELDS: frozenset[str] = frozenset(
-    {
-        "state",
-        "output",
-        "retrieved_context",
-        "trace",
-        "latency_ms",
-        "tokens_in",
-        "tokens_out",
-        "error",
-    }
-)
-
-_RUN_STATES: tuple[str, ...] = tuple(state.value for state in RunState)
-_RUN_ITEM_STATES: tuple[str, ...] = tuple(state.value for state in RunItemState)
-
-
 def create_run(
     session: Session,
     *,
@@ -225,3 +192,38 @@ def _coerce_state(value: object, allowed: tuple[str, ...]) -> str:
     if text not in allowed:
         raise RepositoryError(f"unknown state: {text!r} (expected one of {', '.join(allowed)})")
     return text
+
+
+_RUN_FIELDS: frozenset[str] = frozenset(
+    {
+        "name",
+        "state",
+        "verdict",
+        "score",
+        "verdict_reason",
+        "is_partial",
+        "settings_snapshot",
+        "criteria_profile",
+        "operations",
+        "started_at",
+        "completed_at",
+        "last_heartbeat_at",
+    }
+)
+
+
+_RUN_ITEM_FIELDS: frozenset[str] = frozenset(
+    {
+        "state",
+        "output",
+        "retrieved_context",
+        "trace",
+        "latency_ms",
+        "tokens_in",
+        "tokens_out",
+        "error",
+    }
+)
+
+_RUN_STATES: tuple[str, ...] = tuple(state.value for state in RunState)
+_RUN_ITEM_STATES: tuple[str, ...] = tuple(state.value for state in RunItemState)

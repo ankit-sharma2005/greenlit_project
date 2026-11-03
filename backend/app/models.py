@@ -286,6 +286,9 @@ class RunState(enum.StrEnum):
     # A run the user's own caps stopped (quirk 14). The cases that were measured
     # still carry a verdict; the rest are "not run", never failures.
     STOPPED_BY_LIMIT = "stopped_by_limit"
+    # The worker stopped reporting (quirk 13). Answered cases are kept, the rest
+    # are "not run", and there is no automatic resume.
+    INTERRUPTED = "interrupted"
 
 
 class RunItemState(enum.StrEnum):
@@ -337,6 +340,11 @@ class Run(TimestampMixin, Base):
     operations: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Touched by the worker at every case boundary; the sweep uses it to tell a
+    # slow run from a dead one (quirk 13).
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     items: Mapped[list[RunItem]] = relationship(back_populates="run")
     metric_results: Mapped[list[MetricResultRow]] = relationship(back_populates="run")

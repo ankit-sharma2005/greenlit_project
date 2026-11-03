@@ -147,8 +147,8 @@ bash scripts/run-e2e.sh
 - Backend tests live in `backend/tests`, one module per area. They never touch a real
   provider: `ChatFn` is injected, and so are the queue and the progress reader. Dataset
   source-generation tests build a small PDF fixture at test time and fake the model call.
-  The suite currently collects 579 tests (578 passed, 1 skipped), and a full run on 2026-11-02 exited
-  0. `tests/test_quirk_failures.py` runs the real connector against
+  The suite currently collects 627 tests (626 passed, 1 skipped), and a full run on 2026-11-03
+exited 0. `tests/test_quirk_failures.py` runs the real connector against
   `tests/support/quirk_server.py` (and a generated TLS server) for the failure classes
   listed under "Real-world failure classes" below. `tests/test_operations.py` covers the
   percentile edge cases (one case, even and odd counts, all failures), and
@@ -207,7 +207,7 @@ honest: PARTLY means the truth is narrower than the row reads.
 | Slow apps | PARTLY | Per-run timeout 1–300 s (`RunCreateRequest.timeout_seconds`) and a 150 s per-case budget; no cold-start handling and no per-project setting (there is no project record). |
 | Sensitive data in exports | MISSING | Only request headers are redacted (`tests/test_report.py`); emails, phones, card-like numbers and keys inside answers are exported as written. |
 | Judge problems | HANDLED | `tests/test_judge.py`, `tests/test_run_executor_judge.py`: unavailable or off-contract judge → not measured + REVIEW, never a 0. |
-| Worker crash / duplicate start | MISSING | A restart leaves the run stuck; there is no resume or "interrupted" state. Cancel does interrupt a retry wait (`test_a_cancel_interrupts_the_retry_wait`). |
+| Worker crash / duplicate start | PARTLY | A run with no heartbeat for `INTERRUPTED_AFTER_MINUTES` (default 10) is marked `interrupted` by the worker-start / before-task sweep: answered cases are kept, the rest become "not run", and nothing is resumed (`tests/test_run_sweep.py`). A repeated start with the same `Idempotency-Key`, or the same target+dataset within a minute, returns the existing run (`test_a_retried_start_with_the_same_idempotency_key_returns_the_same_run`). Cancel stops a run at the next case boundary (`test_cancel_mid_run_keeps_partial_results`). Not proven: a hard kill mid-case is only swept when a worker starts or the next task arrives, and there is still no resume. |
 | Cost and time caps | MISSING | No max-cases, max-duration or max-token run caps and no "stopped by limit" status. |
 
 Not built in this milestone: the "Check before full run" step (one harmless case, an

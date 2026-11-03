@@ -7,7 +7,7 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -381,10 +381,17 @@ def start_run(
     user: Any = Depends(get_current_user),
     enqueue: Enqueue = Depends(get_enqueue),
     reader: ProgressReader = Depends(get_progress_reader),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> RunRead:
-    """Queue a run; it executes in the worker, never inside this request."""
+    """Queue a run; it executes in the worker, never inside this request.
+
+    An ``Idempotency-Key`` makes a retried start return the run it already
+    created instead of sending every case a second time (quirk 13).
+    """
     try:
-        run = create_run_from_request(db, user, payload, enqueue)
+        run = create_run_from_request(
+            db, user, payload, enqueue, idempotency_key=idempotency_key, dedupe=True
+        )
     except RunServiceError as exc:
         db.rollback()
         raise _service_error(exc) from exc

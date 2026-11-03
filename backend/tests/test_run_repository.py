@@ -97,6 +97,7 @@ def test_run_states_match_the_spec() -> None:
         "failed",
         "completed",
         "stopped_by_limit",
+        "interrupted",
     }
     assert RunState.QUEUED.value == "queued"
     assert {state.value for state in RunItemState} == {

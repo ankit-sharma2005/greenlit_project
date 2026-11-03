@@ -31,6 +31,8 @@ class Settings(BaseSettings):
 
     default_timeout_seconds: int = Field(default=60, ge=1, le=600)
     default_run_parallelism: int = Field(default=2, ge=1, le=16)
+    # A run with no heartbeat for this long is marked "interrupted" (quirk 13).
+    interrupted_after_minutes: int = Field(default=10, ge=1, le=240)
 
     # --- Accounts and sessions (M1) ---
     access_token_expire_minutes: int = Field(default=15, ge=1, le=240)

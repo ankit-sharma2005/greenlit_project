@@ -196,6 +196,50 @@ def test_start_queues_without_executing(
         assert len(events) == 1
 
 
+def test_a_retried_start_with_the_same_idempotency_key_returns_the_same_run(
+    client: TestClient,
+    session_factory: sessionmaker[Session],
+    runtime: SimpleNamespace,
+) -> None:
+    """A double click (or a retried POST) must not send every case twice."""
+    _register(client)
+    dataset = _upload_and_approve(client)
+    headers = {"Idempotency-Key": "checkout-demo-1"}
+
+    first = client.post("/api/v1/runs", json=_body(dataset), headers=headers)
+    second = client.post("/api/v1/runs", json=_body(dataset), headers=headers)
+
+    assert first.status_code == 202, first.text
+    assert second.status_code == 202, second.text
+    assert second.json()["id"] == first.json()["id"]
+    # Queued once, stored once.
+    assert len(runtime.queue) == 1
+    with session_factory() as session:
+        assert len(session.scalars(select(Run)).all()) == 1
+        run = session.get(Run, uuid.UUID(first.json()["id"]))
+        assert run is not None
+        assert run.settings_snapshot["idempotency_key"] == "checkout-demo-1"
+
+
+def test_two_identical_starts_in_a_row_are_one_run(
+    client: TestClient,
+    session_factory: sessionmaker[Session],
+    runtime: SimpleNamespace,
+) -> None:
+    """Without a key, the same target+dataset within the window dedupes too."""
+    _register(client)
+    dataset = _upload_and_approve(client)
+
+    first = client.post("/api/v1/runs", json=_body(dataset))
+    second = client.post("/api/v1/runs", json=_body(dataset))
+
+    assert first.status_code == 202, first.text
+    assert second.json()["id"] == first.json()["id"]
+    assert len(runtime.queue) == 1
+    with session_factory() as session:
+        assert len(session.scalars(select(Run)).all()) == 1
+
+
 def test_start_needs_a_dataset(client: TestClient) -> None:
     _register(client)
     response = client.post(

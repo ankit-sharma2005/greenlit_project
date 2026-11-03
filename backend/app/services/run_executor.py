@@ -802,7 +802,14 @@ def execute_run(
                         "dataset items had no matching output in the uploaded file."
                     )
                     logger.info(message)
-            update_run(session, run, state=RunState.RUNNING, started_at=utcnow())
+            update_run(
+                session,
+                run,
+                state=RunState.RUNNING,
+                started_at=utcnow(),
+                # The sweep reads this: a live worker touches it every case.
+                last_heartbeat_at=utcnow(),
+            )
             started_at = run.started_at.isoformat() if run.started_at else None
             existing = {item.row_index: item for item in list_run_items(session, rid)}
             for case in cases:
@@ -1007,7 +1014,12 @@ def execute_run(
                             "raw": trace.raw if trace is not None else None,
                         },
                     )
-                    session.commit()
+                # The heartbeat goes with the item write, so a worker that is
+                # alive but slow still looks alive (quirk 13).
+                beat_run = session.get(Run, rid)
+                if beat_run is not None:
+                    update_run(session, beat_run, last_heartbeat_at=utcnow())
+                session.commit()
             if trace is not None and (trace.tokens_in is not None or trace.tokens_out is not None):
                 # One reporting case is enough for the token cap to apply.
                 tokens_reported += 1
