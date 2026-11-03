@@ -240,6 +240,112 @@ def test_two_identical_starts_in_a_row_are_one_run(
         assert len(session.scalars(select(Run)).all()) == 1
 
 
+def test_the_hash_must_include_target_settings_so_limits_double_runs(
+    client: TestClient,
+    session_factory: sessionmaker[Session],
+    runtime: SimpleNamespace,
+) -> None:
+    """A smoke run and a full run on the same target & dataset are two runs."""
+    _register(client)
+    dataset = _upload_and_approve(client)
+
+    short = {
+        "entry_point": "http_endpoint",
+        "target": "http://127.0.0.1:9099/ask",
+        "dataset_id": dataset["id"],
+        "dataset_version_id": dataset["versions"][0]["id"],
+        "body_template": '{"question": {{input}}}',
+        "answer_path": "answer",
+        "context_path": "context",
+        "allow_private_targets": True,
+        "is_smoke": True,
+        "max_cases": 5,
+    }
+    full = {**short, "is_smoke": False, "max_cases": 12}
+
+    first = client.post("/api/v1/runs", json=short)
+    second = client.post("/api/v1/runs", json=full)
+
+    assert first.status_code == 202, first.text
+    assert second.status_code == 202, second.text
+    assert second.json()["id"] != first.json()["id"]
+    assert len(runtime.queue) == 2
+    with session_factory() as session:
+        assert len(session.scalars(select(Run)).all()) == 2
+
+
+def test_the_hash_must_separate_requests_that_differ_only_in_a_limit(
+    client: TestClient,
+    session_factory: sessionmaker[Session],
+    runtime: SimpleNamespace,
+) -> None:
+    """Two requests that differ only in a cap are not the same run."""
+    _register(client)
+    dataset = _upload_and_approve(client)
+
+    left = {
+        "entry_point": "http_endpoint",
+        "target": "http://127.0.0.1:9099/ask",
+        "dataset_id": dataset["id"],
+        "dataset_version_id": dataset["versions"][0]["id"],
+        "body_template": '{"question": {{input}}}',
+        "answer_path": "answer",
+        "context_path": "context",
+        "allow_private_targets": True,
+        "is_smoke": True,
+        "max_cases": 5,
+    }
+    right = {**left, "max_cases": 10}
+
+    first = client.post("/api/v1/runs", json=left)
+    second = client.post("/api/v1/runs", json=right)
+
+    assert first.status_code == 202, first.text
+    assert second.status_code == 202, second.text
+    assert second.json()["id"] != first.json()["id"]
+    assert len(runtime.queue) == 2
+    with session_factory() as session:
+        assert len(session.scalars(select(Run)).all()) == 2
+
+
+def test_the_idempotency_key_wins_when_present(
+    client: TestClient,
+    session_factory: sessionmaker[Session],
+    runtime: SimpleNamespace,
+) -> None:
+    """An explicit key decides on its own: a different body, still one run."""
+    _register(client)
+    dataset = _upload_and_approve(client)
+    headers = {"Idempotency-Key": "manual-retry-42"}
+
+    body = {
+        "entry_point": "http_endpoint",
+        "target": "http://127.0.0.1:9099/ask",
+        "dataset_id": dataset["id"],
+        "dataset_version_id": dataset["versions"][0]["id"],
+        "body_template": '{"question": {{input}}}',
+        "answer_path": "answer",
+        "context_path": "context",
+        "allow_private_targets": True,
+        "is_smoke": True,
+        "max_cases": 5,
+    }
+    # Different caps, same key: the key, not the body hash, has to win.
+    changed = {**body, "max_cases": 10}
+
+    first = client.post("/api/v1/runs", json=body, headers=headers)
+    second = client.post("/api/v1/runs", json=changed, headers=headers)
+
+    assert first.status_code == 202, first.text
+    assert second.status_code == 202, second.text
+    assert second.json()["id"] == first.json()["id"]
+    assert len(runtime.queue) == 1
+    with session_factory() as session:
+        runs = session.scalars(select(Run)).all()
+        assert len(runs) == 1
+        assert runs[0].settings_snapshot.get("idempotency_key") == "manual-retry-42"
+
+
 def test_start_needs_a_dataset(client: TestClient) -> None:
     _register(client)
     response = client.post(

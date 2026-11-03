@@ -264,16 +264,39 @@ def resolve_judge_profile(session: Session, user: User, requested: uuid.UUID | N
 
 
 def _idempotency_hash(payload: RunCreateRequest, snapshot: Mapping[str, Any]) -> str:
-    """A stable hash of "the same test, asked for again"."""
+    """A stable hash of "the same test, asked for again".
+
+    Every field that changes what a run does is included, so that two requests
+    that differ only in, say, a token cap are sent twice, while two identical
+    requests (with or without an explicit ``Idempotency-Key``) collapse.
+    """
     from app.services.target_check import fingerprint
 
-    material = {
+    material: dict[str, object] = {
         "target": fingerprint(snapshot),
         "dataset_version_id": snapshot.get("dataset_version_id"),
         "entry_point": payload.entry_point,
         "test_types": sorted(payload.test_types),
+        # The caps the worker actually stops on.
         "max_cases": snapshot.get("max_cases"),
+        "max_duration_seconds": snapshot.get("max_duration_seconds"),
+        "max_total_tokens": snapshot.get("max_total_tokens"),
         "is_smoke": bool(payload.is_smoke),
+        # How the run sends its requests, for this connector.
+        "method": snapshot.get("method") or "POST",
+        "body_template": snapshot.get("body_template") or "",
+        "answer_path": snapshot.get("answer_path") or "",
+        "context_path": snapshot.get("context_path") or "",
+        "allow_private_targets": bool(snapshot.get("allow_private_targets")),
+        "max_concurrency": snapshot.get("max_concurrency"),
+        "min_delay_ms": snapshot.get("min_delay_ms"),
+        "max_retries": snapshot.get("max_retries"),
+        "response_format": snapshot.get("response_format") or "json",
+        "stream_content_path": snapshot.get("stream_content_path") or "",
+        # A remote target's live run is bound to these, recorded with the run.
+        "permission_confirmed": bool(snapshot.get("permission_confirmed", False)),
+        "permission_reference": snapshot.get("permission_reference") or "",
+        "safety_attacks_confirmed": bool(snapshot.get("safety_attacks_confirmed", False)),
     }
     encoded = json.dumps(material, sort_keys=True, default=str)
     return hashlib.sha256(encoded.encode()).hexdigest()
