@@ -8,8 +8,12 @@ a safety section, the judge that scored it, and an exportable report.
 ## What works today
 
 - **Accounts and sessions:** Argon2id passwords, httpOnly cookie sessions with rotating
-  refresh tokens, roles (`admin`, `member`, `reviewer`) and an append-only audit log.
-  The first account to register becomes the admin.
+  refresh tokens (access 15 min, refresh 14 days), roles (`admin`, `member`, `reviewer`) and
+  an append-only audit log. The browser silently refreshes once on 401 via a single-flight
+  call with Web Locks; if the 14-day refresh cookie is missing or revoked the user is signed
+  out and redirected to `/login` with a session-expired message. (Browsers without Web Locks
+  and idle sessions longer than 14 days are not proven.) The first account to register
+  becomes the admin.
 - **Providers:** Ollama and any OpenAI-compatible endpoint, with a connection test,
   encrypted keys and rate limits.
 - **Datasets:** upload a CSV/JSON golden set, then approve a version. Dataset Studio can

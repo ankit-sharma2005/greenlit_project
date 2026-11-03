@@ -110,7 +110,12 @@ properties with a dark default and a light theme.
   `RunHistory`, `JudgePanel`, `ProvidersPanel`, `DatasetsPanel`, `ReviewQueue`,
   `CalibrationSummary`, `SetupChecklist`, `AuditPanel`.
 - `lib/` — typed API clients, one module per area, all going through `lib/api.ts` so the
-  session cookie and the error envelope are handled in one place.
+  session cookie and the error envelope are handled in one place. `lib/session.ts`
+  implements single-flight silent token refresh on 401 with Web Locks (skipping auth
+  endpoints); on a failed refresh the app emits `greenlit:session-expired`, sets the auth
+  state to anonymous, and `RequireAuth`/`LoginPage` show "Your session expired. Please
+  sign in again." If the 14-day refresh cookie is missing or revoked the session ends;
+  browsers without Web Locks and idle sessions longer than 14 days are not proven.
 
 **MCP server (`mcp_server/`)** — a separate stdio process for MCP clients (Claude,
 Freebuff, Copilot). It is a thin client over the same REST API: `client.py` signs in with
