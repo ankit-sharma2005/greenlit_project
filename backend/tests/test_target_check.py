@@ -14,11 +14,14 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.schemas.runs import RunCreateRequest
 from app.services import target_check
 from app.services.connectors import ConnectorError, Trace
 from app.services.target_check import (
+    _CANDIDATE_DEPTH,
     HARMLESS_INPUT,
     CheckOutcome,
     TargetCheckError,
@@ -29,6 +32,25 @@ from app.services.target_check import (
     run_check,
 )
 from tests.support.quirk_server import start_quirk
+
+
+def hello_trace_with_raw(
+    raw_body: dict[str, Any] | str,
+    text_output: str = "Hello from the quirk server",
+    status: int | None = 200,
+) -> Trace:
+    return Trace(
+        output=text_output,
+        retrieved_context="not instrumented",
+        tool_calls="not instrumented",
+        latency_ms=12,
+        tokens_in=None,
+        tokens_out=None,
+        error=None,
+        raw=raw_body,
+        status_code=status,
+    )
+
 
 PASSWORD = "correct horse battery staple"
 
@@ -145,7 +167,128 @@ def test_a_failed_check_keeps_its_structured_error() -> None:
     assert outcome.hint is None
 
 
-# ---- the accepted check is a gate -----------------------------------------
+def test_answer_candidates_are_collected_from_a_json_response() -> None:
+    response_body = {
+        "choices": [
+            {"message": {"content": "NewRelic says the site is up."}},
+            {"message": {"content": "Second choice."}},
+        ],
+        "usage": {"prompt_tokens": 120, "completion_tokens": 30},
+    }
+    outcome = run_check(
+        SNAPSHOT,
+        input_text=HARMLESS_INPUT,
+        sender=lambda _request_text: hello_trace_with_raw(
+            response_body,
+            text_output=response_body["choices"][0]["message"]["content"],
+        ),
+    )
+
+    assert outcome.hint is None
+    assert outcome.answer == response_body["choices"][0]["message"]["content"]
+    assert outcome.raw_response == response_body
+    candidates = target_check.answer_candidates(outcome.raw_response)
+    assert len(candidates) >= 2
+    paths = [c.path for c in candidates]
+    assert "choices[0].message.content" in paths
+    assert "choices[1].message.content" in paths
+
+
+def test_answer_candidates_is_empty_for_non_json() -> None:
+    # answer_candidates is empty when the stored raw is not a JSON object.
+    candidates = target_check.answer_candidates("this is plain text, not json")
+    assert candidates == []
+
+
+def test_answer_candidates_are_empty_for_html() -> None:
+    html = "<!doctype html><html><body>Please sign in</body></html>"
+    assert target_check.answer_candidates(html) == []
+
+
+def test_answer_candidates_walk_nested_custom_response() -> None:
+    response_body = {
+        "result": {
+            "payload": {
+                "responses": [
+                    {"text": "First custom answer"},
+                    {"text": "Second custom answer"},
+                ]
+            }
+        }
+    }
+
+    candidates = target_check.answer_candidates(response_body)
+
+    assert [(item.path, item.preview) for item in candidates] == [
+        ("result.payload.responses[0].text", "First custom answer"),
+        ("result.payload.responses[1].text", "Second custom answer"),
+    ]
+
+
+def test_answer_candidates_redact_a_secret_in_the_response() -> None:
+    candidates = target_check.answer_candidates(
+        {"choices": [{"message": {"content": f"Call me at {SECRET_TOKEN}"}}]}
+    )
+    assert len(candidates) == 1
+    assert "SECRET-1234567890" not in candidates[0].preview
+    assert "sk-live-" not in candidates[0].preview
+
+
+def test_answer_candidates_are_limited_by_count_preview_and_depth() -> None:
+    response_body: dict[str, Any] = {
+        "token": "sk-live-SECRET-1234567890",
+        **{f"answer_{index}": "x" * 200 for index in range(12)},
+    }
+    deeply_nested: dict[str, Any] = {"answer": "too deep"}
+    for _ in range(_CANDIDATE_DEPTH):
+        deeply_nested = {"nested": deeply_nested}
+
+    candidates = target_check.answer_candidates(response_body)
+
+    assert len(candidates) == target_check.MAX_CANDIDATES
+    assert all(
+        len(candidate.preview) <= target_check.MAX_CANDIDATE_PREVIEW for candidate in candidates
+    )
+    assert all("SECRET-1234567890" not in candidate.preview for candidate in candidates)
+    assert target_check.answer_candidates(deeply_nested) == []
+
+
+def test_question_path_found_for_an_exact_body_match() -> None:
+    request_body = {"messages": [{"role": "user", "content": "Hello"}]}
+    paths = target_check.find_question_paths(request_body, "Hello")
+    assert paths == ["messages[0].content"]
+
+
+def test_question_path_returns_none_when_no_field_matches() -> None:
+    request_body = {"messages": [{"role": "user", "content": "Hello"}]}
+    assert target_check.find_question_path(request_body, "not sent") is None
+
+
+def test_question_path_returns_none_when_more_than_one_field_matches() -> None:
+    request_body = {
+        "question": "Hello",
+        "input": "Hello",
+    }
+    assert target_check.find_question_path(request_body, "Hello") is None
+
+
+def test_question_paths_are_depth_limited_and_preview_truncated() -> None:
+    body: dict[str, Any] = {"nested": {}}
+    current = body["nested"]
+    for _i in range(_CANDIDATE_DEPTH + 1):
+        current = {"k": current}
+    body["nested"] = current
+
+    candidates = target_check.answer_candidates(body)
+    # The deepest leaf is beyond the depth limit, so only the intermediate
+    # container path shows up as a candidate when it has no printable preview.
+    assert all(c.path.count(".") <= _CANDIDATE_DEPTH for c in candidates)
+
+
+def test_run_create_request_rejects_sample_question() -> None:
+    with pytest.raises(ValidationError) as caught:
+        RunCreateRequest(sample_question="This field belongs on target checks")
+    assert caught.value.errors()[0]["type"] == "extra_forbidden"
 
 
 def stored_check(owner: uuid.UUID, snapshot: dict[str, Any]) -> target_check.TargetCheck:
@@ -293,6 +436,93 @@ def fake_check(monkeypatch: pytest.MonkeyPatch, answer: str = "Hi there") -> Non
         )
 
     monkeypatch.setattr(target_check, "run_check", run)
+
+
+@pytest.mark.parametrize(
+    ("body_template", "expected_path", "expected_reason"),
+    [
+        (
+            '{"messages":[{"role":"user","content": {{input}}}]}',
+            "messages[0].content",
+            None,
+        ),
+        (
+            '{"question": {{input}}, "input": {{input}}}',
+            None,
+            "More than one request body field matched the sample question; no path was selected.",
+        ),
+        (
+            '{"question": "different"}',
+            None,
+            "No request body field matched the sample question; no path was selected.",
+        ),
+    ],
+)
+def test_api_check_returns_candidates_and_question_path_result(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    body_template: str,
+    expected_path: str | None,
+    expected_reason: str | None,
+) -> None:
+    register(client, email="question-path@example.com")
+    response_body = {
+        "choices": [{"message": {"content": "Answer preview"}}],
+        "result": {"reply": "Nested custom answer"},
+    }
+    real_run_check = target_check.run_check
+
+    def run_with_json_response(
+        snapshot: Any, *, input_text: str, sender: Any = None
+    ) -> CheckOutcome:
+        return real_run_check(
+            snapshot,
+            input_text=input_text,
+            sender=lambda _: hello_trace_with_raw(response_body, text_output="Answer preview"),
+        )
+
+    monkeypatch.setattr(target_check, "run_check", run_with_json_response)
+    payload = dict(
+        REMOTE_BODY,
+        body_template=body_template,
+        sample_question="The exact sample question",
+    )
+
+    response = client.post("/api/v1/targets/check", json=payload)
+
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["question_path"] == expected_path
+    assert result["question_path_reason"] == expected_reason
+    candidate_paths = [candidate["path"] for candidate in result["answer_candidates"]]
+    assert "choices[0].message.content" in candidate_paths
+    assert "result.reply" in candidate_paths
+
+
+def test_api_check_returns_no_candidates_for_html(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    register(client, email="html-response@example.com")
+    real_run_check = target_check.run_check
+
+    def run_with_html_response(
+        snapshot: Any, *, input_text: str, sender: Any = None
+    ) -> CheckOutcome:
+        return real_run_check(
+            snapshot,
+            input_text=input_text,
+            sender=lambda _: hello_trace_with_raw(
+                "<!doctype html><html><body>Login</body></html>",
+                text_output="<!doctype html><html><body>Login</body></html>",
+            ),
+        )
+
+    monkeypatch.setattr(target_check, "run_check", run_with_html_response)
+
+    response = client.post("/api/v1/targets/check", json=REMOTE_BODY)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["answer_candidates"] == []
 
 
 def test_the_api_check_then_accept_unlocks_a_remote_run(

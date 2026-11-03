@@ -46,6 +46,9 @@ class TargetCheckRequest(BaseModel):
     max_retries: int = Field(default=3, ge=0, le=10)
     response_format: ResponseFormat = "json"
     stream_content_path: str | None = Field(default=None, max_length=300)
+    # The message the user typed, when the check is being used to build a body
+    # template; GreenLit finds the first body field whose value equals this.
+    sample_question: str | None = Field(default=None, max_length=2000)
 
     def to_run_request(self) -> RunCreateRequest:
         """The run request shape, so the check reuses the run's own snapshot rules."""
@@ -73,6 +76,13 @@ class TargetCheckRequest(BaseModel):
         )
 
 
+class AnswerCandidate(BaseModel):
+    """One string value found in the JSON response that a person may inspect."""
+
+    path: str
+    preview: str
+
+
 class TargetCheckResponse(BaseModel):
     """What one harmless request found, and whether a person accepted it."""
 
@@ -93,3 +103,11 @@ class TargetCheckResponse(BaseModel):
     hint: str | None = None
     # The structured failure (kind, status, target, redacted snippet), if any.
     error: dict[str, Any] | None = None
+    # A shortlist of string values found in the JSON response, for picking the
+    # answer field. Empty when the response is not JSON or holds no strings.
+    answer_candidates: list[AnswerCandidate] = Field(default_factory=list)
+    # When ``sample_question`` was given, the path of the body field that equals
+    # it, so the UI can build a body template with a question placeholder. Set
+    # only when there is exactly one such field.
+    question_path: str | None = None
+    question_path_reason: str | None = None

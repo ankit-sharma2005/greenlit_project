@@ -7,6 +7,7 @@ the accept step is what a full run on a remote target requires.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import get_current_user
-from app.schemas.targets import TargetCheckRequest, TargetCheckResponse
+from app.schemas.targets import AnswerCandidate, TargetCheckRequest, TargetCheckResponse
 from app.services import target_check
 from app.services.audit import record
 from app.services.run_service import RunServiceError, build_snapshot
@@ -59,11 +60,40 @@ def check_target(
     except RunServiceError as exc:
         raise _run_service_error(exc) from exc
 
-    input_text, _column = target_check.first_case_input(db, user, payload.dataset_version_id)
+    input_text = (
+        payload.sample_question
+        if payload.sample_question is not None
+        else target_check.first_case_input(db, user, payload.dataset_version_id)[0]
+    )
     try:
         outcome = target_check.run_check(snapshot, input_text=input_text)
     except RunServiceError as exc:  # a connector that cannot be built
         raise _run_service_error(exc) from exc
+    candidates: list[AnswerCandidate] = []
+    question_path: str | None = None
+    question_path_reason: str | None = None
+    if outcome.raw_response is not None:
+        candidates = [
+            AnswerCandidate(path=c.path, preview=c.preview)
+            for c in target_check.answer_candidates(outcome.raw_response)
+        ]
+    if payload.sample_question is not None:
+        try:
+            request_body = json.loads(str(outcome.request.get("body") or ""))
+        except (TypeError, ValueError):
+            request_body = None
+        matching_paths = target_check.find_question_paths(request_body, payload.sample_question)
+        if len(matching_paths) == 1:
+            question_path = matching_paths[0]
+        elif len(matching_paths) > 1:
+            question_path_reason = (
+                "More than one request body field matched the sample question; "
+                "no path was selected."
+            )
+        else:
+            question_path_reason = (
+                "No request body field matched the sample question; no path was selected."
+            )
     check = target_check.record_check(
         owner_id=user.id,
         config_hash=target_check.fingerprint(snapshot),
@@ -77,6 +107,9 @@ def check_target(
             "mapping_path": outcome.mapping_path,
             "hint": outcome.hint,
             "error": outcome.error,
+            "answer_candidates": candidates,
+            "question_path": question_path,
+            "question_path_reason": question_path_reason,
         },
     )
     record(

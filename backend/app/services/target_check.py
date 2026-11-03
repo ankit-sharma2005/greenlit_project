@@ -25,9 +25,13 @@ from sqlalchemy.orm import Session
 from app.models import Dataset, DatasetColumnMapping, DatasetItem, DatasetVersion, User
 from app.services.connectors import ConnectorError, Trace, render_body_template
 from app.services.target_error import error_detail, target_of
+from app.services.target_error import redact_snippet as _redact
 
 CHECK_TTL_SECONDS = 30 * 60
 MAX_ANSWER_CHARS = 500
+MAX_CANDIDATE_PREVIEW = 120
+MAX_CANDIDATES = 10
+_CANDIDATE_DEPTH = 6
 # Sent when no dataset case can supply a question; harmless by construction.
 HARMLESS_INPUT = "Hello"
 MASK = "XXXX"
@@ -312,6 +316,134 @@ class CheckOutcome:
     mapping_path: str | None
     hint: str | None
     error: dict[str, Any] | None = field(default=None)
+    raw_response: dict[str, Any] | list[Any] | str | None = None
+
+
+@dataclass
+class AnswerCandidate:
+    """One string value found in the JSON response that a person may inspect."""
+
+    path: str
+    preview: str
+
+
+def _candidate_value(value: Any) -> str | None:
+    """A printable preview of a JSON value for the answer-candidates list."""
+    return value if isinstance(value, str) else None
+
+
+def _answer_candidates_raw(data: Any, path: str = "", depth: int = 0) -> list[AnswerCandidate]:
+    """Walk a JSON response and collect up to MAX_CANDIDATES string values.
+
+    Depth-first, with list items rendered as ``a[0]`` style paths.
+    """
+    if depth >= _CANDIDATE_DEPTH:
+        return []
+    candidates: list[AnswerCandidate] = []
+    if isinstance(data, dict):
+        for key, value in data.items():
+            child_path = f"{path}.{key}" if path else str(key)
+            if isinstance(value, dict):
+                candidates.extend(_answer_candidates_raw(value, child_path, depth + 1))
+                if len(candidates) >= MAX_CANDIDATES:
+                    return candidates
+            elif isinstance(value, list):
+                for idx, item in enumerate(value):
+                    elem_path = f"{child_path}[{idx}]"
+                    if isinstance(item, (dict, list)):
+                        candidates.extend(_answer_candidates_raw(item, elem_path, depth + 1))
+                        if len(candidates) >= MAX_CANDIDATES:
+                            return candidates
+                    else:
+                        text = _candidate_value(item)
+                        if text is not None:
+                            candidates.append(
+                                AnswerCandidate(
+                                    path=elem_path,
+                                    preview=_redact(text, limit=MAX_CANDIDATE_PREVIEW),
+                                )
+                            )
+                            if len(candidates) >= MAX_CANDIDATES:
+                                return candidates
+            else:
+                text = _candidate_value(value)
+                if text is not None:
+                    candidates.append(
+                        AnswerCandidate(
+                            path=child_path,
+                            preview=_redact(text, limit=MAX_CANDIDATE_PREVIEW),
+                        )
+                    )
+                    if len(candidates) >= MAX_CANDIDATES:
+                        return candidates
+    elif isinstance(data, list):
+        for idx, item in enumerate(data):
+            elem_path = f"{path}[{idx}]" if path else f"[{idx}]"
+            if isinstance(item, (dict, list)):
+                candidates.extend(_answer_candidates_raw(item, elem_path, depth + 1))
+                if len(candidates) >= MAX_CANDIDATES:
+                    return candidates
+            else:
+                text = _candidate_value(item)
+                if text is not None:
+                    candidates.append(
+                        AnswerCandidate(
+                            path=elem_path,
+                            preview=_redact(text, limit=MAX_CANDIDATE_PREVIEW),
+                        )
+                    )
+                    if len(candidates) >= MAX_CANDIDATES:
+                        return candidates
+    return candidates
+
+
+def answer_candidates(data: Any) -> list[AnswerCandidate]:
+    """Up to ``MAX_CANDIDATES`` string previews, redacted, for the response.
+
+    Empty when the response is not JSON or holds no string values within
+    depth ``_CANDIDATE_DEPTH``.
+    """
+    if not isinstance(data, (dict, list)):
+        return []
+    return _answer_candidates_raw(data)[:MAX_CANDIDATES]
+
+
+def find_question_paths(data: Any, question_text: str) -> list[str]:
+    """Return up to two exact-match paths to distinguish unique from ambiguous."""
+    if not isinstance(data, (dict, list)):
+        return []
+    hits: list[str] = []
+
+    def walk(value: Any, path: str = "", depth: int = 0) -> None:
+        nonlocal hits
+        if len(hits) > 1:
+            return
+        if depth > _CANDIDATE_DEPTH:
+            return
+        if isinstance(value, str) and value == question_text and path:
+            hits.append(path)
+            return
+        if isinstance(value, dict):
+            for key, child in value.items():
+                child_path = f"{path}.{key}" if path else str(key)
+                walk(child, child_path, depth + 1)
+                if len(hits) > 1:
+                    return
+        elif isinstance(value, list):
+            for idx, child in enumerate(value):
+                child_path = f"{path}[{idx}]" if path else f"[{idx}]"
+                walk(child, child_path, depth + 1)
+                if len(hits) > 1:
+                    return
+
+    walk(data)
+    return hits
+
+
+def find_question_path(data: Any, question_text: str) -> str | None:
+    """Return the unique exact-match path, or ``None`` if absent or ambiguous."""
+    paths = find_question_paths(data, question_text)
+    return paths[0] if len(paths) == 1 else None
 
 
 def run_check(
@@ -334,6 +466,7 @@ def run_check(
     mapping_path = str(check_snapshot.get("answer_path") or "") or None
     started = time.monotonic()
     answer = ""
+    raw_response: dict[str, Any] | list[Any] | str | None = None
     status: int | None = None
     truncated = False
     error: dict[str, Any] | None = None
@@ -342,6 +475,8 @@ def run_check(
         send = sender if sender is not None else _real_sender(check_snapshot)
         trace = send(input_text)
         answer = trace.output or ""
+        if isinstance(trace.raw, (dict, list, str)):
+            raw_response = trace.raw
         status = trace.status_code
         latency_ms = trace.latency_ms
     except ConnectorError as exc:
@@ -374,6 +509,7 @@ def run_check(
         mapping_path=mapping_path,
         hint=None if error is not None else extraction_hint(answer, mapping_path),
         error=error,
+        raw_response=raw_response,
     )
 
 
