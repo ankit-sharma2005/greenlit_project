@@ -4,14 +4,27 @@ import { apiRequest } from "./api";
 import type { FailedCase, MetricRow, Verdict } from "./evaluations";
 
 export type RunState =
-  "queued" | "running" | "cancelling" | "cancelled" | "failed" | "completed" | "stopped_by_limit";
+  | "queued"
+  | "running"
+  | "cancelling"
+  | "cancelled"
+  | "failed"
+  | "completed"
+  | "stopped_by_limit"
+  | "interrupted";
 
 export const TERMINAL_STATES: readonly RunState[] = [
   "cancelled",
   "failed",
   "completed",
   "stopped_by_limit",
+  // The worker stopped reporting; the sweep closed the run and nothing resumes it.
+  "interrupted",
 ];
+
+/** What an interrupted run means, in plain words, wherever its state is shown. */
+export const INTERRUPTED_NOTE =
+  "Interrupted: the worker stopped before this run finished. Answered cases are kept.";
 
 export function isTerminal(state: RunState): boolean {
   return TERMINAL_STATES.includes(state);

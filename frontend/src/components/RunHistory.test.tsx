@@ -185,6 +185,23 @@ describe("RunHistory", () => {
     expect(screen.getByTestId("run-history-compare")).toBeEnabled();
   });
 
+  it("shows an interrupted run with its plain explanation in the list", async () => {
+    listRunsMock.mockResolvedValue({
+      items: [makeRun({ state: "interrupted", is_partial: true, verdict: null, score: null })],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    });
+    render(<RunHistory />);
+
+    expect(await screen.findByTestId("run-history-table")).toBeInTheDocument();
+    expect(screen.getByTestId("run-history-state")).toHaveTextContent("Interrupted");
+    expect(screen.getByTestId("run-history-state")).toHaveClass("badge--interrupted");
+    expect(screen.getByTestId("run-history-interrupted-note")).toHaveTextContent(
+      "Interrupted: the worker stopped before this run finished. Answered cases are kept.",
+    );
+  });
+
   it("reports a failed list load instead of an empty history", async () => {
     listRunsMock.mockRejectedValue(new Error("boom"));
     render(<RunHistory />);

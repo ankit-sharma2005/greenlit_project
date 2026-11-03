@@ -5,7 +5,7 @@ import { DemoPanel } from "./DemoPanel";
 import { RunProgressPanel } from "./RunProgressPanel";
 import { Spinner } from "./Spinner";
 import { ApiError } from "../lib/api";
-import { cancelRun, getRun, isTerminal, listRuns, type Run } from "../lib/runs";
+import { INTERRUPTED_NOTE, cancelRun, getRun, isTerminal, listRuns, type Run } from "../lib/runs";
 import type { MetricRow } from "../lib/evaluations";
 import "../styles/results.css";
 
@@ -28,6 +28,8 @@ const STATE_LABEL: Record<string, string> = {
   cancelled: "Cancelled",
   failed: "Failed",
   completed: "Completed",
+  stopped_by_limit: "Stopped by limit",
+  interrupted: "Interrupted",
 };
 
 function scoreOf(metric: MetricRow | undefined): string {
@@ -202,10 +204,18 @@ export function RunHistory() {
                   </td>
                   <td>{run.name}</td>
                   <td>
-                    <span className="badge" data-testid="run-history-state">
+                    <span
+                      className={`badge${run.state === "interrupted" ? " badge--interrupted" : ""}`}
+                      data-testid="run-history-state"
+                    >
                       {STATE_LABEL[run.state] ?? run.state}
                       {run.is_partial ? " · partial" : ""}
                     </span>
+                    {run.state === "interrupted" ? (
+                      <p className="card__hint" data-testid="run-history-interrupted-note">
+                        {INTERRUPTED_NOTE}
+                      </p>
+                    ) : null}
                   </td>
                   <td>
                     {run.verdict ? (

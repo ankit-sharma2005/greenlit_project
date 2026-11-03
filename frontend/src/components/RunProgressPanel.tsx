@@ -5,7 +5,7 @@ import { ProgressBar } from "./ProgressBar";
 import { ReportExport } from "./ReportExport";
 import { SafetySection } from "./SafetySection";
 import { Spinner } from "./Spinner";
-import { isTerminal, type Run } from "../lib/runs";
+import { INTERRUPTED_NOTE, isTerminal, type Run } from "../lib/runs";
 import "../styles/results.css";
 
 const VERDICT_LABEL: Record<string, string> = {
@@ -28,6 +28,7 @@ const STATE_LABEL: Record<string, string> = {
   failed: "Failed",
   completed: "Completed",
   stopped_by_limit: "Stopped by limit",
+  interrupted: "Interrupted",
 };
 
 export interface RunProgressPanelProps {
@@ -52,11 +53,20 @@ export function RunProgressPanel({ run, onCancel, cancelling = false }: RunProgr
       >
         <div className="card__header">
           <h2 id="run-progress-heading">Your test</h2>
-          <span className="badge" data-testid="run-state">
+          <span
+            className={`badge${run.state === "interrupted" ? " badge--interrupted" : ""}`}
+            data-testid="run-state"
+          >
             {STATE_LABEL[run.state] ?? run.state}
             {run.is_partial ? " · partial results" : ""}
           </span>
         </div>
+
+        {run.state === "interrupted" ? (
+          <p className="card__hint" data-testid="run-interrupted-note">
+            {INTERRUPTED_NOTE}
+          </p>
+        ) : null}
 
         <ProgressBar
           value={done}

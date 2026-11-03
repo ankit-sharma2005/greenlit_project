@@ -130,6 +130,36 @@ describe("RunProgressPanel", () => {
     expect(screen.getByTestId("run-failed-cases")).toHaveTextContent("Target returned HTTP 422");
   });
 
+  it("explains an interrupted run and offers no cancel button", () => {
+    render(
+      <RunProgressPanel
+        run={makeRun({
+          state: "interrupted",
+          is_partial: true,
+          progress: {
+            items_done: 3,
+            items_total: 10,
+            items_failed: 1,
+            items_cancelled: 6,
+            stage: "interrupted",
+            started_at: "2026-10-26T09:00:00Z",
+            updated_at: "2026-10-26T09:05:00Z",
+            elapsed_seconds: 300,
+          },
+        })}
+        onCancel={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("run-state")).toHaveTextContent("Interrupted");
+    expect(screen.getByTestId("run-state")).toHaveClass("badge--interrupted");
+    expect(screen.getByTestId("run-interrupted-note")).toHaveTextContent(
+      "Interrupted: the worker stopped before this run finished. Answered cases are kept.",
+    );
+    // The run is closed: there is nothing left to cancel.
+    expect(screen.queryByTestId("cancel-run")).not.toBeInTheDocument();
+  });
+
   it("labels partial results after a cancel", () => {
     render(
       <RunProgressPanel

@@ -66,6 +66,13 @@
   border-color: var(--color-border);
 }
 
+/* A run the worker abandoned: muted like a cancelled run, not a verdict colour. */
+.badge--interrupted {
+  color: var(--color-text-muted);
+  background: var(--color-surface-raised);
+  border-color: var(--color-border);
+}
+
 .notice {
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--color-border);
