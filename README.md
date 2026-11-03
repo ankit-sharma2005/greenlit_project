@@ -9,11 +9,18 @@ a safety section, the judge that scored it, and an exportable report.
 
 - **Accounts and sessions:** Argon2id passwords, httpOnly cookie sessions with rotating
   refresh tokens (access 15 min, refresh 14 days), roles (`admin`, `member`, `reviewer`) and
-  an append-only audit log. The browser silently refreshes once on 401 via a single-flight
-  call with Web Locks; if the 14-day refresh cookie is missing or revoked the user is signed
-  out and redirected to `/login` with a session-expired message. (Browsers without Web Locks
-  and idle sessions longer than 14 days are not proven.) The first account to register
-  becomes the admin.
+  an append-only audit log. A 401 triggers one silent refresh and one replay of the request;
+  ten parallel 401s share a single refresh, and the refresh runs inside
+  `navigator.locks.request("greenlit-refresh")` when the browser has Web Locks. If the
+  14-day refresh cookie is missing or revoked the user is signed out and sent to `/login`
+  with "Your session expired. Please sign in again." Each claim is tested: retry-once,
+  one refresh for parallel 401s, no loop on a second 401, auth endpoints exempt, and no
+  sign-out on a refresh 5xx or network error in `frontend/src/lib/api.test.ts`; one expiry
+  signal, the Web Locks path and its fallbacks in `frontend/src/lib/session.test.ts`; the
+  mount-time refresh and the anonymous fallback in `frontend/src/auth/AuthProvider.test.tsx`.
+  Not proven: browsers without Web Locks beyond the stubbed fallback, idle sessions longer
+  than 14 days, and the backend's refresh-token reuse detection (unchanged here). The first
+  account to register becomes the admin.
 - **Providers:** Ollama and any OpenAI-compatible endpoint, with a connection test,
   encrypted keys and rate limits.
 - **Datasets:** upload a CSV/JSON golden set, then approve a version. Dataset Studio can

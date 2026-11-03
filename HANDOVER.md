@@ -114,8 +114,14 @@ properties with a dark default and a light theme.
   implements single-flight silent token refresh on 401 with Web Locks (skipping auth
   endpoints); on a failed refresh the app emits `greenlit:session-expired`, sets the auth
   state to anonymous, and `RequireAuth`/`LoginPage` show "Your session expired. Please
-  sign in again." If the 14-day refresh cookie is missing or revoked the session ends;
-  browsers without Web Locks and idle sessions longer than 14 days are not proven.
+  sign in again." Tests: `lib/api.test.ts` (retry-once, one refresh for ten parallel 401s,
+  no loop on a second 401, auth endpoints exempt, no sign-out on a refresh 5xx/network
+  error, unreadable bodies not replayed), `lib/session.test.ts` (one expiry signal per
+  refused refresh, Web Locks inside `navigator.locks.request("greenlit-refresh")`, and the
+  fallbacks when the API is missing or the lock throws), and `auth/AuthProvider.test.tsx`
+  (mount-time `/me` 401 → refresh → `/me`, anonymous when the refresh is refused). Not
+  proven: browsers without Web Locks beyond the stubbed fallback, idle sessions longer than
+  14 days, and the backend's refresh-token reuse detection (unchanged).
 
 **MCP server (`mcp_server/`)** — a separate stdio process for MCP clients (Claude,
 Freebuff, Copilot). It is a thin client over the same REST API: `client.py` signs in with
@@ -152,7 +158,7 @@ bash scripts/run-e2e.sh
 - Backend tests live in `backend/tests`, one module per area. They never touch a real
   provider: `ChatFn` is injected, and so are the queue and the progress reader. Dataset
   source-generation tests build a small PDF fixture at test time and fake the model call.
-  The suite currently collects 627 tests (626 passed, 1 skipped), and a full run on 2026-11-03
+  The suite currently collects 633 tests (632 passed, 1 skipped), and a full run on 2026-11-03
 exited 0. `tests/test_quirk_failures.py` runs the real connector against
   `tests/support/quirk_server.py` (and a generated TLS server) for the failure classes
   listed under "Real-world failure classes" below. `tests/test_operations.py` covers the
@@ -163,9 +169,12 @@ exited 0. `tests/test_quirk_failures.py` runs the real connector against
   SSE/NDJSON/text/stall/oversize behaviour, and `tests/test_curl_credentials.py` uses a
   server that refuses anything without the imported cookie and bearer token.
 - Frontend component tests are Vitest + Testing Library next to the components; the
-  suite is currently 128 tests in 25 files (including `NewTestPage.test.tsx`, which proves
-  the permission box is required and that the attack-probe box starts off).
-- `frontend/tests` is the Playwright suite (18 tests in 11 specs): admin/accounts and the
+  suite is currently 163 tests in 27 files (including `NewTestPage.test.tsx`, which proves
+  the permission box is required and that the attack-probe box starts off, and
+  `lib/api.test.ts` + `lib/session.test.ts` + `auth/AuthProvider.test.tsx`, which prove the
+  silent refresh).
+- `frontend/tests` is the Playwright suite (20 tests in 12 specs, including
+  `e2e-session-refresh.spec.ts`): admin/accounts and the
   results page, Try the demo, baseline regression, calibration (label → kappa), judge
   provenance, the prompt app (prices typed into the provider's row in Settings, then
   the priced cost estimate on the verdict),
@@ -292,6 +301,6 @@ with it.
   beside them.
 - **Test Chat:** manual chat with the app under test.
 - **Tests still to be run when Docker is available:** none of the current suite is
-  skipped — all 17 Playwright tests are exercised against the disposable stack — but any
+  skipped — all 20 Playwright tests are exercised against the disposable stack — but any
   browser-level coverage of the features in the two lists above will have to be added with
   them.
