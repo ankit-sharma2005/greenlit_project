@@ -11,12 +11,18 @@ import {
 } from "../components/UploadOutputsPanel";
 import { Spinner } from "../components/Spinner";
 import { TargetCheckPanel } from "../components/TargetCheckPanel";
+import { WebsiteWizard } from "../components/WebsiteWizard";
 import { parseCurl as parseCurlLocally } from "../lib/curl";
 import { parseCurl, testConnection } from "../lib/connectors";
 import { ApiError } from "../lib/api";
 import { listDatasets } from "../lib/datasets";
 import { listProviders } from "../lib/providers";
-import type { TargetCheckRequest } from "../lib/targets";
+import {
+  acceptTargetCheck,
+  checkTarget,
+  type TargetCheck,
+  type TargetCheckRequest,
+} from "../lib/targets";
 import {
   cancelRun,
   getRun,
@@ -74,6 +80,44 @@ function chosenTestTypes(types: TestTypes): TestType[] {
   if (types.safety) chosen.push("safety");
   if (types.operations) chosen.push("operations");
   return chosen;
+}
+
+function bodyTemplateWithQuestionPath(template: string, path: string): string | null {
+  const marker = "__greenlit_question_placeholder__";
+  const normalized = template.replace(/\{\{?input\}?\}/g, JSON.stringify(marker));
+  let body: unknown;
+  try {
+    body = JSON.parse(normalized);
+  } catch {
+    return null;
+  }
+
+  const tokens = path.match(/[^.[\]]+|\[\d+\]/g);
+  if (!tokens?.length) return null;
+  let current: unknown = body;
+  for (const token of tokens.slice(0, -1)) {
+    const key = token.startsWith("[") ? Number(token.slice(1, -1)) : token;
+    if (typeof key === "number") {
+      if (!Array.isArray(current) || key >= current.length) return null;
+      current = current[key];
+    } else {
+      if (typeof current !== "object" || current === null || !(key in current)) return null;
+      current = (current as Record<string, unknown>)[key];
+    }
+  }
+  const finalToken = tokens[tokens.length - 1];
+  if (!finalToken) return null;
+  const finalKey = finalToken.startsWith("[")
+    ? Number(finalToken.slice(1, -1))
+    : finalToken;
+  if (typeof finalKey === "number") {
+    if (!Array.isArray(current) || finalKey >= current.length) return null;
+    current[finalKey] = marker;
+  } else {
+    if (typeof current !== "object" || current === null || !(finalKey in current)) return null;
+    (current as Record<string, unknown>)[finalKey] = marker;
+  }
+  return JSON.stringify(body).replaceAll(JSON.stringify(marker), "{{input}}");
 }
 
 /** Home: one page where a first-time user points GreenLit at an app and gets a verdict. */
@@ -145,7 +189,24 @@ export function NewTestPage() {
     import("../lib/connectors").ConnectTestResponse | null
   >(null);
   const [answerPath, setAnswerPath] = useState("");
-
+  const [websiteWizard, setWebsiteWizard] = useState(false);
+  const [websiteCurl, setWebsiteCurl] = useState("");
+  const [websiteMessage, setWebsiteMessage] = useState("");
+  const [websiteParsed, setWebsiteParsed] = useState<
+    | {
+        method: string;
+        url: string;
+        body_template: string;
+        question_path: string | null;
+        headers_secret: string | null;
+        header_names: string[];
+      }
+    | null
+  >(null);
+  const [websiteCheck, setWebsiteCheck] = useState<TargetCheck | null>(null);
+  const [websiteChecking, setWebsiteChecking] = useState(false);
+  const [websiteError, setWebsiteError] = useState<string | null>(null);
+  const [websiteSelectedPath, setWebsiteSelectedPath] = useState("");
   // The caps sent with every run; an empty box means "no cap", not zero.
   const runCaps = useMemo(
     () => ({
@@ -202,6 +263,167 @@ export function NewTestPage() {
     setTargetCheckId(checkId);
   }, []);
 
+  const runWebsiteCheck = useCallback(async (selectedPath?: string) => {
+    setWebsiteError(null);
+    if (!websiteMessage.trim()) {
+      setWebsiteError("Type the exact message you sent to the chatbot.");
+      return;
+    }
+    if (!permissionConfirmed || !permissionReference.trim()) {
+      setWebsiteError("Confirm permission and enter its reference before reading the website.");
+      return;
+    }
+
+    let parsed = websiteParsed;
+    if (websiteCurl.trim()) {
+      const local = parseCurlLocally(websiteCurl);
+      if (!local) {
+        setWebsiteError(
+          "That does not look like a cURL command with a URL. Paste the full command, starting with “curl”.",
+        );
+        return;
+      }
+      try {
+        const imported = await parseCurl(websiteCurl);
+        setWebsiteCurl("");
+        const explicitMethod = websiteCurl.match(
+          /(?:^|\s)(?:-X|--request)\s+["']?([^\s"']+)/i,
+        )?.[1];
+        const importedMethod = explicitMethod?.toUpperCase() ?? imported.method.toUpperCase();
+        if (importedMethod !== "POST") {
+          setWebsiteError(
+            `This request uses method ${importedMethod}. GreenLit sends POST today.`,
+          );
+          return;
+        }
+        if (!/(?:^|\s)(?:-d|--data(?:-raw|-binary|-ascii)?)(?:\s|$)/i.test(websiteCurl)) {
+          setWebsiteError("Only POST requests with a JSON request body are supported.");
+          return;
+        }
+        const bodyTemplate = imported.body_template || '{"question": {{input}}}';
+        try {
+          JSON.parse(bodyTemplate.replace(/\{\{?input\}?\}/g, '"sample"'));
+        } catch {
+          setWebsiteError("Only POST requests with a JSON request body are supported.");
+          return;
+        }
+        parsed = {
+          method: imported.method,
+          url: imported.url,
+          body_template: bodyTemplate,
+          question_path: null,
+          headers_secret: imported.headers_secret,
+          header_names: imported.header_names,
+        };
+        setWebsiteParsed(parsed);
+        setUrl(imported.url);
+        setCurlSecret(imported.headers_secret ?? "");
+        setCurlHeaderNames(imported.header_names);
+        setResponseFormat("json");
+        setAnswerPath("");
+        setWebsiteSelectedPath("");
+        setDetectResult({
+          success: true,
+          message: "Website request imported",
+          detected_answer_path: null,
+          detected_context_path: null,
+          detected_request_shape: bodyTemplate,
+        });
+      } catch (caught) {
+        setWebsiteError(
+          caught instanceof ApiError
+            ? caught.message
+            : `Could not import the cURL request from ${local.url}.`,
+        );
+        return;
+      }
+    }
+    if (!parsed) {
+      setWebsiteError("Paste and read a cURL request first.");
+      return;
+    }
+
+    setWebsiteChecking(true);
+    setWebsiteCheck(null);
+    handleCheckAccepted(null);
+    try {
+      const result = await checkTarget({
+        target: parsed.url,
+        method: "POST",
+        body_template: parsed.body_template,
+        headers_secret: parsed.headers_secret ?? undefined,
+        header_names: parsed.header_names,
+        sample_question: websiteMessage,
+        answer_path: selectedPath || undefined,
+        permission_confirmed: true,
+        permission_reference: permissionReference.trim(),
+        safety_attacks_confirmed: false,
+        allow_private_targets: false,
+        response_format: "json",
+      });
+      if (result.question_path) {
+        const bodyTemplate = bodyTemplateWithQuestionPath(
+          parsed.body_template,
+          result.question_path,
+        );
+        if (!bodyTemplate) {
+          setWebsiteError("Could not place the question placeholder in the imported JSON body.");
+          return;
+        }
+        parsed = {
+          ...parsed,
+          body_template: bodyTemplate,
+          question_path: result.question_path,
+        };
+        setWebsiteParsed(parsed);
+        setDetectResult({
+          success: true,
+          message: "Website request imported",
+          detected_answer_path: null,
+          detected_context_path: null,
+          detected_request_shape: bodyTemplate,
+        });
+      }
+      setWebsiteCheck(result);
+      setWebsiteSelectedPath(selectedPath ?? "");
+      setAnswerPath(selectedPath ?? "");
+    } catch (caught) {
+      setWebsiteError(
+        caught instanceof ApiError ? caught.message : "Could not read the website response.",
+      );
+    } finally {
+      setWebsiteChecking(false);
+    }
+  }, [
+    handleCheckAccepted,
+    permissionConfirmed,
+    permissionReference,
+    websiteCurl,
+    websiteMessage,
+    websiteParsed,
+  ]);
+
+  const websiteAcceptCheck = useCallback(
+    async (checked: boolean) => {
+      if (!websiteCheck) return;
+      if (!checked) {
+        handleCheckAccepted(null);
+        setWebsiteCheck(null);
+        return;
+      }
+      try {
+        const accepted = await acceptTargetCheck(websiteCheck.check_id);
+        setWebsiteCheck(accepted);
+        handleCheckAccepted(accepted.accepted ? accepted.check_id : null);
+      } catch (caught) {
+        setWebsiteError(
+          caught instanceof ApiError ? caught.message : "Could not accept this check.",
+        );
+        handleCheckAccepted(null);
+      }
+    },
+    [handleCheckAccepted, websiteCheck],
+  );
   // Approved dataset versions are the only thing a run may execute.
   useEffect(() => {
     listDatasets()
@@ -678,6 +900,26 @@ export function NewTestPage() {
     }
   };
 
+  const websiteRunReady = useCallback(
+    () =>
+      Boolean(
+        websiteCheck?.accepted &&
+          websiteCheck.extraction_ok &&
+          websiteSelectedPath &&
+          websiteCheck.mapping_path === websiteSelectedPath &&
+          websiteCheck.question_path &&
+          permissionConfirmed &&
+          permissionReference.trim(),
+      ),
+    [permissionConfirmed, permissionReference, websiteCheck, websiteSelectedPath],
+  );
+
+  const targetRunReady = useCallback(() => {
+    if (connector !== "http_endpoint" || runsOnMyComputer) return !runsOnMyComputer || targetCheckId != null;
+    if (websiteWizard) return websiteRunReady();
+    return targetCheckId != null;
+  }, [connector, runsOnMyComputer, targetCheckId, websiteRunReady, websiteWizard]);
+
   return (
     <>
       <header className="page__header">
@@ -716,7 +958,7 @@ export function NewTestPage() {
         <p className="card__hint">
           Three entry points are available here: an HTTP endpoint, a prompt app (system prompt plus
           model), or uploaded outputs (CSV or JSON). Other entry points (Python function, Docker
-          image, Git repository, CLI command, Proxy mode, Website URL, MCP server) are coming soon.
+          image, Git repository, CLI command, Proxy mode, MCP server) are coming soon.
         </p>
 
         <div style={{ marginTop: "var(--space-5)" }}>
@@ -740,11 +982,55 @@ export function NewTestPage() {
               <option disabled>Docker image</option>
               <option disabled>Git repository</option>
               <option disabled>CLI command</option>
-              <option disabled>Website URL</option>
               <option disabled>MCP server</option>
             </optgroup>
           </select>
         </div>
+
+        {websiteWizard ? (
+          <WebsiteWizard
+            check={websiteCheck}
+            busy={websiteChecking}
+            error={websiteError}
+            curlText={websiteCurl}
+            onCurlChange={setWebsiteCurl}
+            message={websiteMessage}
+            onMessageChange={setWebsiteMessage}
+            onRead={() => runWebsiteCheck()}
+            canRead={
+              (websiteCurl.trim().length > 0 || websiteParsed !== null) &&
+              websiteMessage.trim().length > 0 &&
+              permissionConfirmed &&
+              permissionReference.trim().length > 0
+            }
+            candidates={websiteCheck?.answer_candidates ?? []}
+            selectedPath={websiteSelectedPath}
+            onSelectPath={(path) => {
+              setWebsiteSelectedPath(path);
+              void runWebsiteCheck(path);
+            }}
+            accepted={websiteCheck?.accepted ?? false}
+            onAccept={websiteAcceptCheck}
+            headerNames={websiteParsed?.header_names ?? []}
+            onClose={() => {
+              setWebsiteWizard(false);
+              setWebsiteCurl("");
+              setWebsiteParsed(null);
+              setWebsiteCheck(null);
+              setWebsiteSelectedPath("");
+              setWebsiteError(null);
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            className="form__curl-button"
+            onClick={() => setWebsiteWizard(true)}
+            disabled={loading}
+          >
+            Website chatbot (wizard)
+          </button>
+        )}
 
         {connector === "http_endpoint" && (
           <div style={{ marginTop: "var(--space-5)" }}>
@@ -770,7 +1056,7 @@ export function NewTestPage() {
               {showCurl ? "Hide cURL" : "Paste cURL"}
             </button>
 
-            {showCurl && (
+            {showCurl && !websiteWizard && (
               <div style={{ marginTop: "var(--space-3)" }}>
                 <label className="form__label" htmlFor="curl-input">
                   Paste the full curl command:
@@ -1114,7 +1400,7 @@ export function NewTestPage() {
               an app you do not host.
             </p>
             <label className="form__label" htmlFor="permission-reference">
-              Who gave permission / reference (optional):
+              Who gave permission / reference (required for Website chatbot):
             </label>
             <input
               id="permission-reference"
@@ -1196,7 +1482,7 @@ export function NewTestPage() {
                 />
               </div>
 
-              {connector === "http_endpoint" && !runsOnMyComputer && checkRequest ? (
+              {connector === "http_endpoint" && !runsOnMyComputer && (!websiteWizard || !websiteParsed) && checkRequest ? (
                 <TargetCheckPanel
                   request={checkRequest}
                   onAccepted={handleCheckAccepted}
@@ -1237,7 +1523,7 @@ export function NewTestPage() {
                   variant="primary"
                   loading={startingRun}
                   onClick={() => void handleRunTest()}
-                  disabled={startingRun || startingSmoke || (!runsOnMyComputer && !targetCheckId)}
+                  disabled={startingRun || startingSmoke || (!runsOnMyComputer && !targetRunReady())}
                   data-testid="run-full"
                 >
                   {startingRun ? <Spinner size="sm" label="Starting your test" /> : "Run full test"}
@@ -1246,7 +1532,7 @@ export function NewTestPage() {
                   variant="secondary"
                   loading={startingSmoke}
                   onClick={() => void handleRunTest({ smoke: true })}
-                  disabled={startingRun || startingSmoke || (!runsOnMyComputer && !targetCheckId)}
+                  disabled={startingRun || startingSmoke || (!runsOnMyComputer && !targetRunReady())}
                   data-testid="run-smoke"
                 >
                   {startingSmoke ? (
@@ -1256,7 +1542,7 @@ export function NewTestPage() {
                   )}
                 </Button>
               </div>
-              {!runsOnMyComputer && !targetCheckId ? (
+              {!runsOnMyComputer && !targetRunReady() ? (
                 <p className="form__hint" data-testid="run-full-blocked">
                   Accept the extraction from the check above before starting a run. A smoke run is
                   five cases and is not a verdict.
