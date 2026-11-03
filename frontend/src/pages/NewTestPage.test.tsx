@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   quickTest: vi.fn(),
   getRun: vi.fn(),
   cancelRun: vi.fn(),
+  parseCurl: vi.fn(),
   listDatasets: vi.fn(),
   listProviders: vi.fn(),
   loadDemo: vi.fn(),
@@ -29,7 +30,11 @@ vi.mock("../lib/targets", async (importOriginal) => {
 
 vi.mock("../lib/connectors", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/connectors")>();
-  return { ...actual, testConnection: mocks.testConnection, parseCurl: vi.fn() };
+  return {
+    ...actual,
+    testConnection: mocks.testConnection,
+    parseCurl: mocks.parseCurl,
+  };
 });
 
 vi.mock("../lib/runs", async (importOriginal) => {
@@ -324,12 +329,148 @@ describe("NewTestPage target check", () => {
       dataset_version_id: "version-1",
       generated: true,
     });
+    mocks.getRun.mockReset();
+    mocks.cancelRun.mockReset();
     mocks.listDatasets.mockReset().mockResolvedValue({ items: [] });
     mocks.listProviders.mockReset().mockResolvedValue([]);
     mocks.loadDemo.mockReset();
     mocks.checkTarget.mockReset().mockResolvedValue(CHECK);
     mocks.acceptTargetCheck.mockReset().mockResolvedValue({ ...CHECK, accepted: true });
   });
+
+    describe("NewTestPage Website chatbot wizard", () => {
+      const WEBSITE_CHECK = {
+        check_id: "website-check-1",
+        expires_at: "2026-11-03T10:30:00Z",
+        accepted: false,
+        request: {
+          method: "POST",
+          url: "https://chat.example.com/ask",
+          headers: { Authorization: "XXXX" },
+          body: '{"question":"Hello"}',
+          input: "Hello",
+        },
+        status: 200,
+        latency_ms: 42,
+        answer: "The website chatbot answer",
+        answer_truncated: false,
+        extraction_ok: true,
+        mapping_path: null,
+        hint: null,
+        error: null,
+        answer_candidates: [{ path: "choices[0].message.content", preview: "The website chatbot answer" }],
+        question_path: "question",
+        question_path_reason: null,
+      };
+
+      beforeEach(() => {
+        mocks.testConnection.mockReset();
+        mocks.parseCurl.mockReset();
+        mocks.startRun.mockReset().mockResolvedValue(queuedRun());
+        mocks.quickTest.mockReset().mockResolvedValue({
+          run: queuedRun(),
+          dataset_id: "dataset-1",
+          dataset_version_id: "version-1",
+          generated: true,
+        });
+        mocks.getRun.mockReset();
+        mocks.cancelRun.mockReset();
+        mocks.listDatasets.mockReset().mockResolvedValue({ items: [] });
+        mocks.listProviders.mockReset().mockResolvedValue([]);
+        mocks.loadDemo.mockReset();
+        mocks.checkTarget.mockReset();
+        mocks.acceptTargetCheck.mockReset();
+      });
+
+      it("clears the pasted cURL and keeps runs blocked until permission and the selected check are accepted", async () => {
+        const user = userEvent.setup();
+        const curl =
+          `curl -X POST 'https://chat.example.com/ask' -H 'Content-Type: application/json' ` +
+          `-d '{"question":"Hello"}'`;
+        mocks.parseCurl.mockResolvedValue({
+          method: "POST",
+          url: "https://chat.example.com/ask",
+          header_names: ["Content-Type"],
+          headers_secret: "encrypted-headers",
+          body_template: '{"question": {{input}}}',
+          header_count: 1,
+        });
+        mocks.checkTarget
+          .mockResolvedValueOnce(WEBSITE_CHECK)
+          .mockResolvedValueOnce({
+            ...WEBSITE_CHECK,
+            mapping_path: "choices[0].message.content",
+          });
+        mocks.acceptTargetCheck.mockResolvedValue({
+          ...WEBSITE_CHECK,
+          accepted: true,
+          mapping_path: "choices[0].message.content",
+        });
+
+        renderPage();
+        await user.click(screen.getByRole("button", { name: "Website chatbot (wizard)" }));
+        fireEvent.change(screen.getByTestId("website-curl"), { target: { value: curl } });
+        await user.type(screen.getByTestId("website-message"), "Hello");
+        expect(screen.getByTestId("website-read")).toBeDisabled();
+        await user.click(screen.getByTestId("permission-confirmed"));
+        await user.type(screen.getByTestId("permission-reference"), "Approval 123");
+
+        await user.click(screen.getByTestId("website-read"));
+        expect(await screen.findByTestId("website-check-answer")).toHaveTextContent(
+          "The website chatbot answer",
+        );
+        expect(screen.getByTestId("website-curl")).toHaveValue("");
+        expect(mocks.parseCurl).toHaveBeenCalledWith(curl);
+        expect(mocks.checkTarget).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sample_question: "Hello",
+            headers_secret: "encrypted-headers",
+            permission_confirmed: true,
+            permission_reference: "Approval 123",
+            safety_attacks_confirmed: false,
+            response_format: "json",
+          }),
+        );
+        expect(screen.getByTestId("run-full")).toBeDisabled();
+
+        await user.click(screen.getByTestId("website-candidate-0"));
+        await waitFor(() => expect(mocks.checkTarget).toHaveBeenCalledTimes(2));
+        expect(mocks.checkTarget.mock.calls[1]?.[0]).toEqual(
+          expect.objectContaining({ answer_path: "choices[0].message.content" }),
+        );
+        const accept = screen.getByTestId("website-accept");
+        expect(accept).toBeEnabled();
+        await user.click(accept);
+        await waitFor(() => expect(screen.getByTestId("run-full")).toBeEnabled());
+      });
+
+      it("shows the supported-method message and clears a parsed non-POST command", async () => {
+        const user = userEvent.setup();
+        const curl = "curl -X GET https://chat.example.com/ask";
+        mocks.parseCurl.mockResolvedValue({
+          method: "GET",
+          url: "https://chat.example.com/ask",
+          header_names: [],
+          headers_secret: null,
+          body_template: null,
+          header_count: 0,
+        });
+
+        renderPage();
+        await user.click(screen.getByRole("button", { name: "Website chatbot (wizard)" }));
+        fireEvent.change(screen.getByTestId("website-curl"), { target: { value: curl } });
+        await user.type(screen.getByTestId("website-message"), "Hello");
+        await user.click(screen.getByTestId("permission-confirmed"));
+        await user.type(screen.getByTestId("permission-reference"), "Approval 123");
+        await user.click(screen.getByTestId("website-read"));
+
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+          "This request uses method GET. GreenLit sends POST today.",
+        );
+        expect(screen.getByTestId("website-curl")).toHaveValue("");
+        expect(mocks.checkTarget).not.toHaveBeenCalled();
+      });
+    });
 
   async function detectRemoteTarget() {
     await userEvent.type(screen.getByTestId("target-url"), "https://chat.example.com/ask");
