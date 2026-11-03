@@ -284,6 +284,8 @@ def _idempotency_hash(payload: RunCreateRequest, snapshot: Mapping[str, Any]) ->
         "is_smoke": bool(payload.is_smoke),
         # How the run sends its requests, for this connector.
         "method": snapshot.get("method") or "POST",
+        # Set by a GET run's query builder; empty here until that lands.
+        "query_key": snapshot.get("query_key") or "",
         "body_template": snapshot.get("body_template") or "",
         "answer_path": snapshot.get("answer_path") or "",
         "context_path": snapshot.get("context_path") or "",
