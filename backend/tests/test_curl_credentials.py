@@ -119,6 +119,19 @@ def test_parsed_curl_keeps_cookie_and_token_but_drops_host() -> None:
     assert not any(name.lower() == "host" for name in parsed.headers)
 
 
+def test_curl_url_after_explicit_method_is_parsed() -> None:
+    parsed = parse_curl(
+        'curl -X POST http://127.0.0.1:9501/chat '
+        '-H "Content-Type: application/json" '
+        "-d '{\"question\":\"What is GreenLit?\"}'"
+    )
+
+    assert parsed is not None
+    assert parsed.method == "POST"
+    assert parsed.url == "http://127.0.0.1:9501/chat"
+    assert parsed.body_template == '{"question": {{input}}}'
+
+
 def test_curl_cookie_flag_becomes_a_cookie_header() -> None:
     parsed = parse_curl("curl 'https://example.com/ask' -b 'a=1; b=2' -b 'c=3'")
     assert parsed is not None

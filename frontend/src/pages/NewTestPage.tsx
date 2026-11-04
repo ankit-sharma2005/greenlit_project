@@ -358,7 +358,7 @@ export function NewTestPage() {
         permission_confirmed: true,
         permission_reference: permissionReference.trim(),
         safety_attacks_confirmed: false,
-        allow_private_targets: false,
+        allow_private_targets: runsOnMyComputer,
         response_format: "json",
       });
       if (result.question_path) {
@@ -398,6 +398,7 @@ export function NewTestPage() {
     handleCheckAccepted,
     permissionConfirmed,
     permissionReference,
+    runsOnMyComputer,
     websiteCurl,
     websiteMessage,
     websiteParsed,
@@ -915,8 +916,9 @@ export function NewTestPage() {
   );
 
   const targetRunReady = useCallback(() => {
-    if (connector !== "http_endpoint" || runsOnMyComputer) return !runsOnMyComputer || targetCheckId != null;
+    if (connector !== "http_endpoint") return true;
     if (websiteWizard) return websiteRunReady();
+    if (runsOnMyComputer) return true;
     return targetCheckId != null;
   }, [connector, runsOnMyComputer, targetCheckId, websiteRunReady, websiteWizard]);
 
@@ -1523,7 +1525,7 @@ export function NewTestPage() {
                   variant="primary"
                   loading={startingRun}
                   onClick={() => void handleRunTest()}
-                  disabled={startingRun || startingSmoke || (!runsOnMyComputer && !targetRunReady())}
+                  disabled={startingRun || startingSmoke || !targetRunReady()}
                   data-testid="run-full"
                 >
                   {startingRun ? <Spinner size="sm" label="Starting your test" /> : "Run full test"}
@@ -1532,7 +1534,7 @@ export function NewTestPage() {
                   variant="secondary"
                   loading={startingSmoke}
                   onClick={() => void handleRunTest({ smoke: true })}
-                  disabled={startingRun || startingSmoke || (!runsOnMyComputer && !targetRunReady())}
+                  disabled={startingRun || startingSmoke || !targetRunReady()}
                   data-testid="run-smoke"
                 >
                   {startingSmoke ? (
@@ -1542,7 +1544,7 @@ export function NewTestPage() {
                   )}
                 </Button>
               </div>
-              {!runsOnMyComputer && !targetRunReady() ? (
+              {(!runsOnMyComputer || websiteWizard) && !targetRunReady() ? (
                 <p className="form__hint" data-testid="run-full-blocked">
                   Accept the extraction from the check above before starting a run. A smoke run is
                   five cases and is not a verdict.

@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+import shlex
 from dataclasses import dataclass, field
 
 from app.security.keys import decrypt_key, encrypt_key
@@ -55,14 +56,34 @@ def parse_curl(curl: str) -> ParsedCurl | None:
 
     text = curl.strip()
 
-    # Extract URL
-    url_match = re.search(r"curl\s+(?:-[^\s]+\s+)*[\"']([^\"']+)[\"']", text)
-    if not url_match:
-        url_match = re.search(r"curl\s+(?:-[^\s]+\s+)*([^\s]+)", text)
-    if not url_match:
+    try:
+        tokens = shlex.split(text)
+    except ValueError:
         return None
-    url = url_match.group(1)
-    if url.startswith("-"):
+    url = ""
+    skip_value = False
+    value_options = {
+        "-X",
+        "--request",
+        "-H",
+        "--header",
+        "-b",
+        "--cookie",
+        "-u",
+        "--user",
+        *_DATA_FLAGS,
+    }
+    for token in tokens[1:]:
+        if skip_value:
+            skip_value = False
+            continue
+        if token in value_options:
+            skip_value = True
+            continue
+        if token.startswith("http://") or token.startswith("https://"):
+            url = token
+            break
+    if not url:
         return None
 
     method = "GET"
