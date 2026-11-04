@@ -158,8 +158,12 @@ bash scripts/run-e2e.sh
 - Backend tests live in `backend/tests`, one module per area. They never touch a real
   provider: `ChatFn` is injected, and so are the queue and the progress reader. Dataset
   source-generation tests build a small PDF fixture at test time and fake the model call.
-  The suite currently collects 633 tests (632 passed, 1 skipped), and a full run on 2026-11-03
-exited 0. `tests/test_quirk_failures.py` runs the real connector against
+  `python -m pytest --collect-only -q` reports 649 tests when its per-file counts are summed.
+  The single `python -m pytest -q` run on 2026-11-04 had two Redis-dependent failures:
+  `test_the_api_check_then_accept_unlocks_a_remote_run` and
+  `test_a_local_run_needs_no_check` could not connect to localhost:6382. The captured
+  output had no final passed/skipped/time summary, so those figures are not claimed.
+  `tests/test_quirk_failures.py` runs the real connector against
   `tests/support/quirk_server.py` (and a generated TLS server) for the failure classes
   listed under "Real-world failure classes" below. `tests/test_operations.py` covers the
   percentile edge cases (one case, even and odd counts, all failures), and
@@ -169,20 +173,23 @@ exited 0. `tests/test_quirk_failures.py` runs the real connector against
   SSE/NDJSON/text/stall/oversize behaviour, and `tests/test_curl_credentials.py` uses a
   server that refuses anything without the imported cookie and bearer token.
 - Frontend component tests are Vitest + Testing Library next to the components; the
-  suite is currently 163 tests in 27 files (including `NewTestPage.test.tsx`, which proves
+  measured `npx vitest run` result is 169 tests in 28 files (including
+  `NewTestPage.test.tsx`, which proves
   the permission box is required and that the attack-probe box starts off, and
   `lib/api.test.ts` + `lib/session.test.ts` + `auth/AuthProvider.test.tsx`, which prove the
   silent refresh).
-- `frontend/tests` is the Playwright suite (20 tests in 12 specs, including
+- `frontend/tests` is the Playwright suite (21 tests in 13 specs, measured by
+  `npx playwright test --list`; the one website wizard spec passed against the local
+  demo in this step: `website chatbot wizard checks the local demo and keeps HTTP
+  endpoint flow working`. It includes
   `e2e-session-refresh.spec.ts`): admin/accounts and the
   results page, Try the demo, baseline regression, calibration (label → kappa), judge
   provenance, the prompt app (prices typed into the provider's row in Settings, then
   the priced cost estimate on the verdict),
   report download, safety both ways, the setup checklist and audit screen, uploaded
-  outputs, and PDF dataset generation through preview and approval.
-  It runs against fake apps started inside the test process (`tests/helpers.ts`), so no
-  real model is needed. The last full run from a clean stack passed all of them:
-  `18 passed (9.8m)`, exit code 0.
+  outputs, PDF dataset generation through preview and approval, and the website chatbot
+  wizard against the local demo. It runs against local or fake apps; no real third-party
+  site is used.
 - `scripts/run-e2e.sh` uses a uniquely named Compose project per invocation (Postgres 5536,
   Redis 6482, fresh volume), the API on 8103, a solo Celery worker, Vite on 5277 and the two
   demo helpdesks on 9501/9502. It stops only that invocation's containers, preserves its
@@ -291,6 +298,16 @@ with it.
 
 ## Still marked "Coming soon"
 
+### New Test entry points
+
+| Entry point | Status |
+| --- | --- |
+| HTTP endpoint | Built |
+| Website chatbot | Built as a cURL wizard over the HTTP endpoint |
+| Prompt app | Built |
+| Upload outputs | Built |
+| MCP server target | Not built; the standalone MCP server is a separate integration |
+
 - **Settings sections:** Connectors (saved targets), Account, Preferences. (Criteria and
   Safety are no longer placeholders: each tab renders its catalogue read-only, from
   `GET /api/v1/criteria` and `GET /api/v1/safety/sets`. Editing criteria weights or the
@@ -300,7 +317,6 @@ with it.
   (traced), Docker image, Git repository, CLI command, and the disabled optgroup options
   beside them.
 - **Test Chat:** manual chat with the app under test.
-- **Tests still to be run when Docker is available:** none of the current suite is
-  skipped — all 20 Playwright tests are exercised against the disposable stack — but any
-  browser-level coverage of the features in the two lists above will have to be added with
-  them.
+- The Playwright inventory currently contains 21 tests in 13 specs. The website chatbot
+  spec was run against the disposable stack; the complete Playwright suite has not been
+  rerun since it was added.

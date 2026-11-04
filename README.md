@@ -31,6 +31,8 @@ a safety section, the judge that scored it, and an exportable report.
 - **Runs:** three entry points (HTTP endpoint, prompt app, uploaded outputs), executed in
   a Celery worker with live progress and cancel. A run snapshots its settings, so
   changing a provider later never rewrites history.
+- **Website chatbot:** a cURL wizard over the HTTP endpoint reads one POST/JSON
+  response and requires you to accept the answer extraction before a full run.
 - **Scoring:** criteria profiles with weights, thresholds and hard gates; metrics that
   were not measured are reported as **not instrumented**, never as zero. **Settings →
   Criteria** shows the engine's real numbers read-only: a No-Go / Review / Go scale built

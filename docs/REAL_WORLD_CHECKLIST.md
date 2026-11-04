@@ -21,6 +21,22 @@ things in, and what to do when a case fails.
 5. **Never point it at production customer data.** Use a staging dataset and a
    staging account; the answers GreenLit stores are the app's answers.
 
+## How to find a website chatbot's API
+
+1. **Get permission first.** Some sites forbid automated testing in their terms: get
+   written permission first. Use a test account and a harmless message.
+2. **Copy the request.** Open the chatbot in your browser, open DevTools → Network,
+   send one normal message, then right-click its fetch/XHR request and choose Copy as cURL.
+3. **Read it in GreenLit.** On New Test, choose Website chatbot, paste the cURL, type
+   the exact message you sent, confirm permission and its reference, then click **Read it**.
+4. **Confirm the extraction.** Select the answer field that contains the chatbot's
+   reply. Check the preview, tick **This extraction looks right**, then start a run
+   when the button becomes enabled.
+
+This wizard supports POST requests with JSON bodies. Chatbots which stream over
+WebSockets, hide the call behind anti-bot checks, or need a GET request may not work
+and will show a structured error.
+
 ## When a case fails, read the kind first
 
 | What you see | What it means | What to do |
