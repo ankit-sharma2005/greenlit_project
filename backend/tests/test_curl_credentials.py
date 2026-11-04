@@ -121,9 +121,9 @@ def test_parsed_curl_keeps_cookie_and_token_but_drops_host() -> None:
 
 def test_curl_url_after_explicit_method_is_parsed() -> None:
     parsed = parse_curl(
-        'curl -X POST http://127.0.0.1:9501/chat '
+        "curl -X POST http://127.0.0.1:9501/chat "
         '-H "Content-Type: application/json" '
-        "-d '{\"question\":\"What is GreenLit?\"}'"
+        '-d \'{"question":"What is GreenLit?"}\''
     )
 
     assert parsed is not None

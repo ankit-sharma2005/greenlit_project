@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Iterator
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -17,9 +19,11 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.main import app
 from app.schemas.runs import RunCreateRequest
 from app.services import target_check
 from app.services.connectors import ConnectorError, Trace
+from app.services.run_service import get_enqueue
 from app.services.target_check import (
     _CANDIDATE_DEPTH,
     HARMLESS_INPUT,
@@ -55,6 +59,30 @@ def hello_trace_with_raw(
 PASSWORD = "correct horse battery staple"
 
 SECRET_TOKEN = "sk-live-SECRET-1234567890"
+
+
+@pytest.fixture(autouse=True)
+def runtime() -> Iterator[SimpleNamespace]:
+    """Use an in-memory queue so run-start tests do not need Redis or a broker."""
+    queue: list[uuid.UUID] = []
+    app.dependency_overrides[get_enqueue] = lambda: queue.append
+    yield SimpleNamespace(queue=queue)
+    app.dependency_overrides.pop(get_enqueue, None)
+
+
+SNAPSHOT: dict[str, Any] = {
+    "url": "https://app.example.com/chat?token=abc123&lang=en",
+    "method": "post",
+    "body_template": '{"question": {{input}}}',
+    "headers": {"Authorization": f"Bearer {SECRET_TOKEN}", "X-Trace": "on"},
+    "answer_path": "answer",
+    "context_path": None,
+    "timeout_seconds": 5,
+    "response_format": "json",
+    "stream_content_path": None,
+    "allow_private_targets": True,
+    "max_retries": 3,
+}
 
 SNAPSHOT: dict[str, Any] = {
     "url": "https://app.example.com/chat?token=abc123&lang=en",
@@ -529,6 +557,7 @@ def test_the_api_check_then_accept_unlocks_a_remote_run(
     client: TestClient,
     session_factory: sessionmaker[Session],
     monkeypatch: pytest.MonkeyPatch,
+    runtime: SimpleNamespace,
 ) -> None:
     register(client)
     dataset = approve_dataset(client)
@@ -563,6 +592,8 @@ def test_the_api_check_then_accept_unlocks_a_remote_run(
     started = client.post("/api/v1/runs", json=body)
     assert started.status_code == 202, started.text
     assert started.json()["permission"]["reference"] == "Ops ticket 4711"
+    assert len(runtime.queue) == 1
+    assert str(runtime.queue[0]) == started.json()["id"]
 
 
 def test_a_remote_run_without_a_check_is_refused(
@@ -577,7 +608,7 @@ def test_a_remote_run_without_a_check_is_refused(
     assert "Check the target first" in response.text
 
 
-def test_a_local_run_needs_no_check(client: TestClient) -> None:
+def test_a_local_run_needs_no_check(client: TestClient, runtime: SimpleNamespace) -> None:
     register(client)
     dataset = approve_dataset(client)
     body = {
@@ -591,6 +622,8 @@ def test_a_local_run_needs_no_check(client: TestClient) -> None:
 
     response = client.post("/api/v1/runs", json=body)
     assert response.status_code == 202, response.text
+    assert len(runtime.queue) == 1
+    assert str(runtime.queue[0]) == response.json()["id"]
 
 
 def test_accept_after_the_check_expired_is_a_clear_conflict(
