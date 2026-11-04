@@ -87,7 +87,7 @@ def parse_curl(curl: str) -> ParsedCurl | None:
         return None
 
     method = "GET"
-    method_match = re.search(r"-X\s+(POST|GET|PUT|PATCH|DELETE)", text, re.IGNORECASE)
+    method_match = re.search(r"(?:-X|--request)\s+(POST|GET|PUT|PATCH|DELETE)", text, re.IGNORECASE)
     if method_match:
         method = method_match.group(1).upper()
     elif "-d" in text or "--data" in text:

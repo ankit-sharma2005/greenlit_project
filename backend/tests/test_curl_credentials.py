@@ -132,6 +132,43 @@ def test_curl_url_after_explicit_method_is_parsed() -> None:
     assert parsed.body_template == '{"question": {{input}}}'
 
 
+@pytest.mark.parametrize(
+    ("curl", "expected_method", "expected_header_count"),
+    [
+        (
+            'curl -X POST https://example.test/ask -H "A: b" -d \'{"q":"x"}\'',
+            "POST",
+            1,
+        ),
+        ("curl --request POST --url https://example.test/ask", "POST", 0),
+        (
+            'curl -H "A: b" -X POST \'https://example.test/ask\' --data-raw \'{"q":"x"}\'',
+            "POST",
+            1,
+        ),
+        (
+            "curl 'https://example.test/ask' -H 'A: b' --data-raw '{\"q\":\"x\"}'",
+            "POST",
+            1,
+        ),
+        (
+            'curl -L -s --compressed https://example.test/ask -d \'{"q":"x"}\'',
+            "POST",
+            0,
+        ),
+    ],
+)
+def test_curl_url_is_found_regardless_of_option_order(
+    curl: str, expected_method: str, expected_header_count: int
+) -> None:
+    parsed = parse_curl(curl)
+
+    assert parsed is not None
+    assert parsed.method == expected_method
+    assert parsed.url == "https://example.test/ask"
+    assert parsed.header_count == expected_header_count
+
+
 def test_curl_cookie_flag_becomes_a_cookie_header() -> None:
     parsed = parse_curl("curl 'https://example.com/ask' -b 'a=1; b=2' -b 'c=3'")
     assert parsed is not None
