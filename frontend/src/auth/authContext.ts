@@ -1,6 +1,6 @@
 import { createContext, useContext } from "react";
 
-import type { CurrentUser, RegisterPayload } from "../lib/authApi";
+import type { CurrentUser, ProfileUpdatePayload, RegisterPayload } from "../lib/authApi";
 
 export type AuthStatus = "loading" | "authenticated" | "anonymous";
 
@@ -10,6 +10,8 @@ export interface AuthContextValue {
   login: (email: string, password: string) => Promise<CurrentUser>;
   register: (payload: RegisterPayload) => Promise<CurrentUser>;
   logout: () => Promise<void>;
+  /** Save a display-name change and update the shared user, so the topbar follows. */
+  updateProfile: (payload: ProfileUpdatePayload) => Promise<CurrentUser>;
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null);

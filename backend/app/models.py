@@ -63,6 +63,11 @@ class User(TimestampMixin, Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False, default=ROLE_MEMBER)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Per-account UI preferences (theme today), so two accounts on one browser do
+    # not share a setting. Unknown keys are ignored by the API rather than served.
+    preferences: Mapped[dict[str, Any]] = mapped_column(
+        JSON, nullable=False, default=dict, server_default="{}"
+    )
 
     refresh_tokens: Mapped[list[RefreshToken]] = relationship(
         back_populates="user", cascade="all, delete-orphan"

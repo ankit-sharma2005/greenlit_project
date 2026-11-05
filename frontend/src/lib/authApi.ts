@@ -21,6 +21,10 @@ export interface RegisterPayload {
   password: string;
 }
 
+export interface ProfileUpdatePayload {
+  name: string;
+}
+
 export function loginRequest(email: string, password: string): Promise<AuthResponse> {
   return apiRequest<AuthResponse>("/api/v1/auth/login", {
     method: "POST",
@@ -41,4 +45,9 @@ export function logoutRequest(): Promise<{ message: string }> {
 
 export function fetchCurrentUser(): Promise<CurrentUser> {
   return apiRequest<CurrentUser>("/api/v1/auth/me");
+}
+
+/** Change the signed-in user's display name; the API scopes it to the session. */
+export function updateProfileRequest(payload: ProfileUpdatePayload): Promise<CurrentUser> {
+  return apiRequest<CurrentUser>("/api/v1/auth/me", { method: "PATCH", body: payload });
 }

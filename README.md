@@ -95,6 +95,16 @@ a safety section, the judge that scored it, and an exportable report.
   settle (unavailable, unsure, or a label that disagrees) and label them; the Calibration
   page reports raw agreement and Cohen's kappa, so a judge that always says "pass" cannot
   look accurate. Plain members can run tests but cannot label.
+- **Account and preferences:** Settings → Account shows the signed-in user's own record
+  (display name, email, role, status, creation date, account id), lets them change the
+  display name (audited as `user.profile_updated`), and signs out through the existing
+  session endpoint. Settings → Preferences stores the theme — **dark**, **light** or
+  **system default** — on the account, applies it immediately and restores it on any
+  browser; the choice is also cached in `localStorage` so a reload paints correctly before
+  the API answers, and signing out clears that cache so the next person on the browser
+  starts from the default. Password change and account deletion are not offered: resets use
+  the API-only flow and deletion has no safe cascade yet, and the panel says so instead of
+  faking either.
 - **Setup and audit:** the New Test page lists the three things a first test needs with
   their real state, and Settings → Audit log is a real, paged, filterable admin view of the
   append-only event trail.

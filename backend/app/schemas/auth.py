@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class RegisterRequest(BaseModel):
@@ -34,6 +34,22 @@ class PasswordResetConfirm(BaseModel):
 
     token: str = Field(min_length=16, max_length=512)
     new_password: str = Field(min_length=10, max_length=128)
+
+
+class ProfileUpdateRequest(BaseModel):
+    """The only profile field a user may change about themselves."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def _name_is_not_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Enter a display name.")
+        return cleaned
 
 
 class UserRead(BaseModel):

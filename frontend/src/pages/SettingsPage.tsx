@@ -1,10 +1,12 @@
 import { useState } from "react";
 
+import { AccountPanel } from "../components/AccountPanel";
 import { AuditPanel } from "../components/AuditPanel";
 import { ComingSoon } from "../components/ComingSoon";
 import { CriteriaPanel } from "../components/CriteriaPanel";
 import { DatasetsPanel } from "../components/DatasetsPanel";
 import { JudgePanel } from "../components/JudgePanel";
+import { PreferencesPanel } from "../components/PreferencesPanel";
 import { ProvidersPanel } from "../components/ProvidersPanel";
 import { SafetyPanel } from "../components/SafetyPanel";
 
@@ -15,9 +17,9 @@ const SECTIONS = [
   { name: "Criteria", detail: "Weights, thresholds and hard gates per metric." },
   { name: "Judge", detail: "The judge model, rubric and confidence handling." },
   { name: "Safety", detail: "Attack set version, safe prompts and hard gates." },
-  { name: "Account", detail: "Profile, roles and sessions." },
+  { name: "Account", detail: "Your profile, display name and session." },
   { name: "Audit log", detail: "Append-only record of sign-ins and changes." },
-  { name: "Preferences", detail: "Theme, previews and defaults for new tests." },
+  { name: "Preferences", detail: "Appearance: dark, light or follow the system." },
 ];
 
 // Only tabs with a working panel are listed here; everything else keeps "soon".
@@ -27,6 +29,8 @@ const AVAILABLE = new Set([
   "Criteria",
   "Judge",
   "Safety",
+  "Account",
+  "Preferences",
   "Audit log",
 ]);
 
@@ -115,6 +119,10 @@ export function SettingsPage() {
               </p>
               <SafetyPanel />
             </>
+          ) : active === "Account" ? (
+            <AccountPanel />
+          ) : active === "Preferences" ? (
+            <PreferencesPanel />
           ) : active === "Audit log" ? (
             <>
               <h2>Audit log</h2>

@@ -18,9 +18,11 @@ from app.schemas.auth import (
     PasswordResetConfirm,
     PasswordResetRequest,
     PasswordResetRequested,
+    ProfileUpdateRequest,
     RegisterRequest,
     UserRead,
 )
+from app.schemas.preferences import DEFAULT_THEME, THEMES, Preferences
 from app.security.cookies import clear_auth_cookies, is_secure_request, set_auth_cookies
 from app.security.passwords import hash_password, verify_password
 from app.security.rate_limit import RateLimiter, get_rate_limiter
@@ -56,6 +58,17 @@ def _secure(request: Request, settings: Settings) -> bool:
 
 def _user_read(user: User) -> UserRead:
     return UserRead.model_validate(user)
+
+
+def _preferences(user: User) -> Preferences:
+    """The stored preferences, with defaults for anything missing or unrecognised.
+
+    A value written by an older build (or by hand) never reaches the browser as
+    an unknown theme; it falls back to the default instead.
+    """
+    stored = user.preferences or {}
+    theme = stored.get("theme")
+    return Preferences(theme=theme if theme in THEMES else DEFAULT_THEME)
 
 
 def _session_expired_response(request: Request, settings: Settings, message: str) -> Response:
@@ -266,6 +279,59 @@ def logout(
 def me(user: User = Depends(get_current_user)) -> UserRead:
     """Return the signed-in user."""
     return _user_read(user)
+
+
+@router.patch("/me", response_model=UserRead)
+def update_me(
+    payload: ProfileUpdateRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> UserRead:
+    """Change the signed-in user's display name.
+
+    Only the caller's own account can be touched: the target comes from the
+    session, never from the request body, so there is no user id to tamper with.
+    Role, email and password are not editable here.
+    """
+    if payload.name != user.name:
+        user.name = payload.name
+        audit.record(
+            db,
+            "user.profile_updated",
+            actor_id=user.id,
+            target_type="user",
+            target_id=str(user.id),
+            metadata={"changed": ["name"]},
+            request=request,
+        )
+        db.commit()
+        db.refresh(user)
+    return _user_read(user)
+
+
+@router.get("/me/preferences", response_model=Preferences)
+def get_my_preferences(user: User = Depends(get_current_user)) -> Preferences:
+    """Return the signed-in user's UI preferences."""
+    return _preferences(user)
+
+
+@router.patch("/me/preferences", response_model=Preferences)
+def update_my_preferences(
+    payload: Preferences,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Preferences:
+    """Replace the signed-in user's preferences.
+
+    Scoped to the session's own account for the same reason as the profile
+    update. Not audited: a theme choice is cosmetic and would only add noise to
+    the trail of sign-ins and data changes.
+    """
+    user.preferences = {**(user.preferences or {}), "theme": payload.theme}
+    db.commit()
+    db.refresh(user)
+    return _preferences(user)
 
 
 @router.post("/password-reset/request", response_model=PasswordResetRequested)

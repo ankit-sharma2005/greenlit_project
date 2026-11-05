@@ -545,3 +545,64 @@ target. `greenlit_start_run` is therefore registered only when
 `GREENLIT_MCP_ALLOW_START=1`, accepts only targets on the user's own machine, sends
 `allow_private_targets: true` for them, and caps starts at one per 10 seconds. Remote
 starts remain a UI action, which keeps the permission decision with a human.
+
+## M12 — Account and Preferences settings
+
+### D12.1 Preferences live on the user row, not only in the browser
+The theme was a `localStorage` value, which every account on a browser shared and which no
+other browser could see. `users.preferences` (migration `0015_user_preferences`, JSON,
+`NOT NULL`, default `{}`) makes the choice belong to the account: two users on one browser
+are isolated, and the same user gets their theme on another machine. `localStorage` is kept
+as a one-key paint cache, so the first frame after a reload is already right instead of
+flashing the default while `/auth/me/preferences` answers. No table was added and no data
+was rewritten: existing rows start at `{}` and the API fills in the default.
+
+### D12.2 One validated key, and a stored value that cannot break the UI
+`Preferences` accepts exactly `{theme: "dark" | "light" | "system"}` (`extra="forbid"`), so
+the account cannot be used as arbitrary storage. A PATCH replaces the document, which is
+why the client always sends every key it owns. Reading is defensive: a value written by an
+older build (or by hand) that is not one of the three themes is served as `dark` rather than
+reaching the browser as an unknown attribute.
+
+### D12.3 The display name is the only self-editable field
+The target user comes from the session cookie, never from the request body, so there is no
+id to tamper with and a user cannot address another account. `PATCH /api/v1/auth/me` accepts
+`name` only (1–120 characters after trimming, blank rejected with a field error); `email`,
+`role` and the password are not part of the schema and extra keys are a 422. The change is
+audited as `user.profile_updated` with `{"changed": ["name"]}` — which field changed, not
+the old and new values — and a no-op save writes no event.
+
+### D12.4 "System" is resolved in the browser, because only the browser knows
+The stored preference can be `system`, but the painted theme is always `dark` or `light`:
+`resolveTheme()` reads `prefers-color-scheme` and the provider re-resolves when the OS
+setting changes (when `matchMedia` is missing it keeps the app's own dark default rather
+than guessing light). The topbar toggle flips the *resolved* theme and saves the explicit
+choice, so clicking it while on "system" produces a concrete theme instead of a no-op.
+
+### D12.5 One provider owns the theme
+The topbar toggle and Settings → Preferences used to be two potential copies of the same
+state. `ThemeProvider` (with `themeContext.ts` split out, following the auth-provider
+pattern, so `react-refresh/only-export-components` stays clean) is now the only owner: it
+applies `data-theme` on `<html>`, caches the choice, saves it to the account and exposes
+`saving`/`error`. On sign-in it loads the account's value; if the user changes the theme
+before that response arrives, the later response no longer wins; on sign-out it resets to
+the default and clears the cache so the next person on the browser does not inherit it.
+
+### D12.6 A theme change is not audited
+`user.profile_updated` is recorded because a display name identifies the actor in the log.
+The theme is cosmetic and per-account, and recording every toggle would bury the sign-ins
+and data changes the append-only trail exists for.
+
+### D12.7 No fake password form, no account deletion
+GreenLit has no in-app password change; resets go through the existing API-only flow, which
+still needs an email provider, so the panel says that rather than showing a form that cannot
+work. Account deletion is not offered because the current schema cascades datasets, runs and
+labels from `users`, and no confirmation/re-authentication flow exists to make that safe;
+the panel states the limitation instead of silently hiding it.
+
+### D12.8 The e2e expectation changed because the behaviour did
+`e2e-setup-audit.spec.ts` asserted that Account was a "soon" placeholder. That assertion is
+now the opposite for Account and Preferences, and the spec verifies the real panel instead:
+profile fields, a display-name save that survives a reload, a theme applied at once and
+restored from the API with `localStorage` cleared, then a restore of the account's name and
+theme so the rest of the suite sees the state it expects. No other spec was weakened.

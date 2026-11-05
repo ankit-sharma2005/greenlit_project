@@ -1,13 +1,10 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../auth/authContext";
+import { useTheme } from "../theme/themeContext";
 import { Brand } from "./Brand";
 import { Button } from "./Button";
-
-type Theme = "dark" | "light";
-
-const THEME_STORAGE_KEY = "greenlit-theme";
 
 const NAV_ITEMS = [
   { to: "/", label: "New Test", end: true },
@@ -17,30 +14,14 @@ const NAV_ITEMS = [
   { to: "/settings", label: "Settings", end: false },
 ];
 
-function readStoredTheme(): Theme {
-  try {
-    return window.localStorage.getItem(THEME_STORAGE_KEY) === "light" ? "light" : "dark";
-  } catch {
-    return "dark";
-  }
-}
-
 export function Layout() {
   const { user, logout } = useAuth();
+  const { resolved, setTheme } = useTheme();
   const navigate = useNavigate();
-  const [theme, setTheme] = useState<Theme>(readStoredTheme);
   const [signingOut, setSigningOut] = useState(false);
 
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    try {
-      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
-    } catch {
-      // Storage can be unavailable (private mode); the theme still applies for the session.
-    }
-  }, [theme]);
-
-  const nextTheme: Theme = theme === "dark" ? "light" : "dark";
+  // The toggle flips whatever is on screen, including when "system" chose it.
+  const nextTheme = resolved === "dark" ? "light" : "dark";
 
   async function handleSignOut() {
     setSigningOut(true);
@@ -100,10 +81,10 @@ export function Layout() {
           <button
             type="button"
             className="btn btn--secondary topbar__theme"
-            onClick={() => setTheme(nextTheme)}
+            onClick={() => void setTheme(nextTheme)}
             aria-label={`Switch to ${nextTheme} theme`}
           >
-            {theme === "dark" ? "Light theme" : "Dark theme"}
+            {resolved === "dark" ? "Light theme" : "Dark theme"}
           </button>
 
           {user ? (

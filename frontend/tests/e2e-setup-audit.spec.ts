@@ -85,10 +85,44 @@ test("the setup checklist tracks real state and the audit tab lists real events"
   );
   await expect(page.getByTestId("settings-tab-criteria")).not.toContainText("soon");
 
-  // Tabs that are not built yet keep their badge and their placeholder.
-  await expect(page.getByTestId("settings-tab-account")).toContainText("soon");
+  // Account and Preferences are real now; only Connectors still says "soon".
+  await expect(page.getByTestId("settings-tab-connectors")).toContainText("soon");
+  await expect(page.getByTestId("settings-tab-account")).not.toContainText("soon");
+  await expect(page.getByTestId("settings-tab-preferences")).not.toContainText("soon");
+
+  // Account shows the signed-in user's own record, never an invented one.
   await page.getByTestId("settings-tab-account").click();
-  await expect(page.getByText("Coming soon", { exact: true })).toBeVisible();
-  // Safety kept working while Account's placeholder is shown.
-  await expect(page.getByTestId("safety-panel")).toHaveCount(0);
+  await expect(page.getByTestId("account-panel")).toBeVisible();
+  await expect(page.getByTestId("account-email")).toHaveText(ADMIN_EMAIL);
+  await expect(page.getByTestId("account-role")).toHaveText("admin");
+  await expect(page.getByTestId("account-active")).toHaveText("Active");
+  await expect(page.getByTestId("account-created")).not.toHaveText("Unknown");
+
+  // A display-name change is stored on the account and survives a reload.
+  await page.getByTestId("account-name").fill("Setup Admin");
+  await page.getByTestId("account-save").click();
+  await expect(page.getByTestId("account-notice")).toContainText("Display name saved.");
+  await page.reload();
+  await page.getByTestId("settings-tab-account").click();
+  await expect(page.getByTestId("account-name")).toHaveValue("Setup Admin");
+
+  // Preferences apply at once, save to the account, and are restored from the
+  // API after a reload — even with the local cache removed first.
+  await page.getByTestId("settings-tab-preferences").click();
+  await expect(page.getByTestId("preferences-panel")).toBeVisible();
+  await page.getByTestId("theme-light").check();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(page.getByTestId("preferences-notice")).toContainText("Appearance saved.");
+  await page.evaluate(() => window.localStorage.removeItem("greenlit-theme"));
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+
+  // Put the account back the way the rest of the suite expects it.
+  await page.getByTestId("settings-tab-preferences").click();
+  await page.getByTestId("theme-dark").check();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.getByTestId("settings-tab-account").click();
+  await page.getByTestId("account-name").fill("Admin");
+  await page.getByTestId("account-save").click();
+  await expect(page.getByTestId("account-name-value")).toHaveText("Admin");
 });

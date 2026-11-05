@@ -6,7 +6,9 @@ import {
   loginRequest,
   logoutRequest,
   registerRequest,
+  updateProfileRequest,
   type CurrentUser,
+  type ProfileUpdatePayload,
   type RegisterPayload,
 } from "../lib/authApi";
 import { onSessionExpired, resetSessionExpired } from "../lib/session";
@@ -76,9 +78,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const updateProfile = useCallback(async (payload: ProfileUpdatePayload) => {
+    const updated = await updateProfileRequest(payload);
+    setUser(updated);
+    return updated;
+  }, []);
+
   const value = useMemo<AuthContextValue>(
-    () => ({ user, status, login, register, logout }),
-    [user, status, login, register, logout],
+    () => ({ user, status, login, register, logout, updateProfile }),
+    [user, status, login, register, logout, updateProfile],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -1,9 +1,9 @@
 # GreenLit — Handover notes
 
-> Living document. It reflects the repository as of the baselines, human-review and audit
-> milestone (M6 runs, M7 judge and calibration, M8 safety, spec 8.5 reports and
-> regression). Everything below is exercised by a command in this file; nothing in it is a
-> plan.
+> Living document. It reflects the repository as of the account-and-preferences milestone
+> (M6 runs, M7 judge and calibration, M8 safety, spec 8.5 reports and regression, and the
+> Settings → Account / Preferences panels). Everything below is exercised by a command in
+> this file; nothing in it is a plan.
 
 ## What GreenLit is
 
@@ -101,14 +101,20 @@ properties with a dark default and a light theme.
 
 - `pages/` — `NewTestPage` (the three entry points and the live run), `ResultsPage`
   (run history, compare, ad-hoc scoring), `CalibrationPage` (review queue and kappa),
-  `SettingsPage` (Datasets, Providers, Criteria, Judge, Safety, Audit log), auth pages,
-  `TestChatPage` (not built).
+  `SettingsPage` (Datasets, Providers, Criteria, Judge, Safety, Account, Preferences,
+  Audit log), auth pages, `TestChatPage` (not built).
 - `components/` — the pieces the pages compose: `PromptAppPanel`, `UploadOutputsPanel`,
   `DemoPanel`, `RunProgressPanel` (progress → verdict card → exports), `BaselinePanel`
   (baseline control and the regression table), `SafetySection`, `SafetyPanel`,
   `CriteriaPanel`, `ReportExport`,
   `RunHistory`, `JudgePanel`, `ProvidersPanel`, `DatasetsPanel`, `ReviewQueue`,
-  `CalibrationSummary`, `SetupChecklist`, `AuditPanel`.
+  `CalibrationSummary`, `SetupChecklist`, `AuditPanel`, `AccountPanel`,
+  `PreferencesPanel`.
+- `theme/` — `ThemeProvider` (the only owner of the theme: applies `data-theme`, follows
+  `prefers-color-scheme` for "system", saves to the account, clears on sign-out) and
+  `themeContext.ts` with `useTheme()`. `lib/theme.ts` holds the pure helpers and the
+  one-key paint cache; `lib/preferences.ts` is the API client for
+  `/auth/me/preferences`.
 - `lib/` — typed API clients, one module per area, all going through `lib/api.ts` so the
   session cookie and the error envelope are handled in one place. `lib/session.ts`
   implements single-flight silent token refresh on 401 with Web Locks (skipping auth
@@ -173,7 +179,7 @@ bash scripts/run-e2e.sh
   SSE/NDJSON/text/stall/oversize behaviour, and `tests/test_curl_credentials.py` uses a
   server that refuses anything without the imported cookie and bearer token.
 - Frontend component tests are Vitest + Testing Library next to the components; the
-  measured `npx vitest run` result is 169 tests in 28 files (including
+  measured `npx vitest run` result is 188 tests in 31 files (including
   `NewTestPage.test.tsx`, which proves
   the permission box is required and that the attack-probe box starts off, and
   `lib/api.test.ts` + `lib/session.test.ts` + `auth/AuthProvider.test.tsx`, which prove the
@@ -186,7 +192,10 @@ bash scripts/run-e2e.sh
   results page, Try the demo, baseline regression, calibration (label → kappa), judge
   provenance, the prompt app (prices typed into the provider's row in Settings, then
   the priced cost estimate on the verdict),
-  report download, safety both ways, the setup checklist and audit screen, uploaded
+  report download, safety both ways, the setup checklist, the audit screen, the Account
+  panel (profile fields, a display-name save that survives a reload) and Preferences
+  (immediate apply, save, restore from the API with the local cache cleared, then a
+  restore), uploaded
   outputs, PDF dataset generation through preview and approval, and the website chatbot
   wizard against the local demo. It runs against local or fake apps; no real third-party
   site is used.
@@ -205,6 +214,106 @@ bash scripts/run-e2e.sh
   `GREENLIT_EMAIL`/`GREENLIT_PASSWORD`, creates a quick test, polls to completion, prints the
   verdict, weighted score and failed instrumented metrics, and returns documented CI exit
   codes. Fake-server tests cover GO, NO_GO, REVIEW, timeout and authentication failure.
+
+## M12 — Task: Account and Preferences settings
+
+**Status: implemented and tested.** Both tabs that used to carry a "soon" badge are now
+real panels; every control in them calls an endpoint that exists.
+
+### Completed
+
+- **Account** (`Settings → Account`): display name, email, role, account status, creation
+  date and account id, all read from `GET /api/v1/auth/me`. The display name is editable
+  (`PATCH /api/v1/auth/me`), trimmed, limited to 120 characters and refused when blank; the
+  save updates the shared user so the topbar follows. Sign-out uses the existing
+  `/auth/logout` and goes to `/login`. The panel says plainly that there is no in-app
+  password form and no account deletion, and why.
+- **Preferences** (`Settings → Preferences`): dark, light or system default. Choosing one
+  paints immediately, is saved to the account (`PATCH /api/v1/auth/me/preferences`), is
+  restored from the API on any browser, and is cached locally so a reload does not flash.
+  Failure to save keeps the local choice and offers a retry; "Reset to defaults" returns to
+  dark and persists it. A signed-out user is never shown the previous account's theme.
+- **Isolation and safety:** both endpoints take the target from the session cookie; there
+  is no user id in either request, so a caller can only change their own record. Passwords,
+  tokens and keys are never rendered, and the endpoints reject unknown keys with a 422.
+
+### Files
+
+Created:
+
+- `backend/alembic/versions/0015_user_preferences.py`
+- `backend/app/schemas/preferences.py`
+- `backend/tests/test_account_preferences.py`
+- `frontend/src/lib/preferences.ts`, `frontend/src/lib/theme.ts` (+ `theme.test.ts`)
+- `frontend/src/theme/ThemeProvider.tsx`, `frontend/src/theme/themeContext.ts`
+- `frontend/src/components/AccountPanel.tsx` (+ `.test.tsx`)
+- `frontend/src/components/PreferencesPanel.tsx` (+ `.test.tsx`)
+- `frontend/src/styles/settings.css`
+
+Modified:
+
+- `backend/app/models.py` (`User.preferences`), `backend/app/schemas/auth.py`
+  (`ProfileUpdateRequest`), `backend/app/api/auth.py` (the two profile/preferences routes)
+- `frontend/src/lib/authApi.ts`, `frontend/src/auth/authContext.ts`,
+  `frontend/src/auth/AuthProvider.tsx` (`updateProfile`)
+- `frontend/src/components/Layout.tsx` (uses the shared theme instead of local state)
+- `frontend/src/pages/SettingsPage.tsx` (both tabs registered, "soon" removed)
+- `frontend/src/main.tsx` (`ThemeProvider`), `frontend/tests/e2e-setup-audit.spec.ts`
+
+### Backend / API / database
+
+- `GET /api/v1/auth/me/preferences` → `{"theme": "dark" | "light" | "system"}` (default
+  `dark`; an unrecognised stored value is served as `dark`).
+- `PATCH /api/v1/auth/me/preferences` replaces that document; `extra="forbid"`.
+- `PATCH /api/v1/auth/me` accepts `name` only and appends `user.profile_updated`
+  (`{"changed": ["name"]}`) to the audit trail when the value actually changes.
+- Migration `0015_user_preferences` adds `users.preferences` (JSON, `NOT NULL`,
+  `server_default '{}'`). No new table, no backfill; existing accounts read as `dark`.
+
+### Tests actually run
+
+- `cd backend && python -m pytest tests/test_account_preferences.py -q` — **7 passed**.
+- `cd backend && ruff check .` (clean), `ruff format --check .` (**151 files already
+  formatted**), `mypy` (**no issues in 82 source files**).
+- `cd frontend && npx vitest run` — **188 passed in 31 files** (169/28 before; the new
+  files are `AccountPanel.test.tsx`, `PreferencesPanel.test.tsx`, `lib/theme.test.ts`).
+- `cd frontend && npm run lint`, `npm run typecheck`, `npm run build` — all pass.
+- `bash scripts/run-e2e.sh tests/e2e-setup-audit.spec.ts` on the disposable stack —
+  **1 passed (11.4s)**, exit 0. It now checks the real Account panel, a display-name save
+  that survives a reload, and a theme applied at once and restored from the API with
+  `localStorage` cleared, then restores the name and theme for the rest of the suite.
+- Manual check against the running dev stack (`http://localhost:5177`, migration applied):
+  the account panel showed `demo@example.com` / `member` / "November 2, 2026"; a name edit
+  updated the topbar and the database; light → saved; cache cleared + reload → light came
+  back from the API; "System default" resolved to the OS theme; reset returned to dark.
+
+### Known limitations
+
+- **No email change, password change or account deletion.** Email is the sign-in identity;
+  passwords use the API-only reset flow, which still needs an email provider; deletion has
+  no safe re-authentication/cascade flow. The panel says so.
+- **Login page theme follows the cache.** Before sign-in the browser uses the last cached
+  theme; after sign-in the account's own choice replaces it. A shared machine therefore
+  shows the previous user's colours on the sign-in screen (no account data is exposed).
+- **`prettier --check` still reports 9 pre-existing files** (`lib/api.ts`,
+  `pages/NewTestPage.tsx`, `WebsiteWizard.tsx`, …) that this change did not touch and did
+  not reformat; every file added or edited here is formatted.
+- **The full backend suite is slow on this machine** (about 20 minutes). The complete run
+  finished with exit code 0 and no failures (`s` = 1 skipped, no `F`); this environment
+  suppresses pytest's final summary line, so the count comes from collection:
+  `python -m pytest --collect-only -q` lists **661** tests (649 before, 7 of them the new
+  `test_account_preferences.py`, plus five picked up from tests added since that count was
+  written).
+
+### Remaining tasks
+
+- None for this task. Related, deliberately not done here: password change UI, account
+  deletion, and the Connectors tab (still "soon").
+
+### Latest commit
+
+- The feature commit is the one titled `feat(settings): account and preferences`; the exact
+  hash is in `git log -1 --oneline` (recorded in the follow-up documentation commit).
 
 ## Real-world failure classes
 
@@ -308,8 +417,9 @@ with it.
 | Upload outputs | Built |
 | MCP server target | Not built; the standalone MCP server is a separate integration |
 
-- **Settings sections:** Connectors (saved targets), Account, Preferences. (Criteria and
-  Safety are no longer placeholders: each tab renders its catalogue read-only, from
+- **Settings sections:** Connectors (saved targets). (Account and Preferences are now real
+  panels — see the M12 section above; Criteria and
+  Safety are no longer placeholders either: each tab renders its catalogue read-only, from
   `GET /api/v1/criteria` and `GET /api/v1/safety/sets`. Editing criteria weights or the
   safety set is not built, and the Safety set picker has no UI — only the backend/API
   support exists: `safety_sets` on a run request, validated when the run is created.)

@@ -1,0 +1,144 @@
+/* Settings → Account and Settings → Preferences. */
+
+.account__details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-3);
+  margin: var(--space-4) 0 var(--space-5);
+}
+
+.account__details > div {
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+}
+
+.account__details dt {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.account__details dd {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+}
+
+.account__heading {
+  margin: var(--space-5) 0 var(--space-2);
+}
+
+.account__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 480px;
+}
+
+.account__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  margin-top: var(--space-3);
+}
+
+.account__notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding-left: var(--space-5);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+/* A labelled control that does not depend on another page's stylesheet. */
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.settings-field label {
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+}
+
+.settings-field input {
+  min-height: var(--control-height);
+  padding: 0 var(--space-3);
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+}
+
+.settings-field input:focus-visible {
+  border-color: var(--color-primary);
+}
+
+.theme-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-4) 0;
+  padding: 0;
+  border: 0;
+}
+
+.theme-options__legend {
+  margin-bottom: var(--space-2);
+  padding: 0;
+  font-weight: 600;
+}
+
+.theme-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  cursor: pointer;
+}
+
+.theme-option:hover {
+  background: var(--color-surface-hover);
+}
+
+.theme-option:has(input:checked) {
+  border-color: var(--color-primary);
+}
+
+.theme-option input {
+  margin-top: 3px;
+  accent-color: var(--color-primary);
+}
+
+.theme-option__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.theme-option__label {
+  font-weight: 600;
+}
+
+.theme-option__detail {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+@media (max-width: 800px) {
+  .account__details {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
