@@ -312,8 +312,8 @@ Modified:
 
 ### Latest commit
 
-- The feature commit is the one titled `feat(settings): account and preferences`; the exact
-  hash is in `git log -1 --oneline` (recorded in the follow-up documentation commit).
+- `dc4490a` — `feat(settings): account and preferences tabs with per-account theme`
+  (documentation for it, including this hash, is the follow-up commit on top).
 
 ## Real-world failure classes
 
