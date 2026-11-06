@@ -663,3 +663,54 @@ surviving a reload, per account, editable and deletable.
 change, false now. The spec saves a target, reloads into a fresh page, checks the row came
 back from the API and deletes it again, so the shelf is left as it was found and no other
 spec sees a stray target.
+
+## M14 — An MCP server as the app under test
+
+### D14.1 URL-only, because the alternative is running a stranger's command
+An "MCP server" target could have been a command line (`npx some-server`) in a sandbox.
+That is remote code execution with a text field: the backend, the worker and the check
+all receive user-typed values, and any of them could be talked into spawning something.
+So the connector speaks Streamable HTTP to a URL and nothing else. There is no stdio
+transport, no command, no argument list, no working directory — the type does not have a
+field to put one in, and the schema's `extra="forbid"` rejects an attempt to add one.
+
+### D14.2 The HTTP layer is reused, not re-implemented
+The SSRF guard, the same-host redirect refusal, `Retry-After`, retry counting, the item
+deadline and the rate limits live in `RequestClient`, and every MCP request goes through
+it. A second HTTP stack for JSON-RPC would have been a second place to forget the private
+address check. The consequence is that an MCP target behaves like an HTTP target wherever
+a person can see it: the same permission record, the same check-then-accept gate, the
+same polite rate, the same error kinds mapping.
+
+### D14.3 Tool names, descriptions and results are untrusted text
+A server chooses its own tool names and descriptions; a result is whatever the tool
+returns. All of it is data: the API truncates descriptions to 300 characters and its list
+to 50 tools, the result text to 100,000 bytes, the UI renders it as text, and nothing is
+interpolated into a request or handed to the judge as an instruction. The raw JSON schema
+is deliberately not echoed into the picker, so a server cannot push a page of markup or a
+megabyte of prose into the browser through it.
+
+### D14.4 One session per run, not per case
+`initialize` is a round trip and a session id is state a server may keep. A fifty-case
+dataset doing fifty handshakes would be fifty times slower and would leave fifty sessions
+behind. The run creates one `McpSession`, reuses it, and `DELETE`s it when the run ends.
+A session that dies mid-run (`404`/`410`) is re-initialised exactly once, so a restarted
+server costs one extra request rather than a failed run; a second failure is the case's
+error, with `mcp_session_expired` naming the reason.
+
+### D14.5 A typed header goes through the cURL encryption path
+The MCP panel needs an `Authorization` field, and the tempting shortcut — send it as
+plain JSON and store it with the run — would have been a second, weaker storage path
+beside the encrypted cURL blob. Instead the panel posts the typed headers to
+`POST /api/v1/connectors/headers/encrypt`, gets back the same kind of blob a pasted cURL
+produces, and keeps only that. The browser never stores the value (the field is local
+component state, not page state or `localStorage`), and the report masks the blob the way
+it masks a cURL secret.
+
+### D14.6 The browser path is NOT PROVEN
+The backend client, the target snapshot and the executor branch are covered by pytest,
+and the panel by Vitest. The end-to-end path a person clicks — choose MCP server,
+discover, pick, check, accept, see the run button enable — has no Playwright spec: the
+e2e harness drives real local servers, and a mock MCP server (JSON-RPC, session header,
+SSE-or-JSON negotiation, `DELETE`) is well past the thirty lines this step allowed. It is
+recorded as not proven rather than claimed.

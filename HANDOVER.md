@@ -183,7 +183,7 @@ bash scripts/run-e2e.sh
   SSE/NDJSON/text/stall/oversize behaviour, and `tests/test_curl_credentials.py` uses a
   server that refuses anything without the imported cookie and bearer token.
 - Frontend component tests are Vitest + Testing Library next to the components; the
-  measured `npx vitest run` result is 188 tests in 31 files (including
+  measured `npx vitest run` result is 208 tests in 34 files (including
   `NewTestPage.test.tsx`, which proves
   the permission box is required and that the attack-probe box starts off, and
   `lib/api.test.ts` + `lib/session.test.ts` + `auth/AuthProvider.test.tsx`, which prove the
@@ -369,14 +369,15 @@ Modified: `backend/app/models.py` (`SavedTarget`), `backend/app/main.py` (router
 - `ruff check`, `ruff format --check`, `mypy` — clean (85 source files; 154 formatted after
   the new files were formatted).
 - `cd frontend && npx vitest run` — **195 passed in 32 files** (188/31 before; the new file is
-  `ConnectorsPanel.test.tsx` with 7 tests). `npm run typecheck`, `npm run lint`,
+  `ConnectorsPanel.test.tsx` with 7 tests). Superseded in M14: **208 in 34 files**. `npm run typecheck`, `npm run lint`,
   `npm run build` all pass.
 - `bash scripts/run-e2e.sh tests/e2e-setup-audit.spec.ts` — **passed** (`test-results/
   .last-run.json` reports `passed`, no failed tests); the spec now saves a target, reloads,
   checks the row came back from the API, and deletes it.
 - Full backend suite (`python -m pytest -q`, ~20 minutes here) — **exit 0, no failures or
   errors**. This environment suppresses pytest's final summary line, so the count comes from
-  collection: **670** tests (661 before + 9 new).
+  collection: **670** tests (661 before + 9 new). Superseded in M14: see the summary line
+  measured there.
 - Manual run on the dev stack (`http://localhost:5177`, migration applied, log shows
   `0015_user_preferences -> 0016_saved_targets`): the tab renders with no error, the empty
   state reads "Nothing saved yet", saving "Demo helpdesk" produced the notice, the row and a
@@ -503,7 +504,7 @@ with it.
 | Website chatbot | Built as a cURL wizard over the HTTP endpoint |
 | Prompt app | Built |
 | Upload outputs | Built |
-| MCP server target | Not built; the standalone MCP server is a separate integration |
+| MCP server | Built in M14: Streamable HTTP, one tool per target, URL only (no stdio) |
 
 - **Settings sections:** none — every tab now renders a real panel (Connectors joined in M13;
   Account and Preferences in M12; Criteria and Safety render their catalogues read-only from
@@ -518,3 +519,52 @@ with it.
 - The Playwright inventory currently contains 21 tests in 13 specs. The website chatbot
   spec was run against the disposable stack; the complete Playwright suite has not been
   rerun since it was added.
+
+## M14 — An MCP server as the app under test
+
+GreenLit can now test **one tool of an MCP server** (Streamable HTTP) instead of a chat
+endpoint. This is the target side; the standalone `mcp_server/` in this repository is a
+different thing (an MCP server *for* GreenLit) and was not touched.
+
+### What exists
+
+| Part | Where |
+| --- | --- |
+| Client | `app/services/mcp_client.py`: `McpSession` (initialize, tools/list, tools/call, DELETE), `McpToolSender` (one case), `normalize_tools` (bounded picker data) |
+| Discovery | `POST /api/v1/targets/mcp/tools` — URL + encrypted header blob + the same permission and SSRF rules as an HTTP target |
+| Header storage | `POST /api/v1/connectors/headers/encrypt` — a typed `Authorization` becomes the same encrypted blob a pasted cURL produces |
+| Run request | `entry_point: "mcp_server"` with `mcp_tool`, `mcp_question_arg`, `mcp_extra_args` (size-validated, `extra="forbid"`) |
+| Check | the existing target check, now accepting `entry_point` and the three MCP fields, so a remote server is checked once and accepted before a run |
+| Executor | the worker builds one session per run, sends one `tools/call` per case, re-initialises once on a dead session and `DELETE`s at the end |
+| Errors | `mcp_tool_error`, `mcp_protocol_error`, `mcp_transport_unsupported`, `mcp_session_expired` in `error_kinds` |
+| UI | `frontend/src/components/McpPanel.tsx` + `frontend/src/lib/mcp.ts`, wired into `NewTestPage.tsx` (entry point, check, smoke and full run) |
+| Docs | `docs/MCP.md` → "GreenLit testing an MCP server"; decisions D14.1–D14.6 |
+
+### Tests actually run (measured in this step)
+
+- `cd backend && python -m pytest` — **`699 passed, 1 skipped, 2 warnings in 528.58s
+  (0:08:48)`**, exit 0. (669 before this step; the 30 new tests are 14 in
+  `tests/test_mcp_client.py`, 13 in `tests/test_mcp_target.py`, one executor integration
+  test in `tests/test_run_executor.py` and two encrypt-endpoint tests in
+  `tests/test_curl_credentials.py`.)
+- `cd frontend && npx vitest run` — **208 passed in 34 files** (195/32 before;
+  `McpPanel.test.tsx` 7 tests, `lib/mcp.test.ts` 6).
+- `npx playwright test --list` — **21 tests in 13 files** (unchanged).
+- `ruff check .`, `ruff format --check .`, `mypy app` — clean (161 files formatted, 86
+  source files); `npx tsc --noEmit` and `npm run lint` clean.
+- Interop, against the official SDK's server (`mcp` 1.30.0, FastMCP, one
+  `echo(text: str) -> str` tool), `backend/tests/support/mcp_interop_check.py`:
+  `2025-06-18` negotiated, one tool listed with `suggested_question_arg: "text"`, two calls
+  echoed exactly, `initializations` 1, `DELETE` 200 → **AGREEMENT, exit 0**.
+
+### Known limitations
+
+- **The browser path is NOT PROVEN.** No Playwright spec covers MCP: the e2e harness
+  drives real local servers and a mock MCP server (JSON-RPC, session header, JSON-or-SSE
+  negotiation, `DELETE`) was well past the size this step allowed. The backend, the check
+  and the panel are each proven by their own tests; the click path is not.
+- No stdio, no OAuth-protected servers, no legacy HTTP+SSE transport, one question
+  argument plus static extras, text results only (non-text blocks are counted, not scored).
+- Prettier still reports 9 pre-existing files (`src/lib/api.ts`, `src/lib/session.test.ts`,
+  `src/components/WebsiteWizard.tsx`, `src/pages/NewTestPage.tsx` and their tests) — none of
+  the files added in this step.

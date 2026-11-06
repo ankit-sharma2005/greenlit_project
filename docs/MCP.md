@@ -130,3 +130,63 @@ rejected; the password and email never appear in any tool output or error; a 401
 causes exactly one re-login; a remote target is refused; a 250,000-character report
 is truncated at the cap with the flag; and 404/500/401 map to readable errors naming
 the status and path.
+
+## GreenLit testing an MCP server
+
+The other direction: GreenLit can use an MCP server as the **app under test**. Choose
+entry point **MCP server** on the New Test page, discover its tools, pick one and say
+which argument carries the question. Every test case then sends one `tools/call` and
+GreenLit scores the text it returns, exactly as it scores an HTTP endpoint's answer.
+
+### What works
+
+| Step | Behaviour |
+| --- | --- |
+| Transport | Streamable HTTP only, `POST` with JSON-RPC 2.0 bodies; a plain JSON reply or an SSE stream is accepted for the same request. |
+| Handshake | One `initialize` per run, then `notifications/initialized`; the `Mcp-Session-Id` the server hands back is kept for every later call and sent back as `MCP-Protocol-Version: 2025-06-18`. |
+| Discovery | `tools/list`, at most 50 tools; only the name, a description cut to 300 characters and the argument names travel into the picker — never the raw schema. |
+| One case | `tools/call` with the question in the chosen string argument plus static extra arguments, text content joined and capped at 100,000 bytes. |
+| Session reuse | The session is created once per run and reused for every case, so fifty cases initialise the protocol once. A `404`/`410` on a call expires the session and it is re-initialised once, then the case fails with a readable reason. |
+| Errors | A JSON-RPC error, `isError: true`, a non-2xx status, a dead session and a non-MCP server each map to their own error kind (`mcp_tool_error`, `mcp_protocol_error`, `mcp_session_expired`, `mcp_transport_unsupported`). |
+| Closing | The session is `DELETE`d when the run finishes, so the server can drop its state. |
+
+Measured against the official SDK's server (`mcp` 1.30.0, FastMCP, one
+`echo(text: str) -> str` tool): `initialize` negotiated `2025-06-18`, `tools/list`
+returned the one tool with `suggested_question_arg: "text"`, two `tools/call`s returned
+their exact text, `initializations` stayed at 1, and the `DELETE` terminated the session.
+Reproduce it with `backend/tests/support/mcp_interop_check.py` (needs the SDK; it is a
+manual script, not part of the suite).
+
+### Security
+
+- **URL only.** There is no stdio transport and no command field anywhere: no value a
+  person types can start a process on the GreenLit host. A server is a URL and headers.
+- **The HTTP guard applies.** Every request goes through the same `RequestClient` as the
+  HTTP connector: private and link-local addresses are refused unless the target is
+  marked as running on this computer, a redirect to another host is refused, and
+  `Retry-After` and the deadline are respected.
+- **Permission first.** A remote server needs the same "I own this application or have
+  permission to test it" record as an HTTP target, and no request is sent before it: the
+  check and its accepted answer are what unlock a full run. Attack probes stay off.
+- **Polite by default.** One concurrent request, 500 ms apart, three retries — the HTTP
+  connector's settings, not a second set.
+- **Headers are encrypted.** A typed `Authorization` goes through
+  `POST /api/v1/connectors/headers/encrypt`, the same path a pasted cURL uses, so only a
+  secret blob is stored and only header *names* are shown or reported.
+- **Tool text is data.** Names, descriptions and results are untrusted: they are escaped
+  as text in the UI, truncated, never interpolated into a request, and never handed to the
+  judge or the model as instructions.
+
+### Limits
+
+- No stdio servers, so nothing that only runs as a local command.
+- No OAuth-protected servers: a static header is the only credential; there is no
+  authorization flow and no token refresh.
+- No legacy HTTP+SSE transport (`GET`-stream only, the pre-2025-03-26 revision).
+- One question argument plus static extra arguments: a tool that needs several
+  question-derived fields, or non-string questions, is out of scope.
+- Text results only. A tool that answers with an image or a resource has those blocks
+  counted (`non_text_blocks`) and ignored, not scored.
+- No server-side prompts, resources or sampling: GreenLit calls tools, nothing else.
+- The e2e suite does not cover this path yet: the connector is proven by the backend and
+  component tests named in `HANDOVER.md`, not by a browser spec.

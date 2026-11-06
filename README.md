@@ -28,9 +28,9 @@ a safety section, the judge that scored it, and an exportable report.
   text is split into at most 20 passages and each generated case stores its supporting
   passage as `reference_context`. Review and approve generated versions before running them.
   Every version stores a hash.
-- **Runs:** three entry points (HTTP endpoint, prompt app, uploaded outputs), executed in
-  a Celery worker with live progress and cancel. A run snapshots its settings, so
-  changing a provider later never rewrites history.
+- **Runs:** four entry points (HTTP endpoint, MCP server, prompt app, uploaded outputs),
+  executed in a Celery worker with live progress and cancel. A run snapshots its settings,
+  so changing a provider later never rewrites history.
 - **Website chatbot:** a cURL wizard over the HTTP endpoint reads one POST/JSON
   response and requires you to accept the answer extraction before a full run.
 - **Scoring:** criteria profiles with weights, thresholds and hard gates; metrics that
@@ -254,6 +254,27 @@ dataset, then press **Start test**.
    template, answer path, context path) and shows what it found. Adjust it if the guess
    is wrong.
 7. Choose an approved dataset version, or leave it empty to have the model write cases.
+
+### MCP server
+
+Entry point **MCP server** tests one tool of a [Model Context Protocol](https://modelcontextprotocol.io)
+server (Streamable HTTP) instead of a chat endpoint.
+
+1. Server URL, for example `https://my-mcp.example.com/mcp`. Only URL-reachable servers
+   work: there is no stdio option, so nothing typed here can start a process.
+2. An `Authorization` header if the server needs one. It is encrypted by the server, the
+   same way a pasted cURL is; this browser only ever holds the encrypted blob.
+3. **Discover tools** lists what the server offers (up to 50, descriptions cut to 300
+   characters). Pick the tool, then the argument that carries the question — GreenLit
+   preselects it when the tool has exactly one required string argument.
+4. Optional extra arguments as JSON, for a tool that wants more than the question.
+5. The rest is the HTTP endpoint's: permission for a remote target, the first-contact
+   check and its accepted answer, then a dataset and **Start test**.
+
+A case sends one `tools/call` and scores the text it returns. Tool names, descriptions
+and results are untrusted text: they are shown as text, truncated, and never sent to the
+judge or the model as instructions. See `docs/MCP.md` for the limits (no stdio, no OAuth,
+no legacy HTTP+SSE transport, text results only).
 
 ### Prompt app
 
