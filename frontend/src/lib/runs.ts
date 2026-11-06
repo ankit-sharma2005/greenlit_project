@@ -173,7 +173,7 @@ export interface RunOperations {
 
 export interface RunCreateRequest {
   name?: string;
-  entry_point: "http_endpoint" | "prompt_app" | "upload_outputs";
+  entry_point: "http_endpoint" | "prompt_app" | "upload_outputs" | "mcp_server";
   target?: string;
   test_types?: TestType[];
   dataset_id?: string;
@@ -198,6 +198,10 @@ export interface RunCreateRequest {
   max_retries?: number;
   response_format?: "json" | "sse" | "ndjson" | "text";
   stream_content_path?: string;
+  /** MCP server target: the tool one case calls, and where the question goes. */
+  mcp_tool?: string;
+  mcp_question_arg?: string;
+  mcp_extra_args?: Record<string, unknown>;
   provider_id?: string;
   model?: string;
   system_prompt?: string;

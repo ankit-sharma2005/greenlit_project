@@ -12,6 +12,8 @@ from app.schemas.connectors import (
     ConnectTestResponse,
     CurlParseRequest,
     CurlParseResponse,
+    HeaderEncryptRequest,
+    HeaderEncryptResponse,
 )
 from app.services.connectors import ConnectorError, HttpConnector
 from app.utils.curl import decrypt_headers, encrypt_headers, parse_curl
@@ -36,6 +38,22 @@ def parse_curl_endpoint(
         body_template=parsed.body_template,
         header_count=parsed.header_count,
     )
+
+
+@router.post("/headers/encrypt", response_model=HeaderEncryptResponse)
+def encrypt_headers_endpoint(
+    payload: HeaderEncryptRequest, user: Any = Depends(get_current_user)
+) -> HeaderEncryptResponse:
+    """Encrypt headers a person typed, so the browser never stores one.
+
+    The same blob a pasted cURL produces, which is what a run's snapshot keeps:
+    a value typed into a form is not a second, weaker storage path.
+    """
+    cleaned = {str(name).strip(): str(value) for name, value in payload.headers.items()}
+    secret = encrypt_headers(cleaned)
+    if secret is None:
+        raise HTTPException(status_code=400, detail="There is no header to store.")
+    return HeaderEncryptResponse(headers_secret=secret, header_names=sorted(cleaned))
 
 
 @router.post("/test", response_model=ConnectTestResponse)

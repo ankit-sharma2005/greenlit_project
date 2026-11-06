@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "../components/Button";
 import { DemoPanel } from "../components/DemoPanel";
+import { McpPanel } from "../components/McpPanel";
 import { PromptAppPanel } from "../components/PromptAppPanel";
 import { RunProgressPanel } from "../components/RunProgressPanel";
 import { SetupChecklist } from "../components/SetupChecklist";
@@ -14,6 +15,7 @@ import { TargetCheckPanel } from "../components/TargetCheckPanel";
 import { WebsiteWizard } from "../components/WebsiteWizard";
 import { parseCurl as parseCurlLocally } from "../lib/curl";
 import { parseCurl, testConnection } from "../lib/connectors";
+import { buildMcpRunPayload, type McpConfig } from "../lib/mcp";
 import { ApiError } from "../lib/api";
 import { listDatasets } from "../lib/datasets";
 import { listProviders } from "../lib/providers";
@@ -34,7 +36,7 @@ import {
   type TestType,
 } from "../lib/runs";
 
-type EntryPoint = "http_endpoint" | "prompt_app" | "upload_outputs";
+type EntryPoint = "http_endpoint" | "mcp_server" | "prompt_app" | "upload_outputs";
 
 interface TestTypes {
   quality: boolean;
@@ -161,6 +163,15 @@ export function NewTestPage() {
   const [startingSmoke, setStartingSmoke] = useState(false);
   // The accepted check that unlocks a full run against a remote target.
   const [targetCheckId, setTargetCheckId] = useState<string | null>(null);
+  // The MCP target: its URL, the chosen tool and the encrypted header blob.
+  const [mcpConfig, setMcpConfig] = useState<McpConfig>({
+    url: "",
+    tool: "",
+    questionArg: "",
+    extraArgs: "",
+    headersSecret: null,
+    headerNames: [],
+  });
   const [runError, setRunError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [providerOptions, setProviderOptions] = useState<ProviderOption[]>([]);
@@ -219,6 +230,31 @@ export function NewTestPage() {
 
   // The exact connector settings the check sends: the same ones a run uses.
   const checkRequest = useMemo<TargetCheckRequest | null>(() => {
+    if (connector === "mcp_server") {
+      const payload = buildMcpRunPayload({
+        config: mcpConfig,
+        allowPrivate: runsOnMyComputer,
+        permissionConfirmed,
+        permissionReference,
+        maxRetries,
+      });
+      if (!payload) return null;
+      return {
+        entry_point: "mcp_server",
+        target: payload.target ?? "",
+        dataset_version_id: datasetVersionId || undefined,
+        mcp_tool: payload.mcp_tool,
+        mcp_question_arg: payload.mcp_question_arg,
+        mcp_extra_args: payload.mcp_extra_args,
+        headers_secret: payload.headers_secret,
+        header_names: payload.header_names,
+        timeout_seconds: 60,
+        allow_private_targets: runsOnMyComputer,
+        permission_confirmed: payload.permission_confirmed,
+        permission_reference: payload.permission_reference,
+        max_retries: maxRetries,
+      };
+    }
     if (connector !== "http_endpoint" || !detectResult) return null;
     return {
       target: url.trim(),
@@ -249,6 +285,7 @@ export function NewTestPage() {
     detectResult,
     maxConcurrency,
     maxRetries,
+    mcpConfig,
     minDelayMs,
     permissionConfirmed,
     permissionReference,
@@ -558,6 +595,8 @@ export function NewTestPage() {
     setUrl("");
     setCurlNotice(null);
     setError(null);
+    // A check belongs to one target: switching entry points starts over.
+    handleCheckAccepted(null);
   };
 
   const toggleTestType = (key: keyof TestTypes) => {
@@ -775,12 +814,22 @@ export function NewTestPage() {
 
   const handleRunTest = useCallback(
     async (options: { smoke?: boolean } = {}) => {
-      if (!detectResult) return;
+      if (connector === "http_endpoint" && !detectResult) return;
       const smoke = options.smoke === true;
       setRunError(null);
       // A remote target may not be run until its extraction was accepted.
-      if (connector === "http_endpoint" && !runsOnMyComputer && !targetCheckId) {
+      if (
+        (connector === "http_endpoint" || connector === "mcp_server") &&
+        !runsOnMyComputer &&
+        !targetCheckId
+      ) {
         setRunError("Check the target and confirm the answer looks right before starting a run.");
+        return;
+      }
+      if (connector === "mcp_server" && !datasetVersionId) {
+        setRunError(
+          "Choose an approved dataset: an MCP run scores the tool's answers against one.",
+        );
         return;
       }
       setActiveRun(null);
@@ -790,6 +839,48 @@ export function NewTestPage() {
       // A smoke run is a five-case rehearsal whatever the limits say.
       const caps = smoke ? { ...runCaps, max_cases: 5 } : runCaps;
       const checkId = !runsOnMyComputer ? (targetCheckId ?? undefined) : undefined;
+      if (connector === "mcp_server") {
+        const payload = buildMcpRunPayload({
+          config: mcpConfig,
+          allowPrivate: runsOnMyComputer,
+          permissionConfirmed,
+          permissionReference,
+          maxRetries,
+        });
+        if (!payload) {
+          setStartingRun(false);
+          setStartingSmoke(false);
+          setRunError("Choose the tool to call and the argument that carries the question.");
+          return;
+        }
+        try {
+          setActiveRun(
+            await startRun({
+              ...payload,
+              test_types: chosenTestTypes(testTypes),
+              dataset_version_id: datasetVersionId,
+              is_smoke: smoke,
+              target_check_id: checkId,
+              ...caps,
+            }),
+          );
+          setNotice("Run queued. A worker executes the cases, this page polls its progress.");
+        } catch (caught) {
+          setRunError(
+            caught instanceof ApiError ? caught.message : "Could not start the test. Try again.",
+          );
+        } finally {
+          setStartingRun(false);
+          setStartingSmoke(false);
+        }
+        return;
+      }
+      // Only an HTTP run reaches here, and it always has a detected shape.
+      if (!detectResult) {
+        setStartingRun(false);
+        setStartingSmoke(false);
+        return;
+      }
       const common: RunCreateRequest = {
         entry_point: "http_endpoint",
         target,
@@ -872,6 +963,7 @@ export function NewTestPage() {
       detectResult,
       maxConcurrency,
       maxRetries,
+      mcpConfig,
       minDelayMs,
       permissionConfirmed,
       permissionReference,
@@ -916,6 +1008,7 @@ export function NewTestPage() {
   );
 
   const targetRunReady = useCallback(() => {
+    if (connector === "mcp_server") return runsOnMyComputer || targetCheckId != null;
     if (connector !== "http_endpoint") return true;
     if (websiteWizard) return websiteRunReady();
     if (runsOnMyComputer) return true;
@@ -975,6 +1068,7 @@ export function NewTestPage() {
             disabled={loading}
           >
             <option value="http_endpoint">HTTP endpoint</option>
+            <option value="mcp_server">MCP server (tool call)</option>
             <option value="prompt_app">Prompt app (system prompt + model)</option>
             <option value="upload_outputs">Upload outputs (CSV/JSON)</option>
             <optgroup label="Coming soon">
@@ -984,12 +1078,22 @@ export function NewTestPage() {
               <option disabled>Docker image</option>
               <option disabled>Git repository</option>
               <option disabled>CLI command</option>
-              <option disabled>MCP server</option>
             </optgroup>
           </select>
         </div>
 
-        {websiteWizard ? (
+        {connector === "mcp_server" ? (
+          <McpPanel
+            config={mcpConfig}
+            onConfigChange={(patch) => setMcpConfig((previous) => ({ ...previous, ...patch }))}
+            allowPrivate={runsOnMyComputer}
+            permissionConfirmed={permissionConfirmed}
+            permissionReference={permissionReference}
+            disabled={loading}
+          />
+        ) : null}
+
+        {connector !== "mcp_server" && websiteWizard ? (
           <WebsiteWizard
             check={websiteCheck}
             busy={websiteChecking}
@@ -1023,7 +1127,7 @@ export function NewTestPage() {
               setWebsiteError(null);
             }}
           />
-        ) : (
+        ) : connector !== "mcp_server" ? (
           <button
             type="button"
             className="form__curl-button"
@@ -1032,7 +1136,7 @@ export function NewTestPage() {
           >
             Website chatbot (wizard)
           </button>
-        )}
+        ) : null}
 
         {connector === "http_endpoint" && (
           <div style={{ marginTop: "var(--space-5)" }}>
@@ -1484,7 +1588,10 @@ export function NewTestPage() {
                 />
               </div>
 
-              {connector === "http_endpoint" && !runsOnMyComputer && (!websiteWizard || !websiteParsed) && checkRequest ? (
+              {(connector === "mcp_server" ||
+                (connector === "http_endpoint" && (!websiteWizard || !websiteParsed))) &&
+              !runsOnMyComputer &&
+              checkRequest ? (
                 <TargetCheckPanel
                   request={checkRequest}
                   onAccepted={handleCheckAccepted}

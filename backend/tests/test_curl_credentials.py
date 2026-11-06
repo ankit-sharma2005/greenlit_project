@@ -256,3 +256,40 @@ def test_rejected_credentials_ask_for_a_fresh_curl(
     assert "paste a fresh cURL" in text
     assert "expired" in text
     assert document["header_names"] == ["Cookie"]
+
+
+def test_typed_headers_are_encrypted_and_only_names_come_back(
+    client: TestClient, guarded: tuple[str, type[_GuardedHandler]]
+) -> None:
+    """The MCP panel's Authorization field uses the cURL path, not a plain one."""
+    url, handler = guarded
+    _register(client)
+
+    encrypted = client.post(
+        "/api/v1/connectors/headers/encrypt",
+        json={"headers": {"Authorization": f"Bearer {TOKEN}", "Cookie": COOKIE}},
+    )
+
+    assert encrypted.status_code == 200, encrypted.text
+    document = encrypted.json()
+    assert document["header_names"] == ["Authorization", "Cookie"]
+    assert "abc123def456" not in encrypted.text
+    assert TOKEN not in encrypted.text
+    assert document["headers_secret"]
+
+    status, text = _test_with_secret(client, url, document["headers_secret"])
+    assert status == 200, text
+    assert handler.seen[-1]["authorization"] == f"Bearer {TOKEN}"
+    assert TOKEN not in text
+
+
+def test_typed_headers_need_a_session_and_a_value(client: TestClient) -> None:
+    anonymous = client.post(
+        "/api/v1/connectors/headers/encrypt",
+        json={"headers": {"Authorization": f"Bearer {TOKEN}"}},
+    )
+    assert anonymous.status_code == 401
+
+    _register(client)
+    blank = client.post("/api/v1/connectors/headers/encrypt", json={"headers": {}})
+    assert blank.status_code == 422

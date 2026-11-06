@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 ResponseFormat = Literal["json", "sse", "ndjson", "text"]
 
@@ -22,6 +22,36 @@ class CurlParseResponse(BaseModel):
     headers_secret: str | None = None
     body_template: str | None = None
     header_count: int = 0
+
+
+class HeaderEncryptRequest(BaseModel):
+    """Headers to encrypt at rest: one server-side value, never a stored plain one.
+
+    The MCP panel collects an optional Authorization header; the browser must not
+    keep it, so the server turns it into the same encrypted blob a pasted cURL
+    produces and returns only that plus the names.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    headers: dict[str, str] = Field(min_length=1, max_length=20)
+
+    @field_validator("headers")
+    @classmethod
+    def _bounded(cls, value: dict[str, str]) -> dict[str, str]:
+        for name, secret in value.items():
+            if not str(name).strip():
+                raise ValueError("a header name must not be blank")
+            if len(str(name)) > 120 or len(str(secret)) > 4_000:
+                raise ValueError("a header is too long to store")
+        return value
+
+
+class HeaderEncryptResponse(BaseModel):
+    """The encrypted blob and the names, never a value."""
+
+    headers_secret: str
+    header_names: list[str] = Field(default_factory=list)
 
 
 class ConnectTestRequest(BaseModel):

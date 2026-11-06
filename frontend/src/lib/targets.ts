@@ -3,6 +3,8 @@
 import { apiRequest } from "./api";
 
 export interface TargetCheckRequest {
+  /** A check runs the connector the run will use; MCP is the only other one. */
+  entry_point?: "http_endpoint" | "mcp_server";
   target: string;
   dataset_version_id?: string;
   method?: string;
@@ -27,6 +29,10 @@ export interface TargetCheckRequest {
    * template; GreenLit finds the first body field whose value equals this and
    * returns its path so the UI can insert a question placeholder. */
   sample_question?: string;
+  /** MCP: the tool the check calls once, and the argument the question goes in. */
+  mcp_tool?: string;
+  mcp_question_arg?: string;
+  mcp_extra_args?: Record<string, unknown>;
 }
 
 export interface TargetCheckError {
