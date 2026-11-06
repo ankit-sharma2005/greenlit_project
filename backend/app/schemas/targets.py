@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.runs import ResponseFormat, RunCreateRequest
+from app.schemas.runs import EntryPoint, ResponseFormat, RunCreateRequest
 
 
 class TargetCheckRequest(BaseModel):
@@ -20,6 +20,9 @@ class TargetCheckRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # A check runs the connector the run would use. Only MCP needs the field
+    # named here; an HTTP endpoint check is the default and never changes.
+    entry_point: EntryPoint = "http_endpoint"
     target: str = Field(min_length=1, max_length=2000)
     # The first approved case of this dataset is the harmless question; with no
     # dataset, GreenLit sends a fixed "Hello".
@@ -49,11 +52,17 @@ class TargetCheckRequest(BaseModel):
     # The message the user typed, when the check is being used to build a body
     # template; GreenLit finds the first body field whose value equals this.
     sample_question: str | None = Field(default=None, max_length=2000)
+    # MCP server settings: the check calls one tool once, like a run's first case.
+    mcp_tool: str | None = Field(default=None, min_length=1, max_length=120)
+    mcp_question_arg: str | None = Field(
+        default=None, min_length=1, max_length=60, pattern=r"^[A-Za-z0-9_.-]+$"
+    )
+    mcp_extra_args: dict[str, Any] | None = None
 
     def to_run_request(self) -> RunCreateRequest:
         """The run request shape, so the check reuses the run's own snapshot rules."""
         return RunCreateRequest(
-            entry_point="http_endpoint",
+            entry_point=self.entry_point,
             target=self.target,
             test_types=["quality"],
             method=self.method,
@@ -73,7 +82,66 @@ class TargetCheckRequest(BaseModel):
             max_retries=self.max_retries,
             response_format=self.response_format,
             stream_content_path=self.stream_content_path,
+            mcp_tool=self.mcp_tool,
+            mcp_question_arg=self.mcp_question_arg,
+            mcp_extra_args=self.mcp_extra_args,
         )
+
+
+class McpToolsRequest(BaseModel):
+    """Discover the tools of one MCP server, under the check's own rules.
+
+    The URL, the encrypted headers and the permission record are the run's, so a
+    discovery request is subject to exactly the same SSRF and consent checks as
+    the run it is preparing.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    target: str = Field(min_length=1, max_length=2000)
+    headers: dict[str, str] = Field(default_factory=dict)
+    headers_secret: str | None = Field(default=None, max_length=20_000)
+    header_names: list[str] | None = Field(default=None, max_length=60)
+    timeout_seconds: int = Field(default=60, ge=1, le=300)
+    allow_private_targets: bool = False
+    permission_confirmed: bool = False
+    permission_reference: str | None = Field(default=None, max_length=300)
+    max_retries: int = Field(default=3, ge=0, le=10)
+
+    def to_check_request(self) -> TargetCheckRequest:
+        """The same settings as a check, so one set of rules applies."""
+        return TargetCheckRequest(
+            entry_point="mcp_server",
+            target=self.target,
+            headers=self.headers,
+            headers_secret=self.headers_secret,
+            header_names=self.header_names,
+            timeout_seconds=self.timeout_seconds,
+            allow_private_targets=self.allow_private_targets,
+            permission_confirmed=self.permission_confirmed,
+            permission_reference=self.permission_reference,
+            max_retries=self.max_retries,
+        )
+
+
+class McpToolOut(BaseModel):
+    """One tool a server lists: a name, a bounded description and its arguments."""
+
+    name: str
+    description: str = ""
+    required_arguments: list[str] = Field(default_factory=list)
+    string_arguments: list[str] = Field(default_factory=list)
+    argument_names: list[str] = Field(default_factory=list)
+    suggested_question_arg: str | None = None
+
+
+class McpToolsResponse(BaseModel):
+    """The tools discovered, plus the server that listed them."""
+
+    server: str | None = None
+    tools: list[McpToolOut] = Field(default_factory=list)
+    # The host and path only: a query string can hold a token.
+    target: str = ""
 
 
 class AnswerCandidate(BaseModel):

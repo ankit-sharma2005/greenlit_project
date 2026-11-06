@@ -45,6 +45,13 @@ _KIND_BY_CODE: dict[str, str] = {
     "empty_file": OTHER,
     "invalid_csv": OTHER,
     "unexpected_error": OTHER,
+    # An MCP server's failures: a tool that reports an error of its own and a
+    # reply that breaks the protocol are both unreadable answers; an unsupported
+    # transport is a setup mistake, and an expired session is a server-side one.
+    "mcp_tool_error": INVALID_RESPONSE,
+    "mcp_protocol_error": INVALID_RESPONSE,
+    "mcp_transport_unsupported": OTHER,
+    "mcp_session_expired": HTTP_ERROR,
 }
 
 

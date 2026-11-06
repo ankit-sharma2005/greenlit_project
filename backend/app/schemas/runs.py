@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.evaluation import FailedCaseOut, MetricOut
 
 TestType = Literal["quality", "safety", "operations"]
-EntryPoint = Literal["http_endpoint", "prompt_app", "upload_outputs"]
+EntryPoint = Literal["http_endpoint", "prompt_app", "upload_outputs", "mcp_server"]
+# The static arguments an MCP tool call carries: a small object, not a payload.
+MAX_MCP_EXTRA_ARGS_BYTES = 8_000
+MAX_MCP_EXTRA_ARGS_KEYS = 40
 ResponseFormat = Literal["json", "sse", "ndjson", "text"]
 
 ALL_TEST_TYPES: list[TestType] = ["quality", "safety", "operations"]
@@ -73,6 +77,35 @@ class RunCreateRequest(BaseModel):
     # How the target answers: one JSON body, or a stream of events.
     response_format: ResponseFormat = "json"
     stream_content_path: str | None = Field(default=None, max_length=300)
+
+    # MCP server connector settings (Streamable HTTP only; there is no stdio
+    # field to accept, on purpose).
+    mcp_tool: str | None = Field(default=None, min_length=1, max_length=120)
+    # The tool argument the case's question is passed in; names are checked so a
+    # value cannot smuggle a path or a JSON pointer.
+    mcp_question_arg: str | None = Field(
+        default=None, min_length=1, max_length=60, pattern=r"^[A-Za-z0-9_.-]+$"
+    )
+    # Fixed extra arguments, sent with every call. Values are treated as secrets
+    # for display purposes: the report shows the names, never the values.
+    mcp_extra_args: dict[str, Any] | None = None
+
+    @field_validator("mcp_extra_args")
+    @classmethod
+    def _small_extra_args(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        if len(value) > MAX_MCP_EXTRA_ARGS_KEYS:
+            raise ValueError(f"at most {MAX_MCP_EXTRA_ARGS_KEYS} extra arguments are allowed")
+        try:
+            encoded = json.dumps(value, sort_keys=True, default=str)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("the extra arguments must be JSON values") from exc
+        if len(encoded.encode("utf-8")) > MAX_MCP_EXTRA_ARGS_BYTES:
+            raise ValueError(
+                f"the extra arguments must be under {MAX_MCP_EXTRA_ARGS_BYTES} bytes of JSON"
+            )
+        return value
 
     # Prompt app connector settings.
     provider_id: UUID | None = None

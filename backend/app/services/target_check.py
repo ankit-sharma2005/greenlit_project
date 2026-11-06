@@ -98,6 +98,11 @@ def fingerprint(snapshot: Mapping[str, Any]) -> str:
         "context_path": str(snapshot.get("context_path") or ""),
         "response_format": str(snapshot.get("response_format") or "json"),
         "stream_content_path": str(snapshot.get("stream_content_path") or ""),
+        # An MCP target's call is a different request when the tool, the question
+        # argument or the static arguments change, so the check is bound to them.
+        "mcp_tool": str(snapshot.get("mcp_tool") or ""),
+        "mcp_question_arg": str(snapshot.get("mcp_question_arg") or ""),
+        "mcp_extra_args": snapshot.get("mcp_extra_args") or {},
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()
@@ -129,6 +134,22 @@ def _redacted_url(url: str) -> str:
 def _redacted_request(snapshot: Mapping[str, Any], input_text: str) -> dict[str, Any]:
     """Exactly what will be sent, with every secret replaced by XXXX."""
     headers = _header_names(snapshot)
+    if str(snapshot.get("entry_point") or "") == "mcp_server":
+        # An MCP call is a tool name plus arguments; the static arguments are
+        # masked like header values because a person may have put a token there.
+        extra = snapshot.get("mcp_extra_args")
+        arguments = dict.fromkeys(sorted(extra), MASK) if isinstance(extra, dict) else {}
+        question_arg = str(snapshot.get("mcp_question_arg") or "")
+        if question_arg:
+            arguments[question_arg] = input_text
+        return {
+            "method": "MCP tools/call",
+            "url": _redacted_url(str(snapshot.get("url") or "")),
+            "headers": dict.fromkeys(headers, MASK),
+            "tool": str(snapshot.get("mcp_tool") or ""),
+            "arguments": arguments,
+            "input": input_text,
+        }
     template = str(snapshot.get("body_template") or '{"question": {{input}}}')
     return {
         "method": str(snapshot.get("method") or "POST").upper(),

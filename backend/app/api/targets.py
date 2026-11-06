@@ -16,11 +16,21 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import get_current_user
-from app.schemas.targets import AnswerCandidate, TargetCheckRequest, TargetCheckResponse
+from app.schemas.targets import (
+    AnswerCandidate,
+    McpToolOut,
+    McpToolsRequest,
+    McpToolsResponse,
+    TargetCheckRequest,
+    TargetCheckResponse,
+)
 from app.services import target_check
 from app.services.audit import record
+from app.services.connectors import ConnectorError
+from app.services.mcp_client import McpSession
 from app.services.run_service import RunServiceError, build_snapshot
 from app.services.target_error import target_of
+from app.utils.curl import decrypt_headers
 
 router = APIRouter(prefix="/api/v1/targets", tags=["targets"])
 
@@ -43,6 +53,70 @@ def _read(check: target_check.TargetCheck) -> TargetCheckResponse:
     )
 
 
+@router.post("/mcp/tools", response_model=McpToolsResponse)
+def list_mcp_tools(
+    payload: McpToolsRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: Any = Depends(get_current_user),
+) -> McpToolsResponse:
+    """Discover one MCP server's tools, under the check's own rules.
+
+    The URL and the permission record are validated by the same snapshot code a
+    run uses, so discovery cannot be used to reach a host a run could not. The
+    server is only asked to list its tools: no tool is called here.
+    """
+    try:
+        # Build an HTTP-shaped snapshot first: that is the branch that applies the
+        # URL rules and the remote-permission record, and it needs no tool yet.
+        snapshot = build_snapshot(
+            payload.to_check_request().to_run_request(),
+            dataset_version_id=None,
+            entry_point="http_endpoint",
+        )
+    except RunServiceError as exc:
+        raise _run_service_error(exc) from exc
+
+    secret_headers = snapshot.get("headers_encrypted")
+    headers = (
+        decrypt_headers(str(secret_headers))
+        if secret_headers
+        else {str(key): str(value) for key, value in dict(snapshot.get("headers") or {}).items()}
+    )
+    session = McpSession(
+        url=str(snapshot.get("url") or ""),
+        headers=headers,
+        timeout_seconds=int(snapshot.get("timeout_seconds") or 60),
+        allow_private_targets=bool(snapshot.get("allow_private_targets", False)),
+        max_retries=int(snapshot.get("max_retries", 3)),
+    )
+    try:
+        tools = session.list_tools()
+    except ConnectorError as exc:
+        raise HTTPException(status_code=400, detail=exc.message) from exc
+    finally:
+        session.close()
+
+    record(
+        db,
+        "target.mcp_tools",
+        actor_id=user.id,
+        target_type="target",
+        target_id=target_of(str(snapshot.get("url") or "")),
+        metadata={
+            "tools": len(tools),
+            "permission_confirmed": bool(snapshot.get("permission_confirmed")),
+        },
+        request=request,
+    )
+    db.commit()
+    return McpToolsResponse(
+        server=str(session.server_info.get("name") or "") or None,
+        tools=[McpToolOut(**tool) for tool in tools],
+        target=target_of(str(snapshot.get("url") or "")),
+    )
+
+
 @router.post("/check", response_model=TargetCheckResponse)
 def check_target(
     payload: TargetCheckRequest,
@@ -55,7 +129,9 @@ def check_target(
         # The run's own snapshot rules: URL shape, SSRF/private check and the
         # permission record are the ones a run would apply.
         snapshot = build_snapshot(
-            payload.to_run_request(), dataset_version_id=None, entry_point="http_endpoint"
+            payload.to_run_request(),
+            dataset_version_id=None,
+            entry_point=payload.entry_point,
         )
     except RunServiceError as exc:
         raise _run_service_error(exc) from exc

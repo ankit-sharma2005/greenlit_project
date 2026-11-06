@@ -133,6 +133,11 @@ def sanitized_settings(snapshot: dict[str, Any]) -> dict[str, Any]:
         elif key == "headers_encrypted":
             # A pasted cURL's headers: the blob is never exported either.
             cleaned[key] = REDACTED
+        elif key == "mcp_extra_args":
+            # Static tool arguments can hold a token, so only their names are
+            # exported — the same rule header values follow.
+            args = value if isinstance(value, dict) else {}
+            cleaned[key] = {str(name): REDACTED for name in sorted(args)}
         elif key == "csv":
             cleaned[key] = UPLOADED_ROWS_NOTE
         else:

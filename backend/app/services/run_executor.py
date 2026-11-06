@@ -69,6 +69,7 @@ from app.services.judge import (
 )
 from app.services.judge_profiles import effective_model
 from app.services.llm_gateway import GatewayError, LLMGateway
+from app.services.mcp_client import McpSession, McpToolSender
 from app.services.metrics import MetricResult, not_instrumented
 from app.services.operations import (
     compute_operations,
@@ -198,6 +199,37 @@ def build_sender(snapshot: Mapping[str, Any], session_factory: Callable[[], Sess
             )
 
         return send_http
+    if entry == "mcp_server":
+        url = str(snapshot.get("url") or "").strip()
+        tool = str(snapshot.get("mcp_tool") or "").strip()
+        argument = str(snapshot.get("mcp_question_arg") or "").strip()
+        if not url or not tool or not argument:
+            raise RunExecutionError(
+                "This MCP run is missing its server URL or tool. Start the test again from "
+                "the New Test page."
+            )
+        # The same encrypted header blob a pasted cURL produces, and the same
+        # polite-rate settings: one call at a time, Retry-After honoured.
+        secret_headers = snapshot.get("headers_encrypted")
+        headers = (
+            decrypt_headers(str(secret_headers))
+            if secret_headers
+            else {
+                str(key): str(value) for key, value in dict(snapshot.get("headers") or {}).items()
+            }
+        )
+        mcp_session = McpSession(
+            url=url,
+            headers=headers,
+            timeout_seconds=int(
+                snapshot.get("timeout_seconds") or get_settings().default_timeout_seconds
+            ),
+            allow_private_targets=bool(snapshot.get("allow_private_targets", False)),
+            max_retries=int(snapshot.get("max_retries", 3)),
+            item_budget_seconds=float(snapshot.get("item_budget_seconds", 150.0)),
+            interrupt=snapshot.get("_cancel_interrupt"),
+        )
+        return McpToolSender(mcp_session, tool, argument, snapshot.get("mcp_extra_args"))
     if entry == "prompt_app":
         return _prompt_app_sender(snapshot, session_factory)
     raise RunExecutionError(f"The entry point '{entry}' is coming soon and cannot run tests yet.")
@@ -749,11 +781,14 @@ def execute_run(
             entry = entry_point(snapshot)
             # Configuration checks live here (not only in build_sender) so an
             # injected sender factory cannot bypass them.
-            if entry not in ("http_endpoint", "prompt_app", "upload_outputs"):
+            if entry not in ("http_endpoint", "prompt_app", "upload_outputs", "mcp_server"):
                 raise RunExecutionError(
                     f"The entry point '{entry}' is coming soon and cannot run tests yet."
                 )
-            if entry == "http_endpoint" and not str(snapshot.get("url") or "").strip():
+            if (
+                entry in ("http_endpoint", "mcp_server")
+                and not str(snapshot.get("url") or "").strip()
+            ):
                 raise RunExecutionError(
                     "This run has no target URL. Start the test again from the New Test page."
                 )
@@ -1461,6 +1496,14 @@ def execute_run(
                         reason=reason,
                     )
             final_payload = snapshot_progress(str(report["state"]))
+        # An MCP session is a courtesy DELETE at the end of the run, never part
+        # of its result: a server that refuses it changes nothing.
+        closer = getattr(sender, "close", None)
+        if callable(closer):
+            try:
+                closer()
+            except Exception:  # pragma: no cover - cleanup must not fail a run
+                logger.debug("Closing the MCP session failed", exc_info=True)
     except RunExecutionError as exc:
         return _fail(factory, reporter, rid, exc.message)
     except Exception:

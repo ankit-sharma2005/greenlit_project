@@ -35,6 +35,7 @@ from app.services.run_repository import (
     list_run_items,
     update_run,
 )
+from tests.support.mcp_server import MockMcpServer
 
 ROWS: list[dict[str, str]] = [
     {
@@ -1222,3 +1223,47 @@ def test_an_incomplete_streamed_answer_is_a_failed_case_not_a_correct_one(
         assert failed
         assert all(item.trace["incomplete"] is True for item in failed)
         assert all("stopped before it was complete" in (item.error or "") for item in failed)
+
+
+# ---- MCP server as a test target -----------------------------------------
+
+
+def test_an_mcp_run_calls_the_tool_once_per_case_on_one_session(
+    session_factory: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    """The whole worker path against a real local MCP server, no fake sender."""
+    with MockMcpServer() as server:
+        server.tool_texts = ["GreenLit tests LLM applications before launch."]
+        run_id = seed_run(
+            session_factory,
+            owner,
+            entry="mcp_server",
+            settings_extra={
+                "url": server.url,
+                "mcp_tool": "search",
+                "mcp_question_arg": "query",
+                "mcp_extra_args": {"locale": "en"},
+                "allow_private_targets": True,
+                "max_concurrency": 1,
+                "min_delay_ms": 0,
+                "max_retries": 0,
+            },
+        )
+        report, _ = run_it(run_id, session_factory)
+
+        assert report["status"] == "completed", report
+        assert report["items_total"] == 3
+        assert report["items_completed"] == 3
+        # One tool call per case, one session for the whole run, then a DELETE.
+        assert server.tool_calls == 3
+        assert [call["query"] for call in server.calls] == [row["question"] for row in ROWS]
+        assert all(call["locale"] == "en" for call in server.calls)
+        assert server.initializations == 1
+        assert server.deletes == 1
+
+    with session_factory() as session:
+        items = list_run_items(session, run_id)
+
+    assert [item.state for item in items] == ["completed"] * 3
+    assert items[0].trace["connector"] == "mcp_server"
+    assert items[0].trace["raw"]["tool"] == "search"

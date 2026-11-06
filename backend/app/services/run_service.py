@@ -199,6 +199,49 @@ def build_snapshot(
             snapshot["permission_confirmed"] = True
             snapshot["permission_reference"] = (payload.permission_reference or "").strip() or None
             snapshot["safety_attacks_confirmed"] = payload.safety_attacks_confirmed
+    elif entry_point == "mcp_server":
+        # Same rules as an HTTP target: a URL we can reach, and the owner's
+        # permission when it is not on this computer. Attack probes stay off for
+        # a remote MCP server, exactly as they do for a remote HTTP app.
+        remote = not payload.allow_private_targets
+        if remote and not payload.permission_confirmed:
+            raise RunServiceError(
+                "This MCP server is not on your computer. Confirm that you own it or have "
+                "permission to test it before GreenLit sends anything.",
+                status=422,
+                code="permission_required",
+            )
+        tool = (payload.mcp_tool or "").strip()
+        argument = (payload.mcp_question_arg or "").strip()
+        if not tool or not argument:
+            raise RunServiceError(
+                "Pick the MCP tool to call and the argument that carries the question, then "
+                "start the test again.",
+                status=422,
+                code="mcp_tool_required",
+            )
+        snapshot.update(
+            {
+                "url": _check_url(payload.target),
+                # There is no HTTP method or body here: the tool call carries the
+                # question, so these two keys exist only to keep the fingerprint
+                # and the report honest about what was sent.
+                "method": "POST",
+                "headers": {} if payload.headers_secret else dict(payload.headers),
+                "headers_encrypted": payload.headers_secret,
+                "header_names": list(payload.header_names or []),
+                "mcp_tool": tool,
+                "mcp_question_arg": argument,
+                "mcp_extra_args": dict(payload.mcp_extra_args or {}),
+                "allow_private_targets": payload.allow_private_targets,
+                "max_concurrency": payload.max_concurrency,
+                "min_delay_ms": payload.min_delay_ms,
+                "max_retries": payload.max_retries,
+            }
+        )
+        if remote:
+            snapshot["permission_confirmed"] = True
+            snapshot["permission_reference"] = (payload.permission_reference or "").strip() or None
     elif entry_point == "prompt_app":
         if payload.provider_id is None:
             raise RunServiceError(
@@ -295,6 +338,11 @@ def _idempotency_hash(payload: RunCreateRequest, snapshot: Mapping[str, Any]) ->
         "max_retries": snapshot.get("max_retries"),
         "response_format": snapshot.get("response_format") or "json",
         "stream_content_path": snapshot.get("stream_content_path") or "",
+        # An MCP run's tool call is what actually changes, so it is part of
+        # "the same test, asked for again".
+        "mcp_tool": snapshot.get("mcp_tool") or "",
+        "mcp_question_arg": snapshot.get("mcp_question_arg") or "",
+        "mcp_extra_args": snapshot.get("mcp_extra_args") or {},
         # A remote target's live run is bound to these, recorded with the run.
         "permission_confirmed": bool(snapshot.get("permission_confirmed", False)),
         "permission_reference": snapshot.get("permission_reference") or "",
@@ -366,7 +414,7 @@ def create_run_from_request(
         snapshot["idempotency_hash"] = _idempotency_hash(payload, snapshot)
         if idempotency_key:
             snapshot["idempotency_key"] = idempotency_key
-    if entry == "http_endpoint" and not payload.allow_private_targets:
+    if entry in ("http_endpoint", "mcp_server") and not payload.allow_private_targets:
         # A first contact against somebody else's app is checked once and its
         # extraction accepted; the check is bound to these exact settings.
         try:
@@ -381,7 +429,7 @@ def create_run_from_request(
     # Attack probes against somebody else's app stay off until that is its own
     # explicit yes; quality and operations testing are unaffected.
     if (
-        entry == "http_endpoint"
+        entry in ("http_endpoint", "mcp_server")
         and not payload.allow_private_targets
         and not payload.safety_attacks_confirmed
     ):
