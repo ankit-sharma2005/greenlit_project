@@ -400,8 +400,8 @@ Modified: `backend/app/models.py` (`SavedTarget`), `backend/app/main.py` (router
 
 ### Latest commit
 
-- The feature commit is titled `feat(settings): saved targets in the Connectors tab`; the hash
-  is in `git log -1 --oneline` and is recorded in the follow-up documentation commit.
+- `2ef8207` — `feat(settings): saved targets in the Connectors tab` (this hash is recorded by
+  the follow-up documentation commit on top).
 
 ## Real-world failure classes
 
