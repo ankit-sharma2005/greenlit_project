@@ -17,6 +17,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Integer,
     LargeBinary,
     String,
     Text,
@@ -449,6 +450,48 @@ class JudgeProfile(TimestampMixin, Base):
     # which is what an existing profile keeps after the migration.
     max_cases: Mapped[int | None] = mapped_column(nullable=True, default=None)
     is_selected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class SavedTarget(TimestampMixin, Base):
+    """A saved target: where an app lives and the format GreenLit detected (M13).
+
+    It stores the shape of a request, never a value that authorises one: only
+    header *names* are kept (a pasted cURL's header values stay encrypted inside
+    the run that used them), and permission to test a remote app is recorded per
+    run by the first-contact check, not here. Deleting a user removes their
+    targets with them.
+    """
+
+    __tablename__ = "saved_targets"
+    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_saved_targets_owner_name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    # Only http_endpoint today; the column exists so another connector type can be
+    # saved without a table rewrite (and so an old row stays readable).
+    connector_type: Mapped[str] = mapped_column(String(30), nullable=False, default="http_endpoint")
+    url: Mapped[str] = mapped_column(String(2000), nullable=False)
+    method: Mapped[str] = mapped_column(String(10), nullable=False, default="POST")
+    body_template: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Names only, in the order a request sends them: never a header value.
+    header_names: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    answer_path: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    context_path: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    stream_content_path: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    response_format: Mapped[str] = mapped_column(String(10), nullable=False, default="json")
+    timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    max_concurrency: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    min_delay_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=500)
+    max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    # "This app runs on my computer", as typed on the New Test page. It is a
+    # property of the target; the permission itself is still asked per run.
+    allow_private_targets: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class HumanLabel(TimestampMixin, Base):

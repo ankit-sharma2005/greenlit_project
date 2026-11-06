@@ -50,7 +50,8 @@ broken one.
 migrations, one error envelope `{"error": {"code", "message", "fields"}}`.
 
 - `api/` — one router per area: `auth`, `users`, `audit` (paged and filtered), `providers`,
-  `connectors`, `datasets`, `evaluations`, `runs` (including baseline and report), 
+  `connectors` (connector tests and cURL parsing), `saved_targets` (the Settings → Connectors
+  shelf), `datasets`, `evaluations`, `runs` (including baseline and report),
   `judge_profiles`, `labels` (review queue and calibration), `demo`, `health`. Thin: parse,
   authorise, delegate, audit.
 - `services/` — the logic, no HTTP in it and mostly no I/O outside the session:
@@ -64,6 +65,8 @@ migrations, one error envelope `{"error": {"code", "message", "fields"}}`.
     sets, the canary/refusal rules and the hard gate.
   - `judge.py` / `judge_profiles.py` / `calibration.py` — structured grading at
     temperature 0 with one retry, the saved profiles, and raw agreement / Cohen's kappa.
+  - `saved_targets.py` — validation and owner-scoped queries for the Settings → Connectors
+    shelf: name and URL rules, header *names* only, and no permission record.
   - `regression.py` — the baseline of a dataset version and the pure PASS / WARN / BLOCK
     comparison (metric deltas plus case-level regressions) the worker stores.
   - `labels.py` — the review queue (judge unavailable, unsure, or a label that disagrees),
@@ -91,8 +94,9 @@ migrations, one error envelope `{"error": {"code", "message", "fields"}}`.
     with backoff, rate limit, key decryption.
 - `tasks.py` + `celery_app.py` — the worker task `run_test`. Progress lives in Redis
   (`run_progress.py`) and falls back to the database, so the UI polls cheaply.
-- `models.py` — users, refresh tokens, password resets, audit events, providers,
-  datasets/versions/items, runs/items, metric results, judge profiles.
+- `models.py` — users (with `preferences`), refresh tokens, password resets, audit events,
+  providers, datasets/versions/items, runs/items, metric results, judge profiles,
+  saved targets.
 - `demo_server.py` + `services/demo.py` — the built-in helpdesk app (good/broken modes)
   and the shipped golden dataset, used by "Try the demo" and by the tests.
 
@@ -101,15 +105,15 @@ properties with a dark default and a light theme.
 
 - `pages/` — `NewTestPage` (the three entry points and the live run), `ResultsPage`
   (run history, compare, ad-hoc scoring), `CalibrationPage` (review queue and kappa),
-  `SettingsPage` (Datasets, Providers, Criteria, Judge, Safety, Account, Preferences,
-  Audit log), auth pages, `TestChatPage` (not built).
+  `SettingsPage` (Datasets, Providers, Connectors, Criteria, Judge, Safety, Account,
+  Preferences, Audit log), auth pages, `TestChatPage` (not built).
 - `components/` — the pieces the pages compose: `PromptAppPanel`, `UploadOutputsPanel`,
   `DemoPanel`, `RunProgressPanel` (progress → verdict card → exports), `BaselinePanel`
   (baseline control and the regression table), `SafetySection`, `SafetyPanel`,
   `CriteriaPanel`, `ReportExport`,
   `RunHistory`, `JudgePanel`, `ProvidersPanel`, `DatasetsPanel`, `ReviewQueue`,
   `CalibrationSummary`, `SetupChecklist`, `AuditPanel`, `AccountPanel`,
-  `PreferencesPanel`.
+  `PreferencesPanel`, `ConnectorsPanel` (the saved-target shelf).
 - `theme/` — `ThemeProvider` (the only owner of the theme: applies `data-theme`, follows
   `prefers-color-scheme` for "system", saves to the account, clears on sign-out) and
   `themeContext.ts` with `useTheme()`. `lib/theme.ts` holds the pure helpers and the
@@ -315,6 +319,90 @@ Modified:
 - `dc4490a` — `feat(settings): account and preferences tabs with per-account theme`
   (documentation for it, including this hash, is the follow-up commit on top).
 
+## M13 — Task: Saved targets (Settings → Connectors)
+
+**Status: implemented and tested.** The last Settings placeholder is a real panel.
+
+### Completed
+
+- **The shelf:** Settings → Connectors lists the saved targets of the signed-in account with
+  their method, URL, response format and answer path, and saves (`POST`), edits (`PATCH`) and
+  deletes them. Names are unique per account; a duplicate answers 409 in plain words. The
+  form asks for name, URL, method, response format, answer and context paths, request body
+  and timeout.
+- **No secrets, no consent on the shelf:** only header *names* are stored (a cURL's header
+  values stay encrypted inside the run that sent them), and there is no permission field —
+  the first-contact check still asks per run. The schema rejects `headers`,
+  `headers_secret`, `permission_confirmed` and `owner_id` as extra keys.
+- **Owner-scoped:** the owner comes from the session; a foreign or missing id is a 404, so a
+  target of another account never leaks. Two accounts on one browser see separate shelves
+  (checked in the dev database: the demo account saw only its own row).
+
+### Files
+
+Created: `backend/alembic/versions/0016_saved_targets.py`,
+`backend/app/schemas/saved_targets.py`, `backend/app/services/saved_targets.py`,
+`backend/app/api/saved_targets.py`, `backend/tests/test_saved_targets.py`,
+`frontend/src/lib/savedTargets.ts`, `frontend/src/components/ConnectorsPanel.tsx`,
+`frontend/src/components/ConnectorsPanel.test.tsx`.
+
+Modified: `backend/app/models.py` (`SavedTarget`), `backend/app/main.py` (router),
+`frontend/src/pages/SettingsPage.tsx` (tab registered, "soon" removed),
+`frontend/tests/e2e-setup-audit.spec.ts` (real panel instead of the "soon" assertion).
+
+### Backend / API / database
+
+- `GET /api/v1/saved-targets` → `{items, total}` (oldest first).
+- `POST /api/v1/saved-targets` (201), `PATCH /api/v1/saved-targets/{id}` (partial;
+  `exclude_unset`, an explicit null clears a path), `DELETE /api/v1/saved-targets/{id}` (204).
+- Audit: `saved_target.create`, `saved_target.update` (with `changed`), `saved_target.delete`;
+  metadata carries the connector type, method, format and header names, never the URL.
+- Migration `0016_saved_targets`: one table, `UniqueConstraint(owner_id, name)`, cascade from
+  `users`. No backfill, no change to `runs` (a run keeps its own snapshot).
+
+### Tests actually run
+
+- `cd backend && python -m pytest tests/test_saved_targets.py` — **9 passed** (defaults and
+  upper-cased method, extra-key rejection, header-name de-duplication, 409 on a repeated
+  name, bad URL and blank name, partial edit with a cleared field, foreign-account 404s,
+  delete plus audit trail without the URL, 401 without a session).
+- `ruff check`, `ruff format --check`, `mypy` — clean (85 source files; 154 formatted after
+  the new files were formatted).
+- `cd frontend && npx vitest run` — **195 passed in 32 files** (188/31 before; the new file is
+  `ConnectorsPanel.test.tsx` with 7 tests). `npm run typecheck`, `npm run lint`,
+  `npm run build` all pass.
+- `bash scripts/run-e2e.sh tests/e2e-setup-audit.spec.ts` — **passed** (`test-results/
+  .last-run.json` reports `passed`, no failed tests); the spec now saves a target, reloads,
+  checks the row came back from the API, and deletes it.
+- Full backend suite (`python -m pytest -q`, ~20 minutes here) — **exit 0, no failures or
+  errors**. This environment suppresses pytest's final summary line, so the count comes from
+  collection: **670** tests (661 before + 9 new).
+- Manual run on the dev stack (`http://localhost:5177`, migration applied, log shows
+  `0015_user_preferences -> 0016_saved_targets`): the tab renders with no error, the empty
+  state reads "Nothing saved yet", saving "Demo helpdesk" produced the notice, the row and a
+  Postgres row, edit loaded the saved values and renamed it, delete emptied the shelf again.
+
+### Known limitations
+
+- **The shelf is not yet offered on the New Test page.** A saved target keeps the format, but
+  starting a run still means typing the connector settings there; wiring a picker needs the
+  page's form state lifted into one place.
+- **No header values are stored**, so an authenticated target still needs a cURL per run.
+- **No "test this target" button**, because it would have to assert the remote-permission
+  consent the first-contact check collects per run.
+- **The two demo helpdesk apps were not running** when the dev stack was restarted, so the
+  manual check used a saved URL without sending a request (saving sends nothing by design).
+
+### Remaining tasks
+
+- Offer saved targets on the New Test page (pick → prefill the connector fields).
+- Password change UI, account deletion and a production deploy path remain open from before.
+
+### Latest commit
+
+- The feature commit is titled `feat(settings): saved targets in the Connectors tab`; the hash
+  is in `git log -1 --oneline` and is recorded in the follow-up documentation commit.
+
 ## Real-world failure classes
 
 `backend/tests/support/quirk_server.py` is one loopback server that mimics the ways a
@@ -417,12 +505,12 @@ with it.
 | Upload outputs | Built |
 | MCP server target | Not built; the standalone MCP server is a separate integration |
 
-- **Settings sections:** Connectors (saved targets). (Account and Preferences are now real
-  panels — see the M12 section above; Criteria and
-  Safety are no longer placeholders either: each tab renders its catalogue read-only, from
-  `GET /api/v1/criteria` and `GET /api/v1/safety/sets`. Editing criteria weights or the
-  safety set is not built, and the Safety set picker has no UI — only the backend/API
-  support exists: `safety_sets` on a run request, validated when the run is created.)
+- **Settings sections:** none — every tab now renders a real panel (Connectors joined in M13;
+  Account and Preferences in M12; Criteria and Safety render their catalogues read-only from
+  `GET /api/v1/criteria` and `GET /api/v1/safety/sets`). What is still missing inside those
+  panels: editing criteria weights, and any UI for the safety set picker — only the
+  backend/API support exists (`safety_sets` on a run request, validated when the run is
+  created).
 - **Entry points on New Test:** Python function (traced), Built-in RAG app, Python SDK
   (traced), Docker image, Git repository, CLI command, and the disabled optgroup options
   beside them.

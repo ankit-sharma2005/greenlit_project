@@ -85,10 +85,25 @@ test("the setup checklist tracks real state and the audit tab lists real events"
   );
   await expect(page.getByTestId("settings-tab-criteria")).not.toContainText("soon");
 
-  // Account and Preferences are real now; only Connectors still says "soon".
-  await expect(page.getByTestId("settings-tab-connectors")).toContainText("soon");
+  // No Settings tab is a placeholder any more, so no "soon" badge is left.
+  await expect(page.getByTestId("settings-tab-connectors")).not.toContainText("soon");
   await expect(page.getByTestId("settings-tab-account")).not.toContainText("soon");
   await expect(page.getByTestId("settings-tab-preferences")).not.toContainText("soon");
+
+  // Connectors keeps a target's format on the account and restores it after a
+  // reload; the spec deletes it again so the shelf is left as it was found.
+  await page.getByTestId("settings-tab-connectors").click();
+  await expect(page.getByTestId("connectors-panel")).toBeVisible();
+  await page.getByTestId("connector-name").fill("Setup target");
+  await page.getByTestId("connector-url").fill("https://support.example.com/ask");
+  await page.getByTestId("connector-answer-path").fill("$.answer");
+  await page.getByTestId("connector-save").click();
+  await expect(page.getByTestId("connectors-notice")).toContainText("“Setup target” is saved.");
+  await page.reload();
+  await page.getByTestId("settings-tab-connectors").click();
+  await expect(page.getByTestId("connector-row-Setup target")).toContainText("$.answer");
+  await page.getByTestId("connector-delete-Setup target").click();
+  await expect(page.getByTestId("connectors-notice")).toContainText("was deleted.");
 
   // Account shows the signed-in user's own record, never an invented one.
   await page.getByTestId("settings-tab-account").click();

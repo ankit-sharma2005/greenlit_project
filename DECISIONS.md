@@ -606,3 +606,60 @@ now the opposite for Account and Preferences, and the spec verifies the real pan
 profile fields, a display-name save that survives a reload, a theme applied at once and
 restored from the API with `localStorage` cleared, then a restore of the account's name and
 theme so the rest of the suite sees the state it expects. No other spec was weakened.
+
+## M13 — Saved targets (Settings → Connectors)
+
+### D13.1 A saved target is the connector shape, and nothing that authorises a request
+The Connectors tab promised "saved targets and their detected request/response format", but a
+target only existed inside the run settings snapshot, so the format detected on the New Test
+page was lost on reload. `saved_targets` (migration `0016_saved_targets`) stores the URL,
+method, body template, answer/context paths, streaming format, timeout and polite-rate
+settings — one row per target, owner-scoped. It has **no** column for a header value and
+**no** permission field, on purpose: a pasted cURL's headers are encrypted inside the run
+that sent them, and consent to test a remote app is recorded per run by the first-contact
+check. The schema rejects `headers`, `headers_secret`, `permission_confirmed` and `owner_id`
+as extra keys (422), so the shelf cannot be turned into a secret store by a client.
+
+### D13.2 Header names are kept, values are not
+`header_names` is stored (trimmed, de-duplicated, order preserved) because it describes the
+request shape and is what the run fingerprint binds to; a header *value* never enters the
+row. A saved target that needs an `Authorization` header therefore does not carry one — the
+documented way to send it is still a cURL on the New Test page. This is a deliberate
+trade-off: convenience now, rather than an encrypted-per-row secret store with its own
+rotation and deletion story.
+
+### D13.3 One name per owner, and a duplicate is a 409
+`UniqueConstraint("owner_id", "name")` plus an explicit check before insert: a repeated name
+answers 409 with "You already saved a target named … Pick another name." rather than
+overwriting the earlier target or creating a second row the UI cannot tell apart. A rename
+excludes the target being edited, so saving the same target twice is not a conflict with
+itself.
+
+### D13.4 Ownership comes from the session, and a foreign id is a 404
+Every route derives the owner from the session cookie; the id in the path is only a lookup
+key. A target belonging to another account answers 404, not 403, so its existence does not
+leak — the same rule datasets and judge profiles already follow.
+
+### D13.5 An edit is partial, and an explicit null clears a field
+`PATCH` uses `exclude_unset`, so only the fields in the body change. `None` is meaningful: it
+clears `answer_path`, `context_path` or `body_template` (an app that stopped returning
+context), while an omitted key is untouched. Non-nullable settings (format, timeout, rate
+limits) ignore a null and keep their value, so a client cannot blank the row's invariants.
+
+### D13.6 The URL stays out of the audit trail
+`saved_target.create`, `saved_target.update` (with the list of changed fields) and
+`saved_target.delete` are recorded, along with the connector type, method, response format
+and header *names*. The URL is not: a query string can carry a token, and the append-only
+trail is not a place to copy one. The target id is enough to correlate an event with a row.
+
+### D13.7 The panel is a shelf, not a runner
+Saving a target sends no request. The panel does not offer "test this target", because that
+button would have to assert the remote-permission consent the first-contact check exists to
+collect; the New Test page keeps owning that flow. What the tab does deliver is the format
+surviving a reload, per account, editable and deletable.
+
+### D13.8 The e2e spec now checks the real panel
+`e2e-setup-audit.spec.ts` asserted that Connectors still said "soon" — true before this
+change, false now. The spec saves a target, reloads into a fresh page, checks the row came
+back from the API and deletes it again, so the shelf is left as it was found and no other
+spec sees a stray target.

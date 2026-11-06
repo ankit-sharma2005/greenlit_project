@@ -105,6 +105,13 @@ a safety section, the judge that scored it, and an exportable report.
   starts from the default. Password change and account deletion are not offered: resets use
   the API-only flow and deletion has no safe cascade yet, and the panel says so instead of
   faking either.
+- **Saved targets:** Settings → Connectors keeps the apps you test with the format GreenLit
+  reads them by — method, answer path, context path, response format and timeout — one row
+  per target, editable and deletable. A target is personal to its account, its name is
+  unique per account, and a repeated name is refused with a 409 rather than overwriting.
+  It deliberately stores no header value (a pasted cURL's headers stay encrypted inside the
+  run that sent them) and no permission record: testing a remote app still asks for consent
+  when a run starts.
 - **Setup and audit:** the New Test page lists the three things a first test needs with
   their real state, and Settings → Audit log is a real, paged, filterable admin view of the
   append-only event trail.

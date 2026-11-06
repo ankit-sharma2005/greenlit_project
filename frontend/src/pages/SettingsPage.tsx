@@ -3,6 +3,7 @@ import { useState } from "react";
 import { AccountPanel } from "../components/AccountPanel";
 import { AuditPanel } from "../components/AuditPanel";
 import { ComingSoon } from "../components/ComingSoon";
+import { ConnectorsPanel } from "../components/ConnectorsPanel";
 import { CriteriaPanel } from "../components/CriteriaPanel";
 import { DatasetsPanel } from "../components/DatasetsPanel";
 import { JudgePanel } from "../components/JudgePanel";
@@ -25,6 +26,7 @@ const SECTIONS = [
 // Only tabs with a working panel are listed here; everything else keeps "soon".
 const AVAILABLE = new Set([
   "Datasets",
+  "Connectors",
   "Providers and models",
   "Criteria",
   "Judge",
@@ -92,6 +94,8 @@ export function SettingsPage() {
               </p>
               <ProvidersPanel />
             </>
+          ) : active === "Connectors" ? (
+            <ConnectorsPanel />
           ) : active === "Judge" ? (
             <>
               <h2>Judge</h2>
