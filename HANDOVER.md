@@ -682,3 +682,31 @@ nothing at all for `check.error`. The first run of the new spec failed on exactl
 - Full backend suite with every change in place: `729 passed, 1 skipped, 2 warnings in
   602.96s (0:10:02)`, exit 0.
 - `vitest run` — 208 passed (34 files); `npx tsc --noEmit`, `npm run lint` — clean.
+
+## M17 — The check panel, in a browser
+
+M16 proved the wizard. The check panel (`TargetCheckPanel`) was still covered by unit
+tests only, and reaching it took two findings:
+
+- The panel is offered only for a target that is **not** "on my computer", so a loopback
+  refusal server is refused there by the SSRF rule (`allow_private_targets` is false on
+  that path). The spec reaches the harness's server through `host.docker.internal` — the
+  host's own name, already the documented e2e target host — and `scripts/run-e2e.sh` binds
+  the refusal server to `0.0.0.0` for it, exactly as the demo servers are bound.
+- The panel renders only once `detectResult` exists, and a refused auto-detect raises 400,
+  so a refusing target never showed the panel at all. `refusal_server.py` now serves
+  `POST /first-ok/<mode>`: a readable 200 for the first request, the real refusal after it.
+
+| Proof | Result |
+| --- | --- |
+| `frontend/tests/e2e-check-panel-refusals.spec.ts` — nginx 403, CSRF JSON, Cloudflare challenge, 429 | **4 passed (37.0s)**, exit 0 |
+| what each case asserts | plain-words message, refusal code, evidence, diagnostic headers, `run-full` disabled, `run-full-blocked` shown, sentinel cookie and CSRF token absent from the page, server counter `+1` |
+| `npx playwright test --list` | **29 tests in 15 files** (was 25/14) |
+| `npx vitest run --reporter=verbose`, five consecutive runs | 34/34 files and 208/208 tests passed, exit 0 each (`local-prompts/vitest-run-1..5.txt`) |
+
+The single unexplained Vitest failure from M16 did **not** reproduce in five more full
+verbose runs; cause unknown, and nothing was changed for it.
+
+Known limitation: the four refusals reach the panel through the harness's own server and
+the first request is answered 200 on purpose, because the panel only appears after a
+successful first contact. A real third-party site was still never contacted.
