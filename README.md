@@ -98,6 +98,13 @@ a safety section, the judge that scored it, and an exportable report.
   carried a `Cookie`/`Authorization` at all. A 429 says the runner is being rate-limited.
   The check and the report keep the status, the diagnostic response headers and the
   evidence, so the next person can see who refused and why.
+- **Diagnose your own app's refusal:** `python scripts/diagnose_target.py request.curl
+  --question "hello"` sends exactly one request through the same connector, cURL import
+  rules, SSRF guard and redaction the product uses, then prints the HTTP status, the class,
+  the plain-words message, the evidence it was named from, the allowlisted response headers
+  and a redacted body snippet. It never retries and never solves a challenge, and it never
+  prints the cURL, a cookie or a token. A target that is not on this machine is refused
+  unless `--owned-or-permitted` and `--reference "..."` are given.
 - **Permission to test:** a target that is not the user's own computer needs a ticked
   "I own this application or have permission to test it" (an unconfirmed run is a 422)
   plus an optional reference. Both are stored with the run, shown on the verdict card,

@@ -37,6 +37,26 @@ This wizard supports POST requests with JSON bodies. Chatbots which stream over
 WebSockets, hide the call behind anti-bot checks, or need a GET request may not work
 and will show a structured error.
 
+## Check one request before a whole run
+
+If the app is yours — or you have written permission — one command names the refusal
+without a run:
+
+```
+python scripts/diagnose_target.py my-request.curl --question "hello"
+```
+
+It sends exactly one request through GreenLit's own connector: the same cURL import, the
+same header cleaning, the same SSRF guard and the same redaction. It prints the HTTP
+status, the class, the plain-words message, the evidence it was named from, the
+diagnostic response headers and a redacted body snippet. It never retries, never prints
+the cURL, a cookie or a token, and exits `2` for a target that is not on this machine
+unless you also pass `--owned-or-permitted` and `--reference "<where the permission
+comes from>"`.
+
+GreenLit never bypasses, solves or retries around a site's protection: a challenge is
+reported, with its evidence, and the request stops there.
+
 ## When a case fails, read the kind first
 
 | What you see | What it means | What to do |

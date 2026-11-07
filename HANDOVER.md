@@ -639,5 +639,46 @@ and CSRF headers are kept.
 - The only authentication remains a pasted cURL's own headers, after the permission tick.
 - No real third-party site was contacted for this investigation (by instruction); every
   row above is a local server serving that site's response shape.
-- The Website Chatbot UI itself was not changed, so the wizard's click path is covered by
-  the same specs as before.
+- The Website Chatbot UI itself was not changed in M15, so its click path was covered by
+  the same specs as before. The new messages were *claimed* for the UI by reading the code;
+  M16 proves them in the browser.
+
+## M16 — Proving the refusal in the browser, and a one-request diagnostic
+
+### What M15 did not prove
+
+The browser path. The check panel rendered only the shared `kind`, so every 401/403 read
+"The site answered with an error (http_error)", and the Website Chatbot wizard rendered
+nothing at all for `check.error`. The first run of the new spec failed on exactly this:
+`Expected substring: "blocked_by_site" / Received string: "The site answered with an error
+(http_error, HTTP 403)"` — the claim in the M15 report was wrong until the code was fixed.
+
+### What changed
+
+| Part | Where |
+| --- | --- |
+| The refusal's own name travels | `target_error.error_detail(code=...)`, filled from `ConnectorError.code` in `target_check.run_check`; `kind` stays one value per family |
+| One block, both panels | `frontend/src/components/CheckRefusal.tsx` — the summary, a plain-words label with the code and status, the evidence list, the diagnostic headers |
+| The wizard stops dropping it | `WebsiteWizard.tsx` renders `check.error`; `TargetCheckPanel.tsx` uses the same block |
+| A real server for the browser | `tests/support/refusal_server.py`: `serve()` / `__main__` answers every mode by path, `GET /_calls` counts what was asked for, `GET /_health` is the probe |
+| Harness | `scripts/run-e2e.sh` starts it on `E2E_REFUSAL_PORT` (9503), refuses a taken port, waits for health, logs to `e2e-refusal.log`, stops it with the rest |
+| The proof | `frontend/tests/e2e-refusals.spec.ts` |
+| Own-target diagnosis | `scripts/diagnose_target.py`, `backend/tests/test_diagnose_target.py` |
+
+### Measured
+
+- `bash scripts/run-e2e.sh tests/e2e-refusals.spec.ts`: first run **3 failed, 1 passed**
+  (the `http_error` bug above, caught by the spec); after the fix **4 passed (28.0s)**, exit 0.
+  Each case asserts the plain-words message, the code, the evidence, the headers, that a
+  sentinel cookie and CSRF token never reach the page, and that the server saw **exactly
+  one** request (counted on the server, not in the browser).
+- `tests/test_diagnose_target.py` — **7 passed**: four refusal modes end-to-end through the
+  script, a 200 that is not called a refusal, a remote host refused before any DNS or
+  network call, and a file that is not a cURL.
+- The flaky rate-control test: **10/10** alone, **3/3** while `vitest run` loaded the
+  machine, and in the full suite — its fixed 400 ms margin is now a share of the measured
+  exchange (`total - latency - waited` vs `max(10, total/50)`), so it still fails if the
+  waits are counted as latency, and no longer fails when the machine is slow.
+- Full backend suite with every change in place: `729 passed, 1 skipped, 2 warnings in
+  602.96s (0:10:02)`, exit 0.
+- `vitest run` — 208 passed (34 files); `npx tsc --noEmit`, `npm run lint` — clean.
