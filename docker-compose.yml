@@ -3,6 +3,7 @@ name: greenlit
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-greenlit}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-greenlit}
@@ -19,6 +20,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "${REDIS_PORT:-6382}:6379"
     healthcheck:
@@ -30,6 +32,7 @@ services:
   api:
     build:
       context: ./backend
+    restart: unless-stopped
     command: >
       sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
@@ -39,7 +42,10 @@ services:
       APP_SECRET_KEY: ${APP_SECRET_KEY:-dev-insecure-key-change-me-0123456789}
       APP_ENV: ${APP_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5177}
+      # Both loopback spellings, so the page works whether it is opened at
+      # http://localhost:5177 or http://127.0.0.1:5177. A browser reports a
+      # refused CORS preflight as "Cannot reach the GreenLit API".
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5177,http://127.0.0.1:5177}
       DEFAULT_TIMEOUT_SECONDS: ${DEFAULT_TIMEOUT_SECONDS:-60}
       DEFAULT_RUN_PARALLELISM: ${DEFAULT_RUN_PARALLELISM:-2}
     ports:
@@ -69,6 +75,7 @@ services:
   worker:
     build:
       context: ./backend
+    restart: unless-stopped
     command: celery -A app.celery_app.celery worker --loglevel=INFO
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://greenlit:greenlit@postgres:5432/greenlit}
@@ -89,6 +96,7 @@ services:
   web:
     build:
       context: ./frontend
+    restart: unless-stopped
     command: npm run dev -- --host 0.0.0.0
     environment:
       VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8003}
@@ -119,6 +127,7 @@ services:
   demo-app:
     build:
       context: ./backend
+    restart: unless-stopped
     command: uvicorn app.demo_server:app --host 0.0.0.0 --port 9000
     profiles: ["demo"]
     environment:
@@ -144,6 +153,7 @@ services:
   demo-app-broken:
     build:
       context: ./backend
+    restart: unless-stopped
     command: uvicorn app.demo_server:app --host 0.0.0.0 --port 9000
     profiles: ["demo"]
     environment:
