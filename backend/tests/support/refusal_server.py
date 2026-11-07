@@ -7,6 +7,7 @@ the structured detail the report stores — never a mock of the classifier.
 
 from __future__ import annotations
 
+import argparse
 import json
 import threading
 from dataclasses import dataclass, field
@@ -149,3 +150,73 @@ def start_refusal(mode: str) -> RefusalServer:
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     server.httpd = httpd
     return server
+
+
+def _mode_handler(counts: dict[str, int]) -> type[BaseHTTPRequestHandler]:
+    """Every mode on one server, addressed by path, counting what was asked for.
+
+    ``POST /<mode>`` answers that refusal. ``GET /_calls`` reports the counts, so
+    a browser test can prove a challenge was requested exactly once instead of
+    trusting the page. ``GET /_health`` is the harness's readiness probe.
+    """
+
+    class ModeHandler(BaseHTTPRequestHandler):
+        def _json(self, status: int, payload: dict[str, Any]) -> None:
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response_only(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self) -> None:
+            if self.path == "/_health":
+                self._json(200, {"ok": True, "modes": sorted(MODES)})
+            elif self.path == "/_calls":
+                self._json(200, dict(counts))
+            else:
+                self._json(404, {"error": "unknown path"})
+
+        def do_POST(self) -> None:
+            mode = self.path.strip("/").split("/", 1)[0]
+            refusal = MODES.get(mode)
+            if refusal is None:
+                self._json(404, {"error": f"unknown refusal mode {mode!r}"})
+                return
+            length = int(self.headers.get("content-length") or 0)
+            if length:
+                self.rfile.read(length)
+            counts[mode] = counts.get(mode, 0) + 1
+            payload = refusal.body.encode("utf-8")
+            # As above: the CDN's own Server header, not the stdlib's.
+            self.send_response_only(refusal.status)
+            for name, value in refusal.headers.items():
+                self.send_header(name, value)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args: Any) -> None:
+            """Keep the harness log readable."""
+
+    return ModeHandler
+
+
+def serve(port: int = 9503, host: str = "127.0.0.1") -> None:
+    """Run the refusal server for the browser suite until interrupted."""
+    counts: dict[str, int] = {}
+    httpd = ThreadingHTTPServer((host, port), _mode_handler(counts))
+    httpd.daemon_threads = True
+    print(f"refusal server on http://{host}:{port} ({len(MODES)} modes)", flush=True)
+    try:
+        httpd.serve_forever()
+    finally:
+        httpd.server_close()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Refusal server for the browser suite.")
+    parser.add_argument("--port", type=int, default=9503)
+    parser.add_argument("--host", default="127.0.0.1")
+    args = parser.parse_args()
+    serve(port=args.port, host=args.host)
