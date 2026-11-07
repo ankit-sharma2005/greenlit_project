@@ -190,7 +190,17 @@ def test_a_retried_case_records_the_final_attempt_and_the_wait_separately(
     assert trace.waited_ms > 0
     # The recorded latency is the last attempt (~100 ms), not the two waits.
     assert 80 <= trace.latency_ms < total_ms
-    assert trace.latency_ms < trace.waited_ms + 400
+    # Latency and the waits together account for the whole exchange, so nothing
+    # spent waiting is counted as latency. A fixed millisecond margin here used
+    # to fail on a busy machine, where the two refused attempts cost more; this
+    # bound is a share of the measured exchange instead (the waits alone are
+    # about 40% of it, so counting them as latency cannot hide under it).
+    bookkeeping_ms = max(10, total_ms // 50)
+    assert abs(total_ms - trace.latency_ms - trace.waited_ms) <= bookkeeping_ms, (
+        total_ms,
+        trace.latency_ms,
+        trace.waited_ms,
+    )
 
 
 def test_zero_retries_sends_exactly_one_request(
