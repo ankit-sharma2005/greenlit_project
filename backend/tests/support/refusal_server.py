@@ -178,7 +178,9 @@ def _mode_handler(counts: dict[str, int]) -> type[BaseHTTPRequestHandler]:
                 self._json(404, {"error": "unknown path"})
 
         def do_POST(self) -> None:
-            mode = self.path.strip("/").split("/", 1)[0]
+            parts = [part for part in self.path.strip("/").split("/") if part]
+            first_ok = bool(parts) and parts[0] == "first-ok"
+            mode = parts[1] if first_ok and len(parts) > 1 else (parts[0] if parts else "")
             refusal = MODES.get(mode)
             if refusal is None:
                 self._json(404, {"error": f"unknown refusal mode {mode!r}"})
@@ -186,7 +188,19 @@ def _mode_handler(counts: dict[str, int]) -> type[BaseHTTPRequestHandler]:
             length = int(self.headers.get("content-length") or 0)
             if length:
                 self.rfile.read(length)
-            counts[mode] = counts.get(mode, 0) + 1
+            already = counts.get(mode, 0)
+            counts[mode] = already + 1
+            if first_ok and already == 0:
+                # The UI shows the check panel only after a successful first
+                # contact, so the browser's auto-detect gets one readable 200
+                # and every request after it gets the real refusal.
+                body = json.dumps({"answer": "ok"}).encode("utf-8")
+                self.send_response_only(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             payload = refusal.body.encode("utf-8")
             # As above: the CDN's own Server header, not the stdlib's.
             self.send_response_only(refusal.status)

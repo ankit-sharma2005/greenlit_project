@@ -40,6 +40,10 @@ export E2E_API_BIND
 export E2E_WEB_BIND
 export VITE_API_BASE_URL="http://localhost:${API_PORT}"
 export E2E_REFUSAL_URL="http://127.0.0.1:${REFUSAL_PORT}"
+# The check panel is only offered for a target that is not "on my computer",
+# so its spec reaches the same server through the host's own name (the API runs
+# on this host, and the demo servers are bound the same way).
+export E2E_REFUSAL_CHECK_URL="http://host.docker.internal:${REFUSAL_PORT}"
 
 # The API, worker and migrations all run from backend/ on the host, so they need
 # the e2e datastores rather than the dev ones. Real environment beats the .env
@@ -123,7 +127,7 @@ if [ -z "${SKIP_STACK:-}" ]; then
     echo "Refusal port ${REFUSAL_PORT} is already in use; set E2E_REFUSAL_PORT." >&2
     exit 1
   fi
-  (cd backend && exec "$PYTHON" tests/support/refusal_server.py --port "$REFUSAL_PORT") \
+  (cd backend && exec "$PYTHON" tests/support/refusal_server.py --port "$REFUSAL_PORT" --host 0.0.0.0) \
     >"${ROOTDIR}/e2e-refusal.log" 2>&1 &
   PIDS+=($!)
   for i in $(seq 1 30); do
