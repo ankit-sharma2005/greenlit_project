@@ -1,4 +1,5 @@
 import { Button } from "./Button";
+import { CheckRefusal } from "./CheckRefusal";
 import type { TargetCheck } from "../lib/targets";
 
 interface AnswerCandidate {
@@ -132,6 +133,7 @@ export function WebsiteWizard({
             >
               {check.answer || "(no answer text)"}
             </pre>
+            {check.error ? <CheckRefusal error={check.error} /> : null}
             {check.question_path_reason ? (
               <p className="form-error" data-testid="website-question-path-reason">
                 {check.question_path_reason}

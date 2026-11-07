@@ -27,6 +27,7 @@ PG_PORT="${E2E_POSTGRES_PORT:-5536}"
 REDIS_PORT="${E2E_REDIS_PORT:-6482}"
 DEMO_GOOD_PORT="${E2E_DEMO_GOOD_PORT:-9501}"
 DEMO_BROKEN_PORT="${E2E_DEMO_BROKEN_PORT:-9502}"
+REFUSAL_PORT="${E2E_REFUSAL_PORT:-9503}"
 E2E_BASE_URL="${E2E_BASE_URL:-http://localhost:${WEB_PORT}}"
 E2E_API_URL="${E2E_API_URL:-http://localhost:${API_PORT}}"
 E2E_API_BIND="${E2E_API_BIND:-0.0.0.0}"
@@ -38,6 +39,7 @@ export E2E_API_URL
 export E2E_API_BIND
 export E2E_WEB_BIND
 export VITE_API_BASE_URL="http://localhost:${API_PORT}"
+export E2E_REFUSAL_URL="http://127.0.0.1:${REFUSAL_PORT}"
 
 # The API, worker and migrations all run from backend/ on the host, so they need
 # the e2e datastores rather than the dev ones. Real environment beats the .env
@@ -112,6 +114,29 @@ if [ -z "${SKIP_STACK:-}" ]; then
   (cd backend && MODE=broken exec "$PYTHON" -m uvicorn app.demo_server:app --host 0.0.0.0 --port "$DEMO_BROKEN_PORT") \
     >"${ROOTDIR}/e2e-demo-broken.log" 2>&1 &
   PIDS+=($!)
+
+  # Sites that refuse a request (403/429, CSRF, a challenge page), served from
+  # the same shapes the backend tests use: the browser proof needs a real
+  # server answering, not a stub inside the page.
+  log "Starting the refusal server on :${REFUSAL_PORT}"
+  if curl -sf "http://127.0.0.1:${REFUSAL_PORT}/_health" >/dev/null 2>&1; then
+    echo "Refusal port ${REFUSAL_PORT} is already in use; set E2E_REFUSAL_PORT." >&2
+    exit 1
+  fi
+  (cd backend && exec "$PYTHON" tests/support/refusal_server.py --port "$REFUSAL_PORT") \
+    >"${ROOTDIR}/e2e-refusal.log" 2>&1 &
+  PIDS+=($!)
+  for i in $(seq 1 30); do
+    if curl -sf "http://127.0.0.1:${REFUSAL_PORT}/_health" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+  if ! curl -sf "http://127.0.0.1:${REFUSAL_PORT}/_health" >/dev/null; then
+    echo "The refusal server did not become healthy; see ${ROOTDIR}/e2e-refusal.log" >&2
+    tail -n 30 "${ROOTDIR}/e2e-refusal.log" >&2
+    exit 1
+  fi
 
   log "Starting API on :${API_PORT}"
   (cd backend && exec "$PYTHON" -m uvicorn app.main:app --host "$E2E_API_BIND" --port "$API_PORT") \

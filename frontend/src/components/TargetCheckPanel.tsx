@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { Button } from "./Button";
+import { CheckRefusal } from "./CheckRefusal";
 import { ApiError } from "../lib/api";
 import {
   acceptTargetCheck,
@@ -142,11 +143,7 @@ export function TargetCheckPanel({ request, onAccepted, disabled = false }: Targ
               {check.hint}
             </p>
           ) : null}
-          {check.error ? (
-            <p className="form-error" data-testid="target-check-error">
-              {check.error.summary}
-            </p>
-          ) : null}
+          {check.error ? <CheckRefusal error={check.error} /> : null}
           {check.extraction_ok ? (
             <label style={{ display: "block", marginTop: "var(--space-2)" }}>
               <input

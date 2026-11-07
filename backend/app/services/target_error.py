@@ -111,6 +111,7 @@ def error_detail(
     *,
     kind: str,
     message: str,
+    code: str | None = None,
     status: int | None = None,
     target: str = "",
     snippet: str = "",
@@ -123,6 +124,11 @@ def error_detail(
     ``headers`` and ``evidence`` are the diagnosis a refusal came with — which
     CDN or firewall answered, whether a session was sent. Both are already
     bounded and redacted by the connector; they only travel.
+
+    ``code`` is the connector's own name for the refusal (``blocked_by_site``,
+    ``csrf_rejected``, ``auth_error``). ``kind`` stays one value per family
+    (all three are ``http_error``), so a panel that shows only ``kind`` cannot
+    tell a challenge from a stale session.
     """
     cleaned = redact_snippet(snippet)
     detail: dict[str, Any] = {
@@ -140,6 +146,8 @@ def error_detail(
             timeout_seconds=timeout_seconds,
         ),
     }
+    if code:
+        detail["code"] = code
     if headers:
         detail["headers"] = {
             str(name): redact_snippet(value, 120) for name, value in headers.items()

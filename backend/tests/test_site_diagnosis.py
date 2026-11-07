@@ -14,7 +14,7 @@ from collections.abc import Callable, Iterator
 
 import pytest
 
-from app.services.connectors import ConnectorError, HttpConnector
+from app.services.connectors import ConnectorError, HttpConnector, Trace
 from app.services.site_diagnosis import diagnose
 from tests.support.refusal_server import MODES as REFUSAL_MODES
 from tests.support.refusal_server import RefusalServer, start_refusal
@@ -181,6 +181,40 @@ def test_a_refused_case_keeps_the_evidence_in_its_stored_detail() -> None:
     assert detail["status"] == 403
     assert detail["headers"] == {"cf-mitigated": "challenge"}
     assert detail["evidence"] == ["body says 'just a moment'"]
+
+
+def test_a_refusal_reaches_the_check_panel_with_its_own_code() -> None:
+    """``kind`` alone cannot tell a challenge from a stale session in the UI."""
+    from app.services.target_check import run_check
+
+    def refuse(_input: str) -> Trace:
+        raise ConnectorError(
+            "the site blocked this request with a Cloudflare anti-bot check (HTTP 403)",
+            code="blocked_by_site",
+            details={
+                "status_code": 403,
+                "target": "chat.example.test/chat",
+                "snippet": "Just a moment...",
+                "headers": {"cf-mitigated": "challenge"},
+                "evidence": ["header cf-mitigated: challenge"],
+            },
+        )
+
+    outcome = run_check(
+        {
+            "url": "https://chat.example.test/chat",
+            "method": "POST",
+            "body_template": '{"question": {{input}}}',
+        },
+        input_text="hello",
+        sender=refuse,
+    )
+
+    assert outcome.error is not None
+    # Every 401/403 shares the same kind; the code is what the panel shows.
+    assert outcome.error["kind"] == "http_error"
+    assert outcome.error["code"] == "blocked_by_site"
+    assert outcome.error["evidence"] == ["header cf-mitigated: challenge"]
 
 
 def test_a_200_is_never_diagnosed_as_a_refusal() -> None:

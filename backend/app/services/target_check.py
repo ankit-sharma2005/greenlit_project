@@ -506,6 +506,9 @@ def run_check(
         details = exc.details or {}
         error = error_detail(
             kind=exc.kind,
+            # The refusal's own name: ``kind`` collapses every 401/403 into
+            # ``http_error``, which is not enough to advise anybody.
+            code=exc.code,
             message=exc.message,
             status=status,
             target=str(details.get("target") or target_of(target)),

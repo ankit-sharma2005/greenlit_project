@@ -37,11 +37,17 @@ export interface TargetCheckRequest {
 
 export interface TargetCheckError {
   kind: string;
+  /** The refusal's own name: blocked_by_site, csrf_rejected, auth_error. */
+  code?: string;
   status: number | null;
   target: string;
   snippet: string;
   message: string;
   summary: string;
+  /** What the refusal was diagnosed from, in the server's own words (redacted). */
+  evidence?: string[];
+  /** Allowlisted diagnostic response headers, redacted; never Set-Cookie. */
+  headers?: Record<string, string>;
 }
 
 /** One harmless request: what it sent, what came back, and what was read. */
