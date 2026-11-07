@@ -79,9 +79,25 @@ a safety section, the judge that scored it, and an exportable report.
   and both time to first byte and total latency are recorded.
 - **Pasted cURL credentials:** a pasted `curl` brings its headers, cookies (`-b`),
   basic auth (`-u`) and body into the connector. Values are stored encrypted, the API
-  returns only their names, exports and errors redact them, and the `Host` header is
-  never imported (the URL decides the host, so the SSRF check still applies). A 401/403
-  says the session may have expired and to paste a fresh cURL.
+  returns only their names, exports and errors redact them. A pasted cURL is the only
+  way GreenLit authenticates to someone else's app: no login automation, no CAPTCHA or
+  anti-bot solving.
+- **Headers the client must own are never imported:** `Host` (the URL decides the host,
+  so the SSRF check still applies), the HTTP/2 pseudo-headers Chrome copies
+  (`:authority`, `:path` — previously they failed the request with *Illegal header name
+  b':authority'*), `Content-Length` (the rendered body is not the copied one, so a stale
+  length made the request unreadable or got it refused) and `Accept-Encoding` (the client
+  may only negotiate encodings it can decode). `Origin`, `Referer`, `User-Agent`, cookies
+  and CSRF headers are kept, because they are what makes the request the same session.
+- **A refusal is named from its evidence:** a 401/403/429 is classified from the response
+  headers and body, not from "it looked like HTML". Anti-bot evidence
+  (`cf-mitigated`, DataDome, PerimeterX, Imperva, Sucuri, AWS WAF, or a challenge page's
+  own text) is `blocked_by_site` and is never retried; a CSRF/anti-forgery rejection is
+  `csrf_rejected`; otherwise 401 is a session the site did not accept and 403 a refusal
+  (permission, firewall or request shape), and the message says whether the request
+  carried a `Cookie`/`Authorization` at all. A 429 says the runner is being rate-limited.
+  The check and the report keep the status, the diagnostic response headers and the
+  evidence, so the next person can see who refused and why.
 - **Permission to test:** a target that is not the user's own computer needs a ticked
   "I own this application or have permission to test it" (an unconfirmed run is a 422)
   plus an optional reference. Both are stored with the run, shown on the verdict card,
@@ -387,9 +403,11 @@ you trust. To use the runner against your own application, replace the target an
 A first real test against somebody else's chatbot has its own hazards: an expiring
 session, bot protection, redirects, TLS, a stream that stops halfway. The connector
 reports each of those as its own structured failure instead of a crash or a wrong
-score — a `403` challenge page is "blocked by the site", a cross-host redirect is
-refused and named, an unreadable body says which paths were tried, and a stream that
-stops early keeps its text marked incomplete so it is never scored as a whole answer.
+score — an anti-bot challenge is "blocked by the site" and named (Cloudflare, Akamai,
+DataDome …), a CSRF rejection is its own code, a plain 403 or an expired session is not
+called a bot check, a cross-host redirect is refused and named, an unreadable body says
+which paths were tried, and a stream that stops early keeps its text marked incomplete
+so it is never scored as a whole answer.
 Read [docs/REAL_WORLD_CHECKLIST.md](docs/REAL_WORLD_CHECKLIST.md) before the first
 request: permission first, a test account, concurrency 1, attack probes off unless
 written permission covers them, and never production customer data.

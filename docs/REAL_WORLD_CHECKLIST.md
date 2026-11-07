@@ -41,8 +41,11 @@ and will show a structured error.
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
-| `blocked_by_site` (HTTP 403) | An anti-bot or CSRF challenge page, not a wrong password | Use a normal browser session (a pasted cURL), a test account, or ask the owner to allow the runner. Do not retry harder. |
-| `auth_error` (401/403) | The session expired or the token is wrong | Paste a fresh cURL or update the credentials. Cases already answered are kept. |
+| `blocked_by_site` (HTTP 401/403) | The site challenged the request with a real anti-bot product — Cloudflare (`cf-mitigated`), DataDome, PerimeterX, Imperva, Sucuri, AWS WAF — or a challenge page's own text. The message names it. | Use a test account in a browser, or ask the owner to allow the runner. GreenLit does not retry and does not solve challenges. |
+| `csrf_rejected` (HTTP 403) | The site rejected a missing or stale CSRF/anti-forgery token | Paste a fresh cURL copied from the same tab right after sending a message, so its headers carry the current token. |
+| `auth_error` (401) | The site did not accept the session. The message says whether the request sent a `Cookie`/`Authorization` at all. | With a credential: it expired — sign in and paste a fresh cURL. Without one: sign in with a test account and paste a cURL from that tab. |
+| `auth_error` (403) | No anti-bot or CSRF evidence: the account may lack access to that endpoint, or the site's firewall refused the request shape (headers, method or body) | Check the URL is the message endpoint, compare with the browser's own request (method, body, `Origin`/`Referer`), and use an account that may use that feature. Cases already answered are kept. |
+| `http_error` (429) | The site is rate-limiting the runner | Wait and try again, or lower the request rate in the run limits. |
 | `tls_error` | The certificate is self-signed, incomplete or expired | Use a trusted certificate, or test a local app over http. The message says which. |
 | `dns_error` | The hostname does not resolve | Check the URL for a typo. |
 | `connect_timeout` | Nothing accepted the connection in time | The host is down, or a firewall is in the way. |

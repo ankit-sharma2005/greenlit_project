@@ -3,8 +3,13 @@
 A pasted curl command is how a person gives GreenLit a chatbot session that
 needs a cookie or a bearer token. Header values never leave the server in a
 response: the API returns the names and an encrypted blob that a later run can
-send back. The ``Host`` header is never imported — the URL decides the host, so
-a pasted header cannot redirect the request or dodge the SSRF check.
+send back. Headers the client must derive itself are never imported: ``Host`` (the URL
+decides the host, so a pasted header cannot redirect the request or dodge the
+SSRF check), the HTTP/2 pseudo-headers Chrome copies (``:authority``,
+``:path`` ... — not legal header names in HTTP/1.1), ``Content-Length`` (the
+rendered body is not the copied one, and a stale length makes the request
+unreadable) and ``Accept-Encoding`` (the client may only negotiate encodings it
+can decode).
 """
 
 from __future__ import annotations
@@ -39,13 +44,45 @@ def _unquote(value: str | None) -> str:
     return value.strip()
 
 
+# Headers a copied cURL carries that the client has to own. A pasted
+# ``content-length`` describes the body Chrome sent, not the body GreenLit
+# renders; a pasted ``accept-encoding`` can ask for an encoding the client
+# cannot decode. Both turn a working paste into a 400 or an unreadable answer.
+CLIENT_OWNED_HEADERS = frozenset({"host", "content-length", "accept-encoding"})
+_CLIENT_OWNED_HEADERS = CLIENT_OWNED_HEADERS
+
+
+def clean_request_headers(headers: dict[str, str] | None) -> dict[str, str] | None:
+    """The headers a request may send: no client-owned names, no pseudo-headers.
+
+    Applied when a cURL is imported *and* before a request is sent, so a target
+    saved before this rule existed stops failing too.
+    """
+    if not headers:
+        return headers
+    cleaned: dict[str, str] = {}
+    for name, value in headers.items():
+        key = str(name).strip()
+        lowered = key.lower()
+        if not key or lowered in CLIENT_OWNED_HEADERS or key.startswith(":"):
+            continue
+        cleaned[key] = value
+    return cleaned
+
+
 def _add_header(headers: dict[str, str], raw: str) -> None:
-    """Add one ``Name: value`` header, dropping any attempt to set Host."""
+    """Add one ``Name: value`` header, dropping the ones the client must set."""
     if ":" not in raw:
         return
     name, value = raw.split(":", 1)
     name = name.strip()
-    if not name or name.lower() == "host":
+    if not name or name.lower() in CLIENT_OWNED_HEADERS:
+        return
+    # HTTP/2 pseudo-headers arrive as ":authority: host" from DevTools' copy;
+    # they are request-line data, not headers, and no HTTP/1.1 client may send
+    # them. Accepting one used to fail the whole request with
+    # "Illegal header name b':authority'".
+    if name.startswith(":"):
         return
     headers[name] = value.strip()
 

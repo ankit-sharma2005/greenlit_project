@@ -515,6 +515,12 @@ def run_check(
                 if isinstance(details.get("timeout_seconds"), (int, float))
                 else None
             ),
+            # A refusal keeps the evidence it was diagnosed from: which CDN or
+            # firewall answered, and whether a session was sent at all.
+            headers=details.get("headers") if isinstance(details.get("headers"), dict) else None,
+            evidence=(
+                details.get("evidence") if isinstance(details.get("evidence"), list) else None
+            ),
         )
     if len(answer) > MAX_ANSWER_CHARS:
         answer = answer[:MAX_ANSWER_CHARS].rstrip() + "…"

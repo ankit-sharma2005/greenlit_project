@@ -415,7 +415,9 @@ honest: PARTLY means the truth is narrower than the row reads.
 | --- | --- | --- |
 | Basic / bearer / API-key / cookie auth | HANDLED | `test_each_auth_style_is_sent_and_accepted` |
 | Token expiring mid-run | PARTLY | `test_a_token_that_expires_mid_run_stops_with_a_clear_error` — a clear `auth_error`, exactly one further request, no retry storm. The run-level "answered cases are kept" comes from the normal per-case failure path, not a dedicated test. |
-| CSRF / anti-bot 403 challenge page | HANDLED | `test_an_anti_bot_challenge_is_a_blocked_site_not_a_wrong_answer` (and `test_a_secret_in_a_challenge_page_is_redacted`) |
+| CSRF / anti-bot 403 challenge page | HANDLED | `test_an_anti_bot_challenge_is_a_blocked_site_not_a_wrong_answer` (and `test_a_secret_in_a_challenge_page_is_redacted`); the 401/403 taxonomy is in M15 below (`tests/test_site_diagnosis.py`) |
+| A 403 that is *not* a challenge (nginx page, permission, expired login) | HANDLED | M15: `test_a_plain_nginx_403_is_not_called_an_anti_bot_challenge`, `test_an_expired_session_login_page_says_the_session_is_missing`, `test_a_403_with_credentials_names_permission_not_the_anti_bot_story` |
+| Browser-copied headers (`:authority`, stale `content-length`) | HANDLED | M15: `tests/test_curl_browser_headers.py` |
 | Redirects | HANDLED | `test_a_same_host_redirect_is_followed`, `test_a_cross_host_redirect_is_refused_and_names_the_target` (the other host is never contacted), `test_a_redirect_loop_stops_after_three_hops` |
 | TLS, DNS, reset | PARTLY | `test_a_self_signed_certificate_is_named_as_such`, `test_an_expired_certificate_says_expired`, `test_a_dns_failure_is_not_a_timeout`, `test_a_connection_reset_is_reported`. Connect has its own shorter clock but no test trips a hanging host. |
 | Response shapes | HANDLED | `test_a_known_response_shape_is_mapped` (OpenAI, nested JSON path, messages array, gzip), `test_an_unreadable_answer_names_what_was_tried` (HTML 200, empty, invalid UTF-8, plain text, null answer), `test_a_huge_json_body_is_capped_not_parsed` |
@@ -568,3 +570,74 @@ different thing (an MCP server *for* GreenLit) and was not touched.
 - Prettier still reports 9 pre-existing files (`src/lib/api.ts`, `src/lib/session.test.ts`,
   `src/components/WebsiteWizard.tsx`, `src/pages/NewTestPage.tsx` and their tests) — none of
   the files added in this step.
+
+## M15 — What a refusal is called (the recurring 403)
+
+### The finding, measured
+
+The Website Chatbot's "anti-bot or CSRF challenge" message was produced by
+`connectors._is_challenge_page`, which treated **any** 401/403 whose body looked like HTML
+as an anti-bot challenge, and missed the opposite case: a CDN that blocks automation but
+answers JSON fell through to "your session expired". Both errors were reproduced against
+a local server serving the real response shapes (status, headers, body), running the real
+`HttpConnector`:
+
+| Response the site sent | Reported before | Reported now |
+| --- | --- | --- |
+| 403, `Server: cloudflare`, `cf-mitigated: challenge`, "Just a moment…" | `blocked_by_site` "anti-bot or CSRF" | `blocked_by_site`, names Cloudflare, evidence `cf-mitigated` + page text |
+| 403, `Server: nginx/1.25.3`, plain "403 Forbidden" page | **`blocked_by_site`** (wrong) | `auth_error` "no session was sent" (correct) |
+| 403, JSON `{"detail":"CSRF token missing."}` | `blocked_by_site` "anti-bot or CSRF" | `csrf_rejected`, says to paste a fresh cURL with the token |
+| 403, `Server: AkamaiGHost`, JSON "Access Denied / Reference #18…" | **`auth_error` "session expired"** (wrong) | `blocked_by_site`, names Akamai |
+| 401, site's login page (session gone) | **`blocked_by_site`** (wrong) | `auth_error`, "needs a signed-in session" |
+| 401, JSON `invalid_token`, `WWW-Authenticate: Bearer` | `auth_error` | `auth_error`, "the cookie or token … has expired" |
+| 403, JSON `{"error":"forbidden"}`, cookie sent | `auth_error` "session expired" | `auth_error`, "the account may not have access … or the firewall refused the shape" |
+| 429, `Retry-After: 0` | `http_error` "target returned HTTP 429" | `http_error`, "the site is rate-limiting this runner … lower the request rate" |
+
+Two header defects were found on the same path, both fatal to a request before the app
+sees it: a Chrome "Copy as cURL" carries HTTP/2 pseudo-headers, and importing
+`:authority` failed with `connector_error: Illegal header name b':authority'`; importing
+the copied `content-length` failed with `Too little data for declared Content-Length`
+(and a strict server would answer 400/403 instead). `Host`, the pseudo-headers,
+`content-length` and `accept-encoding` are now dropped at import and again at send time,
+so a target saved before the rule heals too. Cookies, `Origin`, `Referer`, `User-Agent`
+and CSRF headers are kept.
+
+### What exists now
+
+| Part | Where |
+| --- | --- |
+| Classification | `app/services/site_diagnosis.py` — headers (`cf-mitigated`, DataDome, PerimeterX, Imperva, Sucuri, AWS WAF) and challenge-page text first, CSRF words second, status last |
+| Codes | `blocked_by_site` (unchanged), `csrf_rejected` (new, `http_error` in the shared vocabulary), `auth_error` for 401/403 without evidence, `http_error` for 429 |
+| Evidence | every refusal keeps `status_code`, the diagnostic response headers (allowlist, redacted, no `Set-Cookie`), the redacted snippet and an `evidence` list, in the check result and in the stored case detail |
+| Header import | `app/utils/curl.py::clean_request_headers`, applied at import and in `HttpConnector.render_and_send` |
+| Docs | README ("A refusal is named from its evidence"), `docs/REAL_WORLD_CHECKLIST.md` table, DECISIONS D15.1–D15.7 |
+
+### Tests actually run
+
+- `tests/test_site_diagnosis.py` — **19 passed**: one mock local server, eight real
+  refusal shapes (Cloudflare challenge, nginx 403, CSRF JSON, Akamai JSON, expired login
+  page, bearer 401, permission 403, 429), each asserting the code, the message, the
+  evidence, the kept headers, that a challenge is called once and never retried, that no
+  cookie reaches the detail, and that a 200 is never diagnosed; plus the run-level detail.
+- `tests/test_curl_browser_headers.py` — **3 passed**: a Chrome copy keeps its session
+  headers and drops client-owned ones, the pasted cookie and CSRF header reach the target
+  with a correct `content-length`, and a target saved with `:authority` heals at send.
+- Existing suites that own this code, unchanged: `test_quirk_failures`, `test_connectors_fake_app`,
+  `test_target_errors`, `test_target_check`, `test_http_rate_control`, `test_curl_credentials`,
+  `test_error_kind_timeout` — **121 passed**; `test_run_executor` — **32 passed**.
+- Full backend suite, twice: the first run `1 failed, 719 passed, 1 skipped`
+  (`test_http_rate_control.py::test_a_retried_case_records_the_final_attempt_and_the_wait_separately`,
+  the known load-sensitive timing case — it passed 3/3 on its own and in the final run),
+  the final run with every change in place `721 passed, 1 skipped, 2 warnings in 559.25s`, exit 0.
+- `ruff check .` — All checks passed; `ruff format --check .` — 165 files already formatted;
+  `mypy app` — Success: no issues found in 87 source files.
+
+### Known limitations (unchanged by this work)
+
+- A site that refuses automation stays refused: GreenLit names the product and stops. It
+  does not solve a challenge, rotate a fingerprint or retry a block.
+- The only authentication remains a pasted cURL's own headers, after the permission tick.
+- No real third-party site was contacted for this investigation (by instruction); every
+  row above is a local server serving that site's response shape.
+- The Website Chatbot UI itself was not changed, so the wizard's click path is covered by
+  the same specs as before.

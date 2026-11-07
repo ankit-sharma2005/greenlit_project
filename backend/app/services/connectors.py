@@ -12,7 +12,9 @@ from urllib.parse import urlsplit
 import httpx
 
 from app.services.error_kinds import HTTP_ERROR, kind_for_code
+from app.services.site_diagnosis import diagnose, diagnostic_headers, evidence_lines
 from app.services.target_error import redact_snippet, target_of
+from app.utils.curl import clean_request_headers
 from app.utils.request_client import (
     RedirectBlockedError,
     RequestClient,
@@ -69,11 +71,21 @@ def _looks_like_html(text: str) -> bool:
 
 
 def _is_challenge_page(status: int, snippet: str) -> bool:
-    """A 401/403 body that is bot protection or a missing CSRF token."""
+    """A 401/403 body that is bot protection or a missing CSRF token.
+
+    Kept for callers that only have the body; the connector itself now asks
+    :func:`app.services.site_diagnosis.diagnose`, which also reads the response
+    headers and the request's credentials before naming a refusal.
+    """
     if status not in (401, 403):
         return False
     lowered = snippet.lower()
     return any(marker in lowered for marker in _CHALLENGE_MARKERS) or _looks_like_html(snippet)
+
+
+def _sent_credentials(headers: dict[str, str] | None) -> bool:
+    """Whether the request carried a session or a token at all."""
+    return any(str(name).lower() in {"cookie", "authorization"} for name in (headers or {}))
 
 
 def _too_large_message() -> str:
@@ -293,50 +305,52 @@ def _connection_failure(error: Exception, url: str, expired: bool | None = None)
     return ConnectorError(message, code="connection_error", details=details)
 
 
-def _http_failure(status: int, snippet: str, target: str) -> ConnectorError:
-    """A non-2xx answer as the same structured failure for json and streams."""
-    if _is_challenge_page(status, snippet):
-        # A bot-protection or CSRF page is the site protecting itself, not a
-        # wrong password and not a wrong answer. Asking again is what gets you
-        # blocked harder, so this is never retried.
-        message = (
-            f"the site blocked this request with an anti-bot or CSRF challenge (HTTP {status}); "
-            "use a test account and a browser-like session, or ask the owner to allow it"
-        )
-        return ConnectorError(
-            message,
-            code="blocked_by_site",
-            details={
-                "status_code": status,
-                "target": target,
-                "snippet": snippet,
-                "message": message,
-                "kind": HTTP_ERROR,
-            },
-        )
-    code = "http_error"
-    message = f"target returned HTTP {status}"
-    if status == 404:
-        code = "not_found"
-        message = "your app answered but this path does not exist"
-    elif status in (401, 403):
-        code = "auth_error"
-        # A pasted cURL carries a session that expires: say what to do next.
-        message = (
-            "your app rejected the request (HTTP "
-            f"{status}): the session or token may have expired; paste a fresh cURL"
-        )
-    return ConnectorError(
-        message,
-        code=code,
-        details={
-            "status_code": status,
-            "target": target,
-            "snippet": snippet,
-            "message": message,
-            "kind": HTTP_ERROR,
-        },
-    )
+def _http_failure(
+    status: int,
+    snippet: str,
+    target: str,
+    *,
+    headers: dict[str, str] | None = None,
+    sent_credentials: bool = False,
+) -> ConnectorError:
+    """A non-2xx answer as one structured failure, for JSON and for streams.
+
+    A 401/403/429 is named from the response itself (challenge headers, CSRF
+    text, whether a session was sent), never from "the body looks like HTML":
+    an nginx 403 page and a login page are not anti-bot challenges, and a CDN
+    that blocks automation is not an expired session.
+    """
+    diagnosis = diagnose(status, headers, snippet, sent_credentials=sent_credentials)
+    if diagnosis is not None:
+        code, message = diagnosis.code, diagnosis.message
+    else:
+        code = "http_error"
+        message = f"target returned HTTP {status}"
+        if status == 404:
+            code = "not_found"
+            message = "your app answered but this path does not exist"
+        elif status in (401, 403):
+            code = "auth_error"
+            # A pasted cURL carries a session that expires: say what to do next.
+            message = (
+                "your app rejected the request (HTTP "
+                f"{status}): the session or token may have expired; paste a fresh cURL"
+            )
+    details: dict[str, Any] = {
+        "status_code": status,
+        "target": target,
+        "snippet": snippet,
+        "message": message,
+        "kind": HTTP_ERROR,
+    }
+    # What the site actually said, kept for the check panel and the report: the
+    # names explain who refused (a CDN, its WAF), and none of them is a secret.
+    kept = diagnostic_headers(headers)
+    if kept:
+        details["headers"] = kept
+    if diagnosis is not None and diagnosis.evidence:
+        details["evidence"] = evidence_lines(diagnosis.evidence)
+    return ConnectorError(message, code=code, details=details)
 
 
 def streamed_piece(payload: Any, content_path: str | None) -> str | None:
@@ -418,6 +432,10 @@ class HttpConnector:
         """Shared function for test call and run items."""
         start = time.time()
         deadline = time.monotonic() + self.item_budget_seconds
+        # A target saved before the import rules changed may still carry a copied
+        # "content-length" or a ":authority" pseudo-header: neither can be sent
+        # correctly, so they are dropped here too rather than failing the case.
+        headers = clean_request_headers(headers)
         try:
             # Render body template
             rendered = render_body_template(body_template, input_text)
@@ -473,7 +491,13 @@ class HttpConnector:
             # 422 must not be reported as "wrong answer path" (the run would
             # then look like a quality problem instead of a setup problem).
             if not 200 <= status < 300:
-                raise _http_failure(status, snippet, target)
+                raise _http_failure(
+                    status,
+                    snippet,
+                    target,
+                    headers=dict(getattr(response, "headers", {}) or {}),
+                    sent_credentials=_sent_credentials(headers),
+                )
 
             # A 10 MB "answer" is a download, not an answer: refuse it before
             # parsing so one misconfigured URL cannot exhaust the worker.
@@ -708,7 +732,13 @@ class HttpConnector:
                 status = response.status_code
                 if not 200 <= status < 300:
                     response.read()
-                    raise _http_failure(status, redact_snippet(response.text), target)
+                    raise _http_failure(
+                        status,
+                        redact_snippet(response.text),
+                        target,
+                        headers=dict(response.headers or {}),
+                        sent_credentials=_sent_credentials(headers),
+                    )
                 output, ttfb_ms, byte_count, complete = self._collect_stream(
                     response,
                     response_format=response_format,

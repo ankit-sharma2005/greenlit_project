@@ -714,3 +714,66 @@ discover, pick, check, accept, see the run button enable — has no Playwright s
 e2e harness drives real local servers, and a mock MCP server (JSON-RPC, session header,
 SSE-or-JSON negotiation, `DELETE`) is well past the thirty lines this step allowed. It is
 recorded as not proven rather than claimed.
+
+## M15 — What a refusal is called
+
+### D15.1 A 403 is classified from the response, never from "the body looked like HTML"
+The old rule was `status in (401, 403) and (a challenge word in the text or the body
+starts with '<html>')`. Every real site answers a refusal with an HTML page, so the
+second clause was true for an nginx 403, a Django permission page, a login page after
+the session expired and an actual Cloudflare challenge alike: all of them read "the site
+blocked this request with an anti-bot or CSRF challenge … use a test account". The
+advice was wrong for three of those four, and the one thing it never showed was the
+evidence. The rule is now: look for the headers a challenge product sets
+(`cf-mitigated`, `x-datadome`, `x-px-block`, `x-iinfo`, `x-sucuri-block`,
+`x-amzn-waf-action`) and for the challenge page's own sentences, then for anti-forgery
+words, and only then fall back to the status. Anything kept as evidence is stored with
+the failure, so the message can be checked rather than believed.
+
+### D15.2 The reverse mistake matters as much: a JSON block is not an expired session
+A CDN that blocks automation usually answers with a challenge page, but Akamai and AWS
+WAF can answer JSON ("Access Denied", a reference number). Because the old rule only
+recognised words like "captcha" or an HTML body, exactly those answers fell through to
+`auth_error` with "the session or token may have expired; paste a fresh cURL" — advice
+that cannot work, repeated for every case of a run. Anti-bot evidence is therefore read
+from headers *and* body, before the status-based branch, regardless of content type.
+
+### D15.3 `csrf_rejected` is its own code, because the fix is different
+A stale CSRF token and an anti-bot wall both answer 403, and telling them apart changes
+what a person does: a token needs a fresh copy from the same tab, a wall needs the owner
+or a browser session. They now have separate codes and separate messages. The code is
+still `http_error` in the shared vocabulary (`error_kinds`), so metrics and the decision
+rule are unchanged: this is a setup failure, not a quality signal.
+
+### D15.4 The message states what the request carried
+"Your session expired" was a guess even when the pasted cURL contained no cookie at all,
+which is the common case for a chatbot whose messages are authorised by a CSRF token the
+wizard never captured. The connector now passes whether the outgoing request had a
+`Cookie` or `Authorization` header, and the 401/403 message says either "the pasted
+session expired" or "no session was sent" — a fact about the request GreenLit made.
+
+### D15.5 The response headers that explain a refusal are kept; nothing else is
+The failure detail now carries a small allowlist of diagnostic response headers
+(`server`, `cf-mitigated`, `cf-ray`, `retry-after`, `www-authenticate`, the WAF markers,
+`content-type`), redacted and length-capped like the body snippet. `Set-Cookie` is never
+kept: a refusal is not a reason to store a credential, and the request's own headers are
+already masked to names. This is what makes step "inspect the actual response" possible
+without a packet capture.
+
+### D15.6 Browser-copied headers that the client must own are dropped at import and at send
+Chrome's "Copy as cURL" carries `:authority` / `:path` and a `Content-Length` for the
+body it copied. Importing them (the parser only refused `Host`) produced two failures
+that look like the app rejecting GreenLit: `Illegal header name b':authority'`, and
+`Too little data for declared Content-Length` (or a 400/403 from a server that trusts the
+stale length). Both are dropped now, along with `Accept-Encoding`, because the client can
+only negotiate encodings it can decode. The same filter runs before sending, so a target
+saved before this rule heals instead of failing. Cookies, `Origin`, `Referer`,
+`User-Agent` and CSRF headers are kept: they are the session, not client plumbing.
+
+### D15.7 No bypass, and a documented limit
+Nothing here retries a challenge, solves a CAPTCHA, imitates a browser or rotates
+fingerprints. A site that refuses automation gets `blocked_by_site`, a named product and
+"ask the owner to allow this runner" — the limitation is reported, not worked around.
+The only authentication GreenLit supports is the headers of a cURL a person pasted
+themselves, after ticking the permission record; there is no login flow, no credential
+store and no token minting.

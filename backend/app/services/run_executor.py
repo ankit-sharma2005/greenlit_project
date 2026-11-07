@@ -277,6 +277,8 @@ def _failure_detail(
     waited = details.get("timeout_seconds")
     if status is None and not target and not snippet and waited is None:
         return None
+    refusal_headers = details.get("headers")
+    evidence = details.get("evidence")
     return build_error_detail(
         kind=kind or "other",
         message=message,
@@ -284,6 +286,10 @@ def _failure_detail(
         target=str(target or ""),
         snippet=str(snippet or ""),
         timeout_seconds=waited if isinstance(waited, (int, float)) else None,
+        # A refused case keeps the diagnosis the connector made: a report should
+        # say which CDN or firewall refused, not only that the status was 403.
+        headers=refusal_headers if isinstance(refusal_headers, dict) else None,
+        evidence=evidence if isinstance(evidence, list) else None,
     )
 
 

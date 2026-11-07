@@ -115,10 +115,17 @@ def error_detail(
     target: str = "",
     snippet: str = "",
     timeout_seconds: int | float | None = None,
+    headers: dict[str, str] | None = None,
+    evidence: list[str] | None = None,
 ) -> dict[str, Any]:
-    """The dict stored on the run item (and returned by the API)."""
+    """The dict stored on the run item (and returned by the API).
+
+    ``headers`` and ``evidence`` are the diagnosis a refusal came with — which
+    CDN or firewall answered, whether a session was sent. Both are already
+    bounded and redacted by the connector; they only travel.
+    """
     cleaned = redact_snippet(snippet)
-    return {
+    detail: dict[str, Any] = {
         "kind": kind,
         "status": status,
         "target": target,
@@ -133,3 +140,10 @@ def error_detail(
             timeout_seconds=timeout_seconds,
         ),
     }
+    if headers:
+        detail["headers"] = {
+            str(name): redact_snippet(value, 120) for name, value in headers.items()
+        }
+    if evidence:
+        detail["evidence"] = [redact_snippet(line, 120) for line in evidence]
+    return detail

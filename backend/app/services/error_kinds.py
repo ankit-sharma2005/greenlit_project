@@ -31,6 +31,9 @@ _KIND_BY_CODE: dict[str, str] = {
     "http_error": HTTP_ERROR,
     "auth_error": HTTP_ERROR,
     "blocked_by_site": HTTP_ERROR,
+    # A refused CSRF/anti-forgery token is still the site answering, not an
+    # unreadable answer: same kind, its own code so the advice can differ.
+    "csrf_rejected": HTTP_ERROR,
     "redirect_blocked": OTHER,
     "redirect_loop": OTHER,
     "incomplete_stream": INVALID_RESPONSE,
