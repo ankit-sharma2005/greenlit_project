@@ -1,5 +1,8 @@
 .auth-page {
+  /* The card stays narrow; its background fills the whole window. */
   min-height: 100%;
+  height: 100%;
+  overflow-y: auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -86,6 +89,7 @@
 
 .splash {
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;

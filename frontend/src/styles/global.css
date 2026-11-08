@@ -12,6 +12,9 @@ body,
 
 body {
   margin: 0;
+  /* The window is the frame: the shell's main region and the auth pages own
+     their scrolling, so the document itself never gains a scrollbar. */
+  overflow: hidden;
   background: var(--color-bg);
   color: var(--color-text);
   font-family: var(--font-sans);
@@ -78,11 +81,17 @@ textarea {
   border: 0;
 }
 
-/* ---------- App shell ---------- */
+/* ---------- App shell ----------
+   Two columns that fill the window: the sidebar runs the full height and the
+   main region is the only thing that scrolls. 100dvh is the mobile-safe height
+   (the URL bar never hides the last row); the 100vh line above it is the fallback. */
 .app-shell {
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-  min-height: 100%;
+  grid-template-rows: minmax(0, 1fr);
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
 }
 
 .sidebar {
@@ -92,9 +101,10 @@ textarea {
   padding: var(--space-4) var(--space-3);
   background: var(--color-surface);
   border-right: 1px solid var(--color-border);
-  position: sticky;
-  top: 0;
-  height: 100vh;
+  height: 100%;
+  min-height: 0;
+  /* A menu longer than the window scrolls here, never in the page. */
+  overflow-y: auto;
 }
 
 .sidebar__nav {
@@ -136,6 +146,9 @@ textarea {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .topbar {
@@ -146,9 +159,9 @@ textarea {
   padding: var(--space-2) var(--space-5);
   border-bottom: 1px solid var(--color-border);
   background: var(--color-surface);
-  position: sticky;
-  top: 0;
-  z-index: 10;
+  /* A fixed row of the flex column: it does not move when the page scrolls. */
+  flex: 0 0 auto;
+  min-width: 0;
 }
 
 .topbar__spacer {
@@ -171,7 +184,11 @@ textarea {
 
 .page {
   width: 100%;
-  max-width: var(--content-max-width);
+  flex: 1 1 auto;
+  /* The one scroll container in the app. */
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--space-6) var(--space-5) var(--space-8);
 }
 
@@ -360,10 +377,11 @@ textarea {
 @media (max-width: 800px) {
   .app-shell {
     grid-template-columns: minmax(0, 1fr);
+    /* The nav strip takes what it needs; the main region keeps the rest. */
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .sidebar {
-    position: static;
     height: auto;
     flex-direction: row;
     flex-wrap: wrap;
@@ -371,6 +389,7 @@ textarea {
     gap: var(--space-3);
     border-right: none;
     border-bottom: 1px solid var(--color-border);
+    overflow: visible;
   }
 
   .sidebar__nav {
@@ -384,6 +403,7 @@ textarea {
 
   .topbar {
     padding: var(--space-2) var(--space-4);
+    gap: var(--space-2);
   }
 
   .page {
@@ -392,6 +412,28 @@ textarea {
 
   .topbar__project {
     display: none;
+  }
+
+  /* Below the shell breakpoint the account name is the first thing to go:
+     the role badge, the theme toggle and Sign out must stay inside the window. */
+  .user-menu__name {
+    display: none;
+  }
+
+  .health-badge {
+    min-height: 36px;
+  }
+}
+
+@media (max-width: 560px) {
+  /* At phone width even the provider pill is furniture: keep the controls that
+     do something and let the top bar stay one row. */
+  .health-badge {
+    display: none;
+  }
+
+  .topbar {
+    flex-wrap: nowrap;
   }
 }
 
