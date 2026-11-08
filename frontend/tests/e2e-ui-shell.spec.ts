@@ -292,3 +292,80 @@ test("keeps the GO colour readable on Results in the light theme", async ({ page
     path: path.join(SCREENS, `${PREFIX}-results-light-1440x900.png`),
   });
 });
+
+/**
+ * The desktop rail: one toggle, stored in localStorage, read before the first
+ * paint, and the shell still fills the window because the grid only trades
+ * columns.
+ */
+test("the sidebar collapses to a rail, survives a reload and still navigates", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await register(page, "Sidebar Rail", `rail-${Date.now()}@example.com`);
+  await page.goto(`${WEB}/`);
+  await expect(page.getByRole("heading", { name: "New Test" })).toBeVisible();
+
+  const toggle = page.getByTestId("sidebar-toggle");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(toggle).toHaveAccessibleName("Collapse sidebar");
+  await page.screenshot({
+    path: path.join(SCREENS, `${PREFIX}-sidebar-default-1280x800-dark.png`),
+  });
+
+  await toggle.click();
+
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(toggle).toHaveAccessibleName("Expand sidebar");
+  await expect(page.getByTestId("sidebar-rail")).toBeVisible();
+
+  const rail = await page.evaluate(() => {
+    const sidebar = document.querySelector(".sidebar");
+    const shell = document.querySelector(".app-shell");
+    if (!sidebar || !shell) throw new Error("The shell is missing.");
+    const doc = document.documentElement;
+    return {
+      sidebarWidth: sidebar.getBoundingClientRect().width,
+      shellWidth: shell.getBoundingClientRect().width,
+      shellHeight: shell.getBoundingClientRect().height,
+      viewportWidth: doc.clientWidth,
+      viewportHeight: doc.clientHeight,
+      horizontal: doc.scrollWidth > doc.clientWidth,
+      stored: window.localStorage.getItem("greenlit-sidebar-collapsed"),
+    };
+  });
+  // 56px of rail, and the shell still exactly fills the window.
+  expect(rail.sidebarWidth).toBeLessThanOrEqual(64);
+  expect(Math.abs(rail.shellWidth - rail.viewportWidth)).toBeLessThanOrEqual(1);
+  expect(Math.abs(rail.shellHeight - rail.viewportHeight)).toBeLessThanOrEqual(1);
+  expect(rail.horizontal, "rail: horizontal overflow").toBe(false);
+  expect(rail.stored).toBe("true");
+
+  await page.screenshot({
+    path: path.join(SCREENS, `${PREFIX}-sidebar-collapsed-1280x800-dark.png`),
+  });
+
+  // A reload keeps the rail shut: the stored value is read before the first paint.
+  await page.reload();
+  await expect(page.getByTestId("sidebar-toggle")).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByTestId("sidebar-rail")).toBeVisible();
+
+  // The label is still the link's accessible name while the rail is folded.
+  await page.getByRole("link", { name: "Results", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Results" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Results", exact: true })).toHaveClass(
+    "sidebar__link sidebar__link--active",
+  );
+
+  await page.getByRole("button", { name: /switch to light theme/i }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await page.screenshot({
+    path: path.join(SCREENS, `${PREFIX}-sidebar-collapsed-1280x800-light.png`),
+  });
+
+  await page.getByTestId("sidebar-toggle").click();
+  await expect(page.getByTestId("sidebar-toggle")).toHaveAttribute("aria-expanded", "true");
+  await page.screenshot({
+    path: path.join(SCREENS, `${PREFIX}-sidebar-expanded-1280x800-light.png`),
+  });
+});

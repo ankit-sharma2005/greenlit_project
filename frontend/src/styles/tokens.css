@@ -71,6 +71,8 @@
 
   /* Layout */
   --sidebar-width: 248px;
+  /* Collapsed rail: wide enough for one 28px letter badge plus padding. */
+  --sidebar-width-collapsed: 56px;
   --topbar-height: 64px;
   --control-height: 44px;
   --transition: 150ms ease;
