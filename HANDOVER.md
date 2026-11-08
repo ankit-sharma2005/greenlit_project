@@ -833,3 +833,5 @@ Default desktop is unchanged apart from the new toggle now sitting at the right 
   `:focus-visible` rule, and Escape has nothing to close in this implementation.
 - Collapsing then resizing below 800px leaves the stored preference intact and the strip normal;
   that transition is not asserted by a test.
+
+- Vitest flake in `PreferencesPanel.test.tsx` ("restores the account's stored preference on load"): the test read `documentElement.dataset.theme` in the same breath as a `waitFor` on the theme radio, while the attribute is written one commit later by `ThemeProvider`'s effect; it now waits for the attribute itself, and the cause was identified from the saved failure log `local-prompts/flake/FAIL-20261108-091024.txt` (earlier unexplained Vitest failures may or may not be this same race).
