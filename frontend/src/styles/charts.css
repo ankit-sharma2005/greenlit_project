@@ -1,0 +1,176 @@
+/* Run-result charts. Every fill comes from the design tokens; nothing is
+ * screenshot-tuned to one palette, so the light theme works unchanged.
+ * Nothing here animates: a chart never needs motion, so prefers-reduced-motion
+ * has nothing to turn off. */
+
+.chart {
+  margin-top: var(--space-5);
+}
+
+.chart__head {
+  margin-bottom: var(--space-3);
+}
+
+.chart__title {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  line-height: var(--line-height-snug);
+}
+
+.chart__desc {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  margin-top: var(--space-1);
+  max-width: var(--measure);
+}
+
+.chart__figure svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 560px;
+}
+
+.chart__data {
+  margin-top: var(--space-3);
+}
+
+.chart__data summary {
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  display: inline-block;
+  min-height: var(--control-height);
+  align-content: center;
+}
+
+.chart__data summary:hover {
+  color: var(--color-text);
+}
+
+.chart__data summary:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.chart__table-wrap {
+  overflow-x: auto;
+  margin-top: var(--space-2);
+}
+
+.chart__table {
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+  min-width: 100%;
+}
+
+.chart__table th,
+.chart__table td {
+  border: 1px solid var(--color-border);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.chart__table thead th {
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.chart__empty {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* SVG text and band fills share the page's type and verdict tokens. */
+.chart-svg {
+  font-family: var(--font-sans);
+}
+
+.chart-svg__text {
+  fill: var(--color-text);
+  font-size: 11px;
+}
+
+.chart-svg__muted {
+  fill: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.chart-svg__word {
+  fill: var(--color-text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.band--no-go {
+  fill: var(--color-no-go-soft);
+}
+
+.band--review {
+  fill: var(--color-review-soft);
+}
+
+.band--go {
+  fill: var(--color-go-soft);
+}
+
+.track {
+  fill: var(--color-surface-hover);
+}
+
+.fill-measure {
+  fill: var(--color-primary);
+}
+
+.fill-failed {
+  fill: var(--color-review);
+}
+
+.fill-leaked {
+  fill: var(--color-no-go);
+}
+
+.stroke-line {
+  stroke: var(--color-text);
+}
+
+.slot-draft {
+  fill: none;
+  stroke: var(--color-border-strong);
+  stroke-dasharray: 3 3;
+}
+
+.gate-tick {
+  stroke: var(--color-text);
+  stroke-dasharray: 2 2;
+}
+
+.marker-line {
+  stroke: var(--color-text-muted);
+  stroke-dasharray: 4 3;
+}
+
+.grid-line {
+  stroke: var(--color-border);
+  stroke-width: 1;
+}
+
+.trend-line {
+  stroke: var(--color-text-muted);
+  fill: none;
+  stroke-width: 1.5;
+}
+
+.shape--go {
+  fill: var(--color-go);
+}
+
+.shape--review {
+  fill: var(--color-review);
+}
+
+.shape--no-go {
+  fill: var(--color-no-go);
+}
