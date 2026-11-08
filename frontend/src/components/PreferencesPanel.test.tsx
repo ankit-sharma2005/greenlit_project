@@ -71,7 +71,10 @@ describe("PreferencesPanel", () => {
     renderPanel();
 
     await waitFor(() => expect(screen.getByTestId("theme-light")).toBeChecked());
-    expect(document.documentElement.dataset.theme).toBe("light");
+    // The attribute is written by ThemeProvider's effect, one commit after the
+    // radio reflects the loaded preference, so wait for the effect itself
+    // instead of reading it in the same breath as the radio.
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe("light"));
   });
 
   it("resets to the default and says so", async () => {
