@@ -39,6 +39,8 @@ a safety section, the judge that scored it, and an exportable report.
   from the 0.60 and 0.80 thresholds, every metric with its weight, group and hard-gate
   bar, the five decision rules in the order they run, and the not-instrumented rule.
   Editing criteria is not supported yet.
+- **The app shell:** full-height sidebar and a single scrolling main region that fill the
+  whole window at every size, in both themes, proven by `frontend/tests/e2e-ui-shell.spec.ts`.
 - **Operations:** every run also reports p50/p95 latency, error and timeout rates and
   token totals, on the verdict card and in the exports. An estimate of cost is shown only
   when token prices are configured for the provider; otherwise it says "not configured".

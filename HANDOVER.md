@@ -724,3 +724,58 @@ Run from the repo root that path is correct; from `frontend/` it is `../local-pr
 If the run fails, that file is copied to `local-prompts/flake/FAIL-<timestamp>.txt` **before
 anything else** — no rerun first — and the failing test's file, name and message are reported
 from the copy.
+
+## M18 — A shell that fills the window, and controls that look designed
+
+### What was wrong
+
+`frontend/src/styles/global.css` capped the content column at `--content-max-width: 1440px`
+with no `margin-inline: auto`, so at 1920 the column stopped ~230px short of the right edge
+while the *document*, not the main region, did the scrolling (`.app-shell` was
+`min-height: 100%`, the sidebar a sticky `100vh` box). At 375 the top bar overflowed the
+window. Separately, the pages used `form__label`, `form__hint`, `form__textarea`,
+`form__advanced`, `form__curl-button` and `form__row`, and **none of those classes existed in
+any stylesheet** — that is why New Test showed a raw browser select, a raw text input and a
+plain grey wizard button.
+
+### What changed
+
+- `.app-shell` is `height: 100dvh` (with a `100vh` line above it) and `overflow: hidden`;
+  the sidebar is `height: 100%` with its own `overflow-y: auto`; `main.page` is
+  `flex: 1; min-height: 0; overflow-y: auto` and has **no max-width**; the top bar is a fixed
+  flex row. `body` no longer scrolls; `.auth-page` scrolls itself, so the login card stays
+  reachable in a short window.
+- Below 800px the grid is `auto minmax(0, 1fr)`, and the account name (800px) and the
+  provider pill (560px) drop out so the top bar stays one row with no horizontal scroll.
+- The missing `form__*` classes are defined, plus one height/radius/border/focus rule for
+  every `input`, `select` and `textarea` inside `.page`.
+- Tokens: added `--measure: 72ch`, `--line-height-heading: 1.25`, `--line-height-snug: 1.4`,
+  `--color-no-go-hover`, `--color-on-danger` (both themes); light `--color-go` is now
+  `#0b7a22`. Removed `--content-max-width`, which nothing should cap the shell with.
+- `.btn--danger` and a 1px `:active` nudge for every button variant.
+
+### Measured
+
+| Proof | Result |
+| --- | --- |
+| `frontend/tests/e2e-ui-shell.spec.ts` (new, 4 tests) | **4 passed (56.2s)** |
+| shell box = viewport within 1px at 1920x1080/1440x900/1280x800/375x800, no horizontal scroll, document never scrolls, sidebar = window height above 800px | asserted per size |
+| 375x800: `main.scrollTop` changes by 240 while `document`/`body` stay at 0 | asserted |
+| short windows 1280x500 and 375x500: login container `overflow-y: auto`, submit button inside the window after scrollIntoView | asserted |
+| 640x400 (1280x800 at 200% zoom): main scrolls, nav still navigates to Settings | asserted |
+| light theme GO on Results | `rgb(11, 122, 34)`, measured 5.50:1 on the page and 4.82:1 on the badge fill (was 2.13:1) |
+| `e2e-session-refresh`, `e2e-website-wizard`, `e2e-check-panel-refusals`, `e2e-refusals` (one at a time) | 2/1/4/4 passed |
+| `npx vitest run` | 34/34 files, 208/208 tests, exit 0 |
+| `npx tsc --noEmit`, `npm run lint` | exit 0, exit 0 |
+| `npx playwright test --list` | 33 tests in 16 files (was 29 in 15) |
+
+### Not proven
+
+- Test Chat has no composer yet (it is a "coming soon" empty state), so "the composer stays
+  pinned" is **not** implemented or claimed; the spec only proves its heading sits inside
+  the window unscrolled.
+- No modal, dialog, dropdown or toast exists in the app, so "nothing is clipped" was checked
+  by grep (none) rather than by opening one; the `<select>` dropdowns are drawn by the browser.
+- Tables wider than the window on a phone: Results shows no runs in the screenshot pass, so
+  the "table scrolls inside its own container" case was not exercised.
+- Screenshots are Chromium at the listed sizes; other browsers were not looked at.
