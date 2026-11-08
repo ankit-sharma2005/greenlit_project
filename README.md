@@ -41,6 +41,8 @@ a safety section, the judge that scored it, and an exportable report.
   Editing criteria is not supported yet.
 - **The app shell:** full-height sidebar and a single scrolling main region that fill the
   whole window at every size, in both themes, proven by `frontend/tests/e2e-ui-shell.spec.ts`.
+  One keyboard-operable toggle folds the sidebar into a 56px rail of letter badges and remembers
+  the choice in `localStorage`; below 800px the unchanged five-entry strip is used instead.
 - **Operations:** every run also reports p50/p95 latency, error and timeout rates and
   token totals, on the verdict card and in the exports. An estimate of cost is shown only
   when token prices are configured for the provider; otherwise it says "not configured".

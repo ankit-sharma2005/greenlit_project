@@ -779,3 +779,57 @@ plain grey wizard button.
 - Tables wider than the window on a phone: Results shows no runs in the screenshot pass, so
   the "table scrolls inside its own container" case was not exercised.
 - Screenshots are Chromium at the listed sizes; other browsers were not looked at.
+
+## M19 — A sidebar that folds away, and nothing else changed
+
+### What was added
+
+One toggle in the sidebar's brand row (`data-testid="sidebar-toggle"`, `aria-label` "Collapse
+sidebar" / "Expand sidebar", `aria-expanded`, `title`), which folds the 248px sidebar into a
+56px rail (`--sidebar-width-collapsed`) of letter badges. Each badge is `aria-hidden` and the
+real label stays in the link as a clipped-but-readable span, so the link's accessible name and
+`getByRole("link", { name })` are unchanged; the label is also the `title` tooltip. State is
+stored under **`greenlit-sidebar-collapsed`** (`"true"` / `"false"`), read in the `useState`
+initialiser so there is no open-then-shut flash, and every `localStorage` call is wrapped in
+`try/catch` — a blocked storage means "expanded" and a working toggle, not a crash.
+
+The rail exists only above the existing 800px strip breakpoint: `.app-shell--collapsed` and the
+`sidebar__link-mark` rules live inside `@media (min-width: 801px)`, and `.sidebar__toggle` is
+`display: none` at or below 800px.
+
+### The mobile drawer: skipped, with evidence
+
+STEP 0 asked whether the existing strip is usable at 375px before building a drawer. Measured on
+the real stack: **5 links, 173px tall (two rows), every entry inside the window, no horizontal
+scroll** (`local-prompts/e2e-sidebar-before.log`, `before-sidebar-375x800-dark.png`). So the
+strip is fully usable and no drawer, hamburger or overlay was built. No existing nav, route,
+label, active-link style, class name or testid was touched — the only markup change is the new
+buttons/spans described above.
+
+There are no "soon" badges in the sidebar (they live in Settings), so the "soon badge becomes a
+dot" case has nothing to act on.
+
+### Measured
+
+| Proof | Result |
+| --- | --- |
+| `src/components/Layout.test.tsx` (new, 5 tests) | **5 passed**: same labels/order/hrefs/titles, toggle flips `aria-expanded` + rail class + testid and persists, Enter and Space work, stored `"true"` restored on first render, throwing `getItem`/`setItem` still renders expanded and toggles |
+| `tests/e2e-ui-shell.spec.ts` (now 5 tests) | **5 passed (56.0s)** — new test: collapse → rail ≤64px, shell still equals the 1280x800 viewport within 1px, no horizontal scroll, stored value `"true"`, reload keeps it shut, a link still navigates with the rail folded and keeps `sidebar__link sidebar__link--active`, light theme captured expanded and collapsed |
+| `npx vitest run` | 35/35 files, 213/213 tests, exit 0 (was 208; no existing test edited) |
+| `npx tsc --noEmit`, `npm run lint` | exit 0, exit 0 |
+| screenshots | `after-sidebar-default-1280x800-dark.png`, `after-sidebar-collapsed-1280x800-dark.png`, `after-sidebar-collapsed-1280x800-light.png`, `after-sidebar-expanded-1280x800-light.png` |
+
+Default desktop is unchanged apart from the new toggle now sitting at the right of the brand row
+(same 248px width, same nav offsets, same active styling); the after-default screenshot is
+`after-sidebar-default-1280x800-dark.png` against `before-sidebar-1280x800-dark.png`.
+
+### Not proven / limitations
+
+- Letters, not icons: the app ships no icon set, so the rail shows N/R/C/T/S inside a badge.
+- The version line (`GreenLit v0.1.0`) is hidden in the rail — 40px of content cannot hold it.
+- A nav item whose first letter collides with another's would be ambiguous in the rail; the five
+  current labels are distinct, and nothing enforces that.
+- No test presses Escape or asserts the focus ring on the toggle; the ring is the global
+  `:focus-visible` rule, and Escape has nothing to close in this implementation.
+- Collapsing then resizing below 800px leaves the stored preference intact and the strip normal;
+  that transition is not asserted by a test.
