@@ -23,6 +23,12 @@
   opacity: 0.6;
 }
 
+/* A press has to be visible, not just a hover colour: the same 1px nudge for
+   every variant. */
+.btn:not(:disabled):active {
+  transform: translateY(1px);
+}
+
 .btn--primary {
   background: var(--color-primary);
   color: var(--color-primary-contrast);
@@ -42,6 +48,17 @@
 
 .btn--secondary:not(:disabled):hover {
   background: var(--color-surface-hover);
+}
+
+.btn--danger {
+  background: var(--color-no-go);
+  color: var(--color-on-danger);
+  border-color: var(--color-no-go);
+}
+
+.btn--danger:not(:disabled):hover {
+  background: var(--color-no-go-hover);
+  border-color: var(--color-no-go-hover);
 }
 
 .btn--ghost {

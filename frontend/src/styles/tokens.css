@@ -30,6 +30,9 @@
   --color-go: #1ac03a;
   --color-review: #f5b534;
   --color-no-go: #ff6b6b;
+  --color-no-go-hover: #ff8585;
+  /* Label colour that keeps AA contrast on --color-no-go. */
+  --color-on-danger: #2a0707;
   --color-go-soft: rgba(26, 192, 58, 0.14);
   --color-review-soft: rgba(245, 181, 52, 0.16);
   --color-no-go-soft: rgba(255, 107, 107, 0.16);
@@ -44,6 +47,10 @@
   --font-size-xl: 1.375rem;
   --font-size-2xl: 1.75rem;
   --line-height-base: 1.55;
+  /* Page and section titles: tight enough to read as headings, loose enough
+     that a two-line title never touches itself. */
+  --line-height-heading: 1.25;
+  --line-height-snug: 1.4;
 
   /* Spacing */
   --space-1: 4px;
@@ -67,6 +74,8 @@
   --topbar-height: 64px;
   --control-height: 44px;
   --transition: 150ms ease;
+  /* The shell fills the window; long prose keeps a readable measure inside it. */
+  --measure: 72ch;
 }
 
 [data-theme="light"] {
@@ -86,8 +95,13 @@
   --color-primary-text: #0b7a22;
   --color-focus: #0b7a22;
 
+  /* The brand green is 2.1:1 on white, so the verdict green darkens here.
+     Measured: 5.50:1 on the page, 4.82:1 on the GO badge fill. */
+  --color-go: #0b7a22;
   --color-review: #9a5b00;
   --color-no-go: #b42318;
+  --color-no-go-hover: #921d14;
+  --color-on-danger: #ffffff;
   --color-review-soft: rgba(245, 181, 52, 0.22);
   --color-no-go-soft: rgba(180, 35, 24, 0.1);
 

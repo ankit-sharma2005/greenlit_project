@@ -35,17 +35,18 @@ ol {
 
 h1 {
   font-size: var(--font-size-2xl);
-  line-height: 1.25;
+  line-height: var(--line-height-heading);
   letter-spacing: -0.01em;
 }
 
 h2 {
   font-size: var(--font-size-xl);
-  line-height: 1.3;
+  line-height: var(--line-height-snug);
 }
 
 h3 {
   font-size: var(--font-size-lg);
+  line-height: var(--line-height-snug);
 }
 
 a {
@@ -79,6 +80,90 @@ textarea {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* ---------- Form controls ----------
+   One height, radius, border and focus treatment for every control. These
+   form__* classes were used by the pages but never defined anywhere, which is
+   why the New Test form rendered as browser-default widgets. */
+.form__label {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.form__hint {
+  margin-top: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-snug);
+  max-width: var(--measure);
+}
+
+.form__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.form__advanced {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.form__advanced > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.form__curl-button {
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color var(--transition),
+    border-color var(--transition);
+}
+
+.form__curl-button:not(:disabled):hover {
+  background: var(--color-surface-hover);
+}
+
+.page input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+.page select,
+.page textarea {
+  min-height: var(--control-height);
+  padding: 0 var(--space-3);
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+}
+
+.page textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: var(--space-2) var(--space-3);
+  line-height: var(--line-height-base);
+  resize: vertical;
+}
+
+.page select {
+  max-width: 100%;
+}
+
+.page input:focus-visible,
+.page select:focus-visible,
+.page textarea:focus-visible {
+  border-color: var(--color-primary);
 }
 
 /* ---------- App shell ----------
@@ -204,7 +289,13 @@ textarea {
 .page__description {
   margin-top: var(--space-2);
   color: var(--color-text-muted);
-  max-width: 70ch;
+  max-width: var(--measure);
+}
+
+.page__subtitle {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-snug);
 }
 
 /* ---------- Brand ---------- */
@@ -278,6 +369,8 @@ textarea {
 .card__hint {
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
+  /* The card is as wide as the window; a sentence is not. */
+  max-width: var(--measure);
 }
 
 .badge {
