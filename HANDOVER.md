@@ -710,3 +710,17 @@ verbose runs; cause unknown, and nothing was changed for it.
 Known limitation: the four refusals reach the panel through the harness's own server and
 the first request is answered 200 on purpose, because the panel only appears after a
 successful first contact. A real third-party site was still never contacted.
+
+## Gate-run rule (standing, from the M17 review)
+
+A full gate run never pipes Vitest's output through `grep`, `tail` or `head`. It captures the
+whole run to a file first, prints the last lines only afterwards, and reports the shell status:
+
+```
+npx vitest run --reporter=verbose > local-prompts/gate-vitest-last.txt 2>&1; echo EXIT=$?
+```
+
+Run from the repo root that path is correct; from `frontend/` it is `../local-prompts/…`.
+If the run fails, that file is copied to `local-prompts/flake/FAIL-<timestamp>.txt` **before
+anything else** — no rerun first — and the failing test's file, name and message are reported
+from the copy.
