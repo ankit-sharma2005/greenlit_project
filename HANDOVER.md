@@ -921,7 +921,24 @@ passed (4.6m)**, datagen **1 passed (9.0s)**, and the two required existing spec
 passed (1.1m)** and **session-refresh 2 passed (10.7s)**. Screenshots are in
 `local-prompts/screens/`.
 
+### Analyst and prompt-injection hardening (PART 2, steps 6.0–6.4)
+
+`docs/SECURITY_AGENT.md` is the threat model and the audit of every path outside text takes.
+`backend/app/services/untrusted.py` holds the pure helpers (sanitise, secret scrub, nonce
+envelope, output scanner, bounded analyst input); the judge prompt now uses the envelope and a
+reply with an invented `label` becomes "judge unsure", never a pass. A case whose answer is
+addressed to the judge is flagged at read time (`possible_judge_manipulation`) and shown above
+the charts, changing no score.
+
+`services/analyst.py` + `api/explain.py` + migration `0018_run_explanations`: preview exactly
+what would be sent, confirm a remote provider, one call per click, cache by nonce-normalised
+input hash, 600-token cap, 429 stored as nothing, and one `run_explanations` row as the only
+write. `AnalystPanel` on the run page renders the answer as plain text under "AI explanation.
+It may be wrong and does not affect the verdict."; the analyst is an optional fourth role in
+Settings → Providers and models.
+
 ### Not built
 
-The analyst agent and the prompt-injection hardening of PART 2 were not started
-(`local-prompts/report-agent.md`).
+The adversarial e2e spec (step 6.5) was not written, and the analyst panel has component tests
+only (no browser run). The MCP server still does not mark target text as untrusted (S12). See
+`local-prompts/report-agent.md` for the exact resume points.

@@ -156,6 +156,13 @@ a safety section, the judge that scored it, and an exportable report.
 
 Anything still missing is visibly marked "soon" in the UI rather than faked.
 
+- **Analyst (optional):** on a finished run, "Explain this run" shows exactly what would be
+  sent, asks for a confirmation when the provider is remote, and writes a few sentences of
+  plain text under a label saying they may be wrong and change no verdict. The analyst has no
+  write path to runs, scores, verdicts, targets, datasets or settings: its only row is its own
+  explanation, reused on a second click. Choose its model in Settings → Providers and models;
+  leaving it empty just means no explanations.
+
 ## Quick start
 
 Requirements: Docker Desktop (WSL2 on Windows) with Compose v2.
