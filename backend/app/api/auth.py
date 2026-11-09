@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -10,7 +13,7 @@ from app.config import Settings, get_settings
 from app.db import get_db
 from app.deps import get_current_user
 from app.errors import error_response
-from app.models import ROLE_ADMIN, ROLE_MEMBER, PasswordReset, RefreshToken, User
+from app.models import ROLE_ADMIN, ROLE_MEMBER, PasswordReset, Provider, RefreshToken, User
 from app.schemas.auth import (
     AuthResponse,
     LoginRequest,
@@ -22,7 +25,13 @@ from app.schemas.auth import (
     RegisterRequest,
     UserRead,
 )
-from app.schemas.preferences import DEFAULT_THEME, THEMES, Preferences
+from app.schemas.preferences import (
+    DEFAULT_THEME,
+    MODEL_ROLES,
+    THEMES,
+    ModelChoice,
+    Preferences,
+)
 from app.security.cookies import clear_auth_cookies, is_secure_request, set_auth_cookies
 from app.security.passwords import hash_password, verify_password
 from app.security.rate_limit import RateLimiter, get_rate_limiter
@@ -68,7 +77,38 @@ def _preferences(user: User) -> Preferences:
     """
     stored = user.preferences or {}
     theme = stored.get("theme")
-    return Preferences(theme=theme if theme in THEMES else DEFAULT_THEME)
+
+    def role(key: str) -> ModelChoice | None:
+        raw = stored.get(key)
+        if not isinstance(raw, dict):
+            return None
+        try:
+            return ModelChoice.model_validate(raw)
+        except ValidationError:
+            return None
+
+    return Preferences(
+        theme=theme if theme in THEMES else DEFAULT_THEME,
+        judge=role("judge"),
+        target=role("target"),
+        generator=role("generator"),
+    )
+
+
+def _known_provider(db: Session, provider_id: UUID) -> Provider:
+    """A role default may only name a provider that exists.
+
+    Providers are workspace-wide in this build (the table has no owner column), so
+    there is no per-user provider to check against; the id must resolve to a real
+    active provider. The response never carries the provider's key.
+    """
+    provider = db.get(Provider, provider_id)
+    if provider is None or not provider.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="That provider is not available, so it cannot be a default.",
+        )
+    return provider
 
 
 def _session_expired_response(request: Request, settings: Settings, message: str) -> Response:
@@ -310,13 +350,13 @@ def update_me(
     return _user_read(user)
 
 
-@router.get("/me/preferences", response_model=Preferences)
+@router.get("/me/preferences", response_model=Preferences, response_model_exclude_none=True)
 def get_my_preferences(user: User = Depends(get_current_user)) -> Preferences:
     """Return the signed-in user's UI preferences."""
     return _preferences(user)
 
 
-@router.patch("/me/preferences", response_model=Preferences)
+@router.patch("/me/preferences", response_model=Preferences, response_model_exclude_none=True)
 def update_my_preferences(
     payload: Preferences,
     user: User = Depends(get_current_user),
@@ -328,7 +368,16 @@ def update_my_preferences(
     update. Not audited: a theme choice is cosmetic and would only add noise to
     the trail of sign-ins and data changes.
     """
-    user.preferences = {**(user.preferences or {}), "theme": payload.theme}
+    stored = {**(user.preferences or {}), "theme": payload.theme}
+    # A role left out of the request keeps its stored choice: the theme saves alone in
+    # several places, and none of them should silently clear a model default.
+    for key in MODEL_ROLES:
+        choice = getattr(payload, key)
+        if choice is None:
+            continue
+        _known_provider(db, choice.provider_id)
+        stored[key] = {"provider_id": str(choice.provider_id), "model": choice.model}
+    user.preferences = stored
     db.commit()
     db.refresh(user)
     return _preferences(user)

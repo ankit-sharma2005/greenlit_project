@@ -7,6 +7,7 @@ import { ConnectorsPanel } from "../components/ConnectorsPanel";
 import { CriteriaPanel } from "../components/CriteriaPanel";
 import { DatasetsPanel } from "../components/DatasetsPanel";
 import { JudgePanel } from "../components/JudgePanel";
+import { ModelDefaultsPanel } from "../components/ModelDefaultsPanel";
 import { PreferencesPanel } from "../components/PreferencesPanel";
 import { ProvidersPanel } from "../components/ProvidersPanel";
 import { SafetyPanel } from "../components/SafetyPanel";
@@ -92,6 +93,7 @@ export function SettingsPage() {
                 Ollama by default, plus OpenAI-compatible providers. Test connections and track
                 health.
               </p>
+              <ModelDefaultsPanel />
               <ProvidersPanel />
             </>
           ) : active === "Connectors" ? (
