@@ -574,12 +574,91 @@ class RunBaseline(TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
+class DatasetDraft(TimestampMixin, Base):
+    """A generated set of cases that a human must review before anything is published."""
+
+    __tablename__ = "dataset_drafts"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    app_description: Mapped[str] = mapped_column(String(4_000), nullable=False)
+    requested_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    kinds: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    generator_provider_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("providers.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    generator_provider_name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    generated_by_model: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    prompt_version: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    same_as_judge: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
+    published_dataset_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("datasets.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    published_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("dataset_versions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    items: Mapped[list[DraftItem]] = relationship(
+        back_populates="draft",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="DraftItem.row_index",
+    )
+
+
+class DraftItem(TimestampMixin, Base):
+    """One generated question, with its own review state and provenance."""
+
+    __tablename__ = "draft_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    draft_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("dataset_drafts.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    row_index: Mapped[int] = mapped_column(nullable=False, default=0)
+    question: Mapped[str] = mapped_column(String(500), nullable=False)
+    expected_answer: Mapped[str] = mapped_column(String(2_000), nullable=False)
+    source_passage: Mapped[str | None] = mapped_column(String(1_000), nullable=True)
+    kind: Mapped[str] = mapped_column(String(30), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    edited: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    generated_by_model: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    generator_provider: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    prompt_version: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    reviewer_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    draft: Mapped[DatasetDraft] = relationship(back_populates="items")
+
+
 __all__ = [
     "AuditEvent",
     "Dataset",
     "DatasetColumnMapping",
+    "DatasetDraft",
     "DatasetItem",
     "DatasetVersion",
+    "DraftItem",
     "HumanLabel",
     "JudgeProfile",
     "MetricResultRow",

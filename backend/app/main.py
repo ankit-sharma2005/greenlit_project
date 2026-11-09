@@ -13,6 +13,7 @@ from app.api.connectors import router as connectors_router
 from app.api.criteria import router as criteria_router
 from app.api.datasets import router as datasets_router
 from app.api.demo import router as demo_router
+from app.api.drafts import router as drafts_router
 from app.api.evaluations import router as evaluations_router
 from app.api.health import router as health_router
 from app.api.judge_profiles import router as judge_profiles_router
@@ -54,6 +55,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(judge_profiles_router)
     app.include_router(labels_router)
     app.include_router(datasets_router)
+    app.include_router(drafts_router)
     app.include_router(connectors_router)
     app.include_router(saved_targets_router)
     app.include_router(targets_router)
