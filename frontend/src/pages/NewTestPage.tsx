@@ -19,6 +19,7 @@ import { buildMcpRunPayload, type McpConfig } from "../lib/mcp";
 import { ApiError } from "../lib/api";
 import { listDatasets } from "../lib/datasets";
 import { listProviders } from "../lib/providers";
+import { fetchPreferences } from "../lib/preferences";
 import {
   acceptTargetCheck,
   checkTarget,
@@ -179,6 +180,25 @@ export function NewTestPage() {
   const [systemPrompt, setSystemPrompt] = useState("");
   const [promptAppModel, setPromptAppModel] = useState("");
   const [promptDatasetId, setPromptDatasetId] = useState("");
+
+  // Fill the model-under-test fields from the account's saved default. Anything
+  // already typed wins, so this is a default and never an override.
+  useEffect(() => {
+    let active = true;
+    fetchPreferences()
+      .then((preferences) => {
+        if (!active || !preferences.target) return;
+        const saved = preferences.target;
+        setSelectedProviderId((current) => current || saved.provider_id);
+        setPromptAppModel((current) => current || saved.model);
+      })
+      .catch(() => {
+        /* No saved default; the fields stay as they are. */
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadFileName, setUploadFileName] = useState("");
