@@ -232,7 +232,12 @@ export function startFakeProvider(options: FakeProviderOptions = {}): Promise<Fa
         const userMessages = messages.filter((message) => message.role === "user");
         const question = userMessages[userMessages.length - 1]?.content ?? "";
         const isJudge = system.includes("Reply with ONLY a JSON object");
-        const isGeneration = system.includes("You write evaluation test cases");
+        // Dataset Studio asks with "You write evaluation test cases"; the draft
+        // generator (reviewed items) asks with "You write DRAFT evaluation
+        // questions". One fake covers both, so no spec needs a second server.
+        const isGeneration =
+          system.includes("You write evaluation test cases") ||
+          system.includes("You write DRAFT evaluation questions");
         let content: string;
         if (isJudge) {
           content = JSON.stringify(judgeReply);

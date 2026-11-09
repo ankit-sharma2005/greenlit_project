@@ -29,7 +29,10 @@ a safety section, the judge that scored it, and an exportable report.
   also generate draft cases from pasted text or PDF/TXT/MD sources (up to 5 MB); source
   text is split into at most 20 passages and each generated case stores its supporting
   passage as `reference_context`. Review and approve generated versions before running them.
-  Every version stores a hash.
+  Every version stores a hash. A second generator writes `document_fact`, `unanswerable`,
+  `paraphrase` and `edge_case` drafts from an app description and pasted text; every item is
+  approved, rejected or edited on its own, and publishing copies only approved items into a
+  new approved version that records the model, provider, prompt version and reviewer.
 - **Runs:** four entry points (HTTP endpoint, MCP server, prompt app, uploaded outputs),
   executed in a Celery worker with live progress and cancel. A run snapshots its settings,
   so changing a provider later never rewrites history.

@@ -889,5 +889,40 @@ and a data table of the same numbers; verdicts are named in text and marked with
 - The chart thresholds come from the templates matched to `run.criteria_profile`, falling back
   to the default template and then 0.60/0.80; the trend's guide lines use the default family
   because a list of runs can mix profiles.
-- Dataset drafts (kinds, per-item review, publish-with-provenance), the e2e proof, and the
-  whole analyst/prompt-injection part are **not built**.
+### Dataset drafts with review (phase 3)
+
+`backend/app/models.py` (`DatasetDraft`, `DraftItem`, migration `0017_dataset_drafts`),
+`services/drafts.py`, `api/drafts.py`, `schemas/drafts.py`, `tests/test_dataset_drafts.py`;
+frontend `lib/drafts.ts`, `components/DraftGeneratorPanel.tsx`, `components/DraftReview.tsx`,
+`components/DatasetDrafting.tsx` (+ test), rendered at the top of Settings → Datasets.
+
+Every generated item starts `pending`; approving, rejecting or editing one is recorded with
+the reviewer and a timestamp, and `edited` is kept. Publishing copies **only** approved items
+into a new dataset version (version 1 of a new dataset), marks it approved, and writes
+`generated_by_model`, `generator_provider`, `prompt_version`, `approved_items`,
+`edited_items` and the reviewers into `columns_snapshot`. Publishing with nothing approved is
+refused (400). Dedupe ignores case, spacing and punctuation; items containing an email or
+phone-shaped number are dropped; malformed JSON is rejected (422, one retry); a 429 stops with
+the provider's message. A same-as-judge generator is flagged on the draft and the form needs
+an explicit confirmation before generating.
+
+Proof: `python -m pytest tests/test_dataset_drafts.py` → **8 passed**; `ruff check`,
+`ruff format --check`, `mypy` clean; `npx vitest run` → **43 files passed** with six component
+tests for the panel and review table.
+
+### Browser proof: written, NOT RUN
+
+Three specs were added: `frontend/tests/e2e-model-defaults.spec.ts`,
+`e2e-charts.spec.ts`, `e2e-datagen.spec.ts`, plus a one-line change so the shared fake provider
+recognises the draft generator's system prompt. **They were never executed**: `bash
+scripts/run-e2e.sh` could not bring up the disposable stack because Docker Desktop's engine was
+not running (`failed to connect to the docker API at npipe://.../dockerDesktopLinuxEngine`), so
+the datastores never became healthy. `npx playwright test --list` lists **38 tests in 19
+files** and `npx tsc --noEmit` plus `npm run lint` are clean, but no screenshot was produced
+and no browser assertion has passed. The charts, the model panel and the draft flow are
+proven by component tests and backend tests only.
+
+### Not built
+
+The analyst agent and the prompt-injection hardening of PART 2 were not started
+(`local-prompts/report-agent.md`).
