@@ -104,6 +104,7 @@
   --color-no-go: #b42318;
   --color-no-go-hover: #921d14;
   --color-on-danger: #ffffff;
+  --color-go-soft: rgba(11, 122, 34, 0.12);
   --color-review-soft: rgba(245, 181, 52, 0.22);
   --color-no-go-soft: rgba(180, 35, 24, 0.1);
 
