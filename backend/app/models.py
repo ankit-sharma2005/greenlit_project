@@ -416,6 +416,42 @@ class MetricResultRow(TimestampMixin, Base):
     run: Mapped[Run] = relationship(back_populates="metric_results")
 
 
+class RunExplanation(Base):
+    """One analyst explanation of a run (PART 2).
+
+    The analyst's ONLY write path. `input_hash` is the sha256 of the exact text that was
+    sent, so a repeated click returns the stored answer instead of calling the model again,
+    and a changed run gets a new row rather than overwriting the old explanation.
+    """
+
+    __tablename__ = "run_explanations"
+    __table_args__ = (
+        UniqueConstraint("run_id", "input_hash", name="uq_run_explanations_run_input"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("runs.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("providers.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    model: Mapped[str] = mapped_column(String(200), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(40), nullable=False, default="analyst-v1")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="ok")
+    text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Only `created_at`: this table is append-only, nothing updates a row.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+
 class JudgeProfile(TimestampMixin, Base):
     """A saved judge configuration: which model grades, and with what limits (M7).
 

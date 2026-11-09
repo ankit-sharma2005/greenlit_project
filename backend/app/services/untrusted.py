@@ -210,6 +210,8 @@ def build_analyst_input(
 
     body = "\n".join(lines) + "\n\nFAILED CASES (untrusted)\n"
     body += "\n".join(case_lines) if case_lines else "(none)"
-    wrapped, _ = make_envelope(body, nonce)
+    # Same shape as the judge prompt: `<data>` on its own, the nonce on the next line, so the
+    # cache key can normalise it and the system prompt's `<nonce>` sentence is accurate.
+    wrapped, _ = make_envelope(body, nonce, attribute=False)
     # The whole input is bounded even when every field is at its own cap.
     return wrapped[:MAX_INPUT_CHARS]

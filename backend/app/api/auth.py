@@ -92,6 +92,7 @@ def _preferences(user: User) -> Preferences:
         judge=role("judge"),
         target=role("target"),
         generator=role("generator"),
+        analyst=role("analyst"),
     )
 
 

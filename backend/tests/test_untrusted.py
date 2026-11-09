@@ -141,7 +141,7 @@ def test_the_analyst_input_is_bounded_redacted_and_contains_no_secrets() -> None
     assert "not measured" in built
     assert "answer_match" in built
     assert "score: 0.42" in built
-    assert '<data nonce="abc123abc123">' in built
+    assert "<nonce>abc123abc123</nonce>" in built
 
 
 def test_the_analyst_input_only_reports_numbers_it_was_given() -> None:

@@ -20,8 +20,8 @@ Theme = Literal["dark", "light", "system"]
 THEMES: tuple[Theme, ...] = ("dark", "light", "system")
 DEFAULT_THEME: Theme = "dark"
 
-#: The three roles a model can be chosen for.
-MODEL_ROLES: tuple[str, ...] = ("judge", "target", "generator")
+#: The roles a model can be chosen for. `analyst` explains a finished run.
+MODEL_ROLES: tuple[str, ...] = ("judge", "target", "generator", "analyst")
 
 
 class ModelChoice(BaseModel):
@@ -46,3 +46,4 @@ class Preferences(BaseModel):
     judge: ModelChoice | None = None
     target: ModelChoice | None = None
     generator: ModelChoice | None = None
+    analyst: ModelChoice | None = None
