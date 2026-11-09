@@ -4,6 +4,7 @@ import { OperationsPanel } from "./OperationsPanel";
 import { ProgressBar } from "./ProgressBar";
 import { ReportExport } from "./ReportExport";
 import { SafetySection } from "./SafetySection";
+import { RunCharts } from "./charts/RunCharts";
 import { Spinner } from "./Spinner";
 import { INTERRUPTED_NOTE, isTerminal, type Run } from "../lib/runs";
 import "../styles/results.css";
@@ -309,6 +310,8 @@ function RunVerdict({ run }: { run: Run }) {
           </table>
         </section>
       ) : null}
+
+      <RunCharts run={run} />
     </>
   );
 }

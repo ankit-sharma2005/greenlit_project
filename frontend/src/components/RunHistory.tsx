@@ -3,6 +3,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "./Button";
 import { DemoPanel } from "./DemoPanel";
 import { RunProgressPanel } from "./RunProgressPanel";
+import { RunTrend } from "./charts/RunTrend";
+import { useCriteriaThresholds } from "./charts/useCriteriaThresholds";
 import { Spinner } from "./Spinner";
 import { ApiError } from "../lib/api";
 import { INTERRUPTED_NOTE, cancelRun, getRun, isTerminal, listRuns, type Run } from "../lib/runs";
@@ -50,6 +52,7 @@ export function RunHistory() {
   const [compareRuns, setCompareRuns] = useState<[Run, Run] | null>(null);
   const [openRun, setOpenRun] = useState<Run | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const trendThresholds = useCriteriaThresholds();
 
   const load = useCallback(async () => {
     try {
@@ -269,6 +272,8 @@ export function RunHistory() {
       </section>
 
       {compareRuns ? <RunCompare runs={compareRuns} /> : null}
+
+      <RunTrend runs={runs} thresholds={trendThresholds} />
 
       {openRun ? (
         <>
