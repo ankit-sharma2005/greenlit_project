@@ -953,6 +953,7 @@ under test, so a reader treats answers and errors as data. `mcp_server` tests: *
 ### Verification
 
 The whole backend suite ran once: **796 passed, 1 skipped** (631 s, exit 0). Frontend: **45
-files / 266 tests**, tsc and lint at 0. The analyst panel has been seen in a browser only on
-its rejection path; its success path and the light theme have component tests only. See
+files / 266 tests**, tsc and lint at 0. The analyst panel has been exercised in a browser on
+both paths: rejected (`e2e-adversarial`, 1 passed) and successful in dark and light
+(`e2e-analyst`, 1 passed) with screenshots in `local-prompts/screens/`. See
 `local-prompts/report-agent.md` for the remaining detail.
