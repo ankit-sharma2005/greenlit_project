@@ -1,3 +1,4 @@
+import { AnalystPanel } from "./AnalystPanel";
 import { BaselinePanel } from "./BaselinePanel";
 import { Button } from "./Button";
 import { JudgeManipulationNotice } from "./JudgeManipulationNotice";
@@ -314,6 +315,7 @@ function RunVerdict({ run }: { run: Run }) {
 
       <JudgeManipulationNotice runId={run.id} />
       <RunCharts run={run} />
+      <AnalystPanel runId={run.id} />
     </>
   );
 }

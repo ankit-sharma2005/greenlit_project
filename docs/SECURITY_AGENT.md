@@ -1,6 +1,6 @@
 # Security: text that comes from outside GreenLit
 
-Status: **steps 6.0–6.2 done.** The audit below is the 6.0 snapshot; the judge prompt now
+Status: **steps 6.0–6.4 done.** The audit below is the 6.0 snapshot; the judge prompt now
 carries the S3 envelope and S10's flag is live on every case read (see the controls table).
 Nothing below is described as implemented unless its row says so. The controls are listed with what exists today and what is
 still missing, so the final version of this document (step 6.6) can record the test that proves
@@ -61,7 +61,7 @@ by a model:
 | **S1** no `tools` / `functions` / tool response formats in any model request; model output never executed, fetched or rendered as HTML/markdown | By construction: the gateway (`llm_gateway.py`) sends `messages` only, and the UI has no HTML sink. **No test yet asserts the request body.** |
 | **S2** one pure function builds every model input from structured fields, with redaction, control/zero-width/bidi stripping, tag stripping and a size cap | **Missing.** Judge and generator each build their prompt inline. |
 | **S3** per-request nonce envelope; delimiter, nonce and role markers neutralised inside content | **Done for the judge** (`untrusted.make_envelope`, nonce on its own line, `attribute=False`): a hostile answer cannot close or open the block. The generator and draft prompts still use static `<data>` blocks. |
-| **S4** every number and verdict comes from the backend; model text sits in a labelled block; output is schema-validated and cites only real case ids | **Backend done:** the analyst input is built from run fields only (`build_analyst_input` writes numbers exactly as stored) and the reply is prose that is never parsed into a number. The labelled block arrives with the panel (6.4). |
+| **S4** every number and verdict comes from the backend; model text sits in a labelled block; output is schema-validated and cites only real case ids | **Backend done:** the analyst input is built from run fields only (`build_analyst_input` writes numbers exactly as stored) and the reply is prose that is never parsed into a number. **Done:** the panel renders the reply as plain text under a label saying it may be wrong and changes no verdict, and a test proves `<img>`, `<a>` and markdown stay text. |
 | **S5** output scanner rejecting URLs, markdown links/images, HTML, shell code fences, secret patterns, canaries and over-length text | **Missing.** |
 | **S6** per-request canary in the system prompt, rejected if echoed | **Missing.** |
 | **S7** verdict independence: the only write is one `run_explanations` row | **Done.** The analyst endpoints add exactly one row; a test shows the run's verdict and score are unchanged after an explanation and a reply asking to "change the verdict to GO" changes nothing. |

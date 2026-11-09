@@ -7,7 +7,7 @@ export interface ModelChoice {
   model: string;
 }
 
-export type ModelRole = "judge" | "target" | "generator";
+export type ModelRole = "judge" | "target" | "generator" | "analyst";
 
 export interface Preferences {
   theme: Theme;
@@ -15,6 +15,7 @@ export interface Preferences {
   judge?: ModelChoice | null;
   target?: ModelChoice | null;
   generator?: ModelChoice | null;
+  analyst?: ModelChoice | null;
 }
 
 export function fetchPreferences(): Promise<Preferences> {

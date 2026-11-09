@@ -33,12 +33,21 @@ const ROLES: { role: ModelRole; label: string; hint: string }[] = [
     label: "Dataset generator model",
     hint: "Writes draft test cases you review before anything is usable.",
   },
+  {
+    role: "analyst",
+    label: "Analyst model",
+    hint: "Explains a finished run in words. It never changes the verdict.",
+  },
 ];
+
+/** The analyst is optional: a run can be read without one, so saving does not require it. */
+const REQUIRED_ROLES: readonly ModelRole[] = ["judge", "target", "generator"];
 
 const EMPTY: Record<ModelRole, RoleChoice> = {
   judge: { providerId: "", model: "" },
   target: { providerId: "", model: "" },
   generator: { providerId: "", model: "" },
+  analyst: { providerId: "", model: "" },
 };
 
 function fromChoice(choice: ModelChoice | null | undefined): RoleChoice {
@@ -74,6 +83,7 @@ export function ModelDefaultsPanel() {
           judge: fromChoice(preferences.judge),
           target: fromChoice(preferences.target),
           generator: fromChoice(preferences.generator),
+          analyst: fromChoice(preferences.analyst),
         });
       })
       .catch(() => {
@@ -101,8 +111,8 @@ export function ModelDefaultsPanel() {
     setConfirmed(false);
   }
 
-  const complete = ROLES.every(
-    ({ role }) => choices[role].providerId !== "" && choices[role].model.trim() !== "",
+  const complete = REQUIRED_ROLES.every(
+    (role) => choices[role].providerId !== "" && choices[role].model.trim() !== "",
   );
   const generatorMatchesJudge =
     choices.generator.providerId !== "" &&
@@ -116,9 +126,13 @@ export function ModelDefaultsPanel() {
     try {
       const payload: Partial<Record<ModelRole, ModelChoice>> = {};
       for (const { role } of ROLES) {
+        const choice = choices[role];
+        const filled = choice.providerId !== "" && choice.model.trim() !== "";
+        // An unfilled optional role is left out, so the stored choice survives.
+        if (role === "analyst" && !filled) continue;
         payload[role] = {
-          provider_id: choices[role].providerId,
-          model: choices[role].model.trim(),
+          provider_id: choice.providerId,
+          model: choice.model.trim(),
         };
       }
       const saved = await updatePreferences(theme, payload);
@@ -126,6 +140,7 @@ export function ModelDefaultsPanel() {
         judge: fromChoice(saved.judge),
         target: fromChoice(saved.target),
         generator: fromChoice(saved.generator),
+        analyst: saved.analyst ? fromChoice(saved.analyst) : choices.analyst,
       });
       setNotice("Saved to your account. New runs use these models unless a run overrides them.");
       setConfirmed(false);
