@@ -945,8 +945,14 @@ fake analyst. RAW: **`1 passed (1.3m)`**. The evil counter on `:9504` (checked f
 markup, the analyst answer is rejected, the verdict and metrics are byte-identical before and
 after Explain, the poisoned case is flagged, and the CSV contains `'=1+1`.
 
-### Not built
+### MCP untrusted marking (S12)
 
-The MCP server still does not mark target text as untrusted (S12). The analyst panel has been
-seen in a browser only on its rejection path; its success path has component tests. See
-`local-prompts/report-agent.md` for the exact resume points.
+`greenlit_get_report` returns `untrusted: true` and a note that the content came from the app
+under test, so a reader treats answers and errors as data. `mcp_server` tests: **17 passed**.
+
+### Verification
+
+The whole backend suite ran once: **796 passed, 1 skipped** (631 s, exit 0). Frontend: **45
+files / 266 tests**, tsc and lint at 0. The analyst panel has been seen in a browser only on
+its rejection path; its success path and the light theme have component tests only. See
+`local-prompts/report-agent.md` for the remaining detail.
