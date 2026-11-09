@@ -188,6 +188,8 @@ export interface FakeProviderOptions {
   judgeReply?: { score: number; reason: string; confidence: number };
   /** What to reply when Dataset Studio asks for generated cases. */
   generationReply?: string;
+  /** What the analyst replies; used by the adversarial spec to try an exfiltration. */
+  analystReply?: string;
   /** Token usage the fake reports; defaults to 120 in / 40 out. */
   usage?: { prompt_tokens?: number; completion_tokens?: number };
 }
@@ -238,9 +240,14 @@ export function startFakeProvider(options: FakeProviderOptions = {}): Promise<Fa
         const isGeneration =
           system.includes("You write evaluation test cases") ||
           system.includes("You write DRAFT evaluation questions");
+        // The analyst (PART 2) asks with "You explain the result of ONE finished
+        // evaluation run"; a compliant-attacker fake can obey whatever the data says.
+        const isAnalyst = system.includes("You explain the result of ONE finished evaluation run");
         let content: string;
         if (isJudge) {
           content = JSON.stringify(judgeReply);
+        } else if (isAnalyst && options.analystReply !== undefined) {
+          content = options.analystReply;
         } else if (isGeneration && options.generationReply !== undefined) {
           content = options.generationReply;
         } else if (isDisallowed(question)) {

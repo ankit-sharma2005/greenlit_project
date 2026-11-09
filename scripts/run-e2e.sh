@@ -28,6 +28,9 @@ REDIS_PORT="${E2E_REDIS_PORT:-6482}"
 DEMO_GOOD_PORT="${E2E_DEMO_GOOD_PORT:-9501}"
 DEMO_BROKEN_PORT="${E2E_DEMO_BROKEN_PORT:-9502}"
 REFUSAL_PORT="${E2E_REFUSAL_PORT:-9503}"
+# The adversarial spec starts its own "evil" counter on this port; a leftover
+# server there would make "zero requests reached it" meaningless, so it is checked.
+EVIL_PORT="${E2E_EVIL_PORT:-9504}"
 E2E_BASE_URL="${E2E_BASE_URL:-http://localhost:${WEB_PORT}}"
 E2E_API_URL="${E2E_API_URL:-http://localhost:${API_PORT}}"
 E2E_API_BIND="${E2E_API_BIND:-0.0.0.0}"
@@ -40,6 +43,7 @@ export E2E_API_BIND
 export E2E_WEB_BIND
 export VITE_API_BASE_URL="http://localhost:${API_PORT}"
 export E2E_REFUSAL_URL="http://127.0.0.1:${REFUSAL_PORT}"
+export E2E_EVIL_PORT="${EVIL_PORT}"
 # The check panel is only offered for a target that is not "on my computer",
 # so its spec reaches the same server through the host's own name (the API runs
 # on this host, and the demo servers are bound the same way).
@@ -139,6 +143,11 @@ if [ -z "${SKIP_STACK:-}" ]; then
   if ! curl -sf "http://127.0.0.1:${REFUSAL_PORT}/_health" >/dev/null; then
     echo "The refusal server did not become healthy; see ${ROOTDIR}/e2e-refusal.log" >&2
     tail -n 30 "${ROOTDIR}/e2e-refusal.log" >&2
+    exit 1
+  fi
+
+  if curl -s -o /dev/null "http://127.0.0.1:${EVIL_PORT}/" 2>/dev/null; then
+    echo "Evil-counter port ${EVIL_PORT} is already in use; set E2E_EVIL_PORT." >&2
     exit 1
   fi
 

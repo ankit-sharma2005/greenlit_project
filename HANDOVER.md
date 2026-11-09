@@ -937,8 +937,16 @@ write. `AnalystPanel` on the run page renders the answer as plain text under "AI
 It may be wrong and does not affect the verdict."; the analyst is an optional fourth role in
 Settings → Providers and models.
 
+### Adversarial proof (step 6.5)
+
+`frontend/tests/e2e-adversarial.spec.ts` runs a poisoned local target against a compliant-attacker
+fake analyst. RAW: **`1 passed (1.3m)`**. The evil counter on `:9504` (checked free by
+`scripts/run-e2e.sh` via `E2E_EVIL_PORT`) received zero requests, the page shows no URL or
+markup, the analyst answer is rejected, the verdict and metrics are byte-identical before and
+after Explain, the poisoned case is flagged, and the CSV contains `'=1+1`.
+
 ### Not built
 
-The adversarial e2e spec (step 6.5) was not written, and the analyst panel has component tests
-only (no browser run). The MCP server still does not mark target text as untrusted (S12). See
+The MCP server still does not mark target text as untrusted (S12). The analyst panel has been
+seen in a browser only on its rejection path; its success path has component tests. See
 `local-prompts/report-agent.md` for the exact resume points.
