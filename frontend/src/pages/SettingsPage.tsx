@@ -5,6 +5,7 @@ import { AuditPanel } from "../components/AuditPanel";
 import { ComingSoon } from "../components/ComingSoon";
 import { ConnectorsPanel } from "../components/ConnectorsPanel";
 import { CriteriaPanel } from "../components/CriteriaPanel";
+import { DatasetDrafting } from "../components/DatasetDrafting";
 import { DatasetsPanel } from "../components/DatasetsPanel";
 import { JudgePanel } from "../components/JudgePanel";
 import { ModelDefaultsPanel } from "../components/ModelDefaultsPanel";
@@ -84,6 +85,7 @@ export function SettingsPage() {
                 Upload a file, check the detected columns, generate extra cases with the LLM and
                 approve the versions runs will use.
               </p>
+              <DatasetDrafting />
               <DatasetsPanel />
             </>
           ) : active === "Providers and models" ? (
