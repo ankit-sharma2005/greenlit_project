@@ -287,6 +287,29 @@ export function listRuns(
   return apiRequest(`/api/v1/runs?limit=${limit}&offset=${offset}`);
 }
 
+export interface RunItem {
+  row_index: number;
+  input_text: string;
+  state: string;
+  output: string | null;
+  error: string | null;
+  /** Null when the case never reported a timing; never a made-up zero. */
+  latency_ms: number | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  trace: Record<string, unknown> | null;
+}
+
+export interface RunItemsResponse {
+  items: RunItem[];
+  total: number;
+}
+
+/** Per-case rows of a run; the latency chart reads only `latency_ms` from them. */
+export function getRunItems(id: string): Promise<RunItemsResponse> {
+  return apiRequest(`/api/v1/runs/${id}/items`, { timeoutMs: 60_000 });
+}
+
 export function getRunProgress(id: string): Promise<RunProgress> {
   return apiRequest(`/api/v1/runs/${id}/progress`);
 }
