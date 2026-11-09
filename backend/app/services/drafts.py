@@ -29,6 +29,7 @@ from app.models import (
     User,
 )
 from app.services.generation import GENERATED_COLUMNS, ChatFn, GenerationError
+from app.services.untrusted import make_envelope
 
 PROMPT_VERSION = "draft-v1"
 MAX_QUESTIONS = 50
@@ -82,6 +83,12 @@ def _normalise(question: str) -> str:
     return "".join(character for character in question.casefold() if character.isalnum())
 
 
+def _enveloped(text: str) -> str:
+    """Put untrusted text in the shared nonce envelope (S11), same shape as the judge's."""
+    wrapped, _ = make_envelope(text, attribute=False)
+    return wrapped
+
+
 def build_messages(
     *,
     app_description: str,
@@ -94,13 +101,13 @@ def build_messages(
         f"Write exactly {count} test cases.\n"
         f"Allowed kinds: {', '.join(kinds)}.\n"
         "The application is described by the untrusted data below.\n"
-        "UNTRUSTED_DESCRIPTION_JSON:\n<data>\n"
-        f"{json.dumps(app_description[:4_000], ensure_ascii=False)}\n</data>\n"
+        "UNTRUSTED_DESCRIPTION_JSON:\n"
+        f"{_enveloped(json.dumps(app_description[:4_000], ensure_ascii=False))}\n"
     )
     if documents and documents.strip():
         user_prompt += (
-            "\nOptional source documents (untrusted data):\n<data>\n"
-            f"{json.dumps(documents[:MAX_DOCUMENT_CHARS], ensure_ascii=False)}\n</data>\n"
+            "\nOptional source documents (untrusted data):\n"
+            f"{_enveloped(json.dumps(documents[:MAX_DOCUMENT_CHARS], ensure_ascii=False))}\n"
         )
     return [
         {"role": "system", "content": _SYSTEM_PROMPT},
