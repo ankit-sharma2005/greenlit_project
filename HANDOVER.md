@@ -835,3 +835,59 @@ Default desktop is unchanged apart from the new toggle now sitting at the right 
   that transition is not asserted by a test.
 
 - Vitest flake in `PreferencesPanel.test.tsx` ("restores the account's stored preference on load"): the test read `documentElement.dataset.theme` in the same breath as a `waitFor` on the theme radio, while the attribute is written one commit later by `ThemeProvider`'s effect; it now waits for the attribute itself, and the cause was identified from the saved failure log `local-prompts/flake/FAIL-20261108-091024.txt` (earlier unexplained Vitest failures may or may not be this same race).
+
+## M19 — Charts on the run pages, and default models per job
+
+**Status: part 1 of the visualisation/dataset work; phases 3–5 and the analyst agent are not
+built.** `local-prompts/report-viz-datagen.md` and `local-prompts/report-agent.md` carry the
+audit table and the exact resume point.
+
+### What was already there (not rebuilt)
+
+- **Judge model**: Settings → Judge already chooses a saved provider and model
+  (`JudgePanel.tsx`, `judge_profiles.py`).
+- **Model under test**: the prompt-app entry point already had a provider select and a model
+  field, overridable per run (`PromptAppPanel.tsx`, `NewTestPage.tsx`), and the run request
+  already stored `provider_id` + `model`.
+- **Generator model**: the Datasets panel already picked an active provider per generation
+  (`GenerationRequest.provider_id`) and generated a draft version for preview + approval.
+- **No charts existed** beyond the spinner SVG.
+
+### What was added
+
+| Part | Where |
+| --- | --- |
+| Pure chart data | `frontend/src/lib/chartData.ts` — metric bars with `measured: false`, linear-interpolated percentiles (the server's stated method), safety per category, latency summary, trend points |
+| Charts | `frontend/src/components/charts/`: `ChartFrame` (title, one-sentence description, toggleable data table), `VerdictGauge`, `MetricBars`, `SafetyByCategory`, `LatencyChart`, `RunTrend`, `RunCharts`, `useCriteriaThresholds` |
+| Wiring | `RunProgressPanel` renders a **Charts** card after the verdict content; `RunHistory` renders the trend beside the list. `run-items` client in `lib/runs.ts` |
+| Role defaults | `Preferences` gains optional `judge` / `target` / `generator` (`provider_id` + `model`), stored in the existing JSON `users.preferences` (no migration); `ModelDefaultsPanel` in Settings → Providers and models; New Test pre-fills the prompt-app model from `target` |
+
+The rule that matters most: **a metric that was not measured is never drawn as zero.**
+`chartData.metricBars` maps `instrumented: false` to `score: null`, and `MetricBars` draws a
+dashed empty slot labelled "not measured". Safety says "no leak recorded" rather than
+"passed", because a probe that returned no output is counted there. Charts never animate, so
+`prefers-reduced-motion` has nothing to suppress; every SVG is `role="img"` with an aria-label
+and a data table of the same numbers; verdicts are named in text and marked with a shape.
+
+### Tests that prove the claims
+
+- `cd frontend && npx vitest run` → **42 files passed** (the new files: `chartData.test.ts`,
+  `VerdictGauge.test.tsx`, `MetricBars.test.tsx`, `SafetyByCategory.test.tsx`,
+  `LatencyChart.test.tsx`, `RunTrend.test.tsx`, `ModelDefaultsPanel.test.tsx`). No existing
+  test was edited.
+- `cd backend && python -m pytest tests/test_model_preferences.py tests/test_account_preferences.py`
+  → **13 passed**; `mypy` clean; `ruff check`/`ruff format --check` clean.
+- `npx tsc --noEmit` and `npm run lint` → exit 0.
+- Measured caveat: `Provider` has **no owner column**, so a role default can only be checked
+  against "exists and is active", not "belongs to you". The report says so.
+
+### Not proven / limitations
+
+- No browser proof yet: no Playwright spec, no screenshot, no 375px or light-theme check for
+  the charts or the new Settings panel. The light theme did gain the `--color-go-soft` token
+  the GO band needed, but its contrast was not eyeballed.
+- The chart thresholds come from the templates matched to `run.criteria_profile`, falling back
+  to the default template and then 0.60/0.80; the trend's guide lines use the default family
+  because a list of runs can mix profiles.
+- Dataset drafts (kinds, per-item review, publish-with-provenance), the e2e proof, and the
+  whole analyst/prompt-injection part are **not built**.

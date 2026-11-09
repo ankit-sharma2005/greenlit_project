@@ -22,7 +22,9 @@ a safety section, the judge that scored it, and an exportable report.
   than 14 days, and the backend's refresh-token reuse detection (unchanged here). The first
   account to register becomes the admin.
 - **Providers:** Ollama and any OpenAI-compatible endpoint, with a connection test,
-  encrypted keys and rate limits.
+  encrypted keys and rate limits. Settings → Providers and models also saves a default
+  provider and model for each job — judge, app under test and dataset generator — with a
+  warning and an explicit confirmation when the generator is the same as the judge.
 - **Datasets:** upload a CSV/JSON golden set, then approve a version. Dataset Studio can
   also generate draft cases from pasted text or PDF/TXT/MD sources (up to 5 MB); source
   text is split into at most 20 passages and each generated case stores its supporting
@@ -38,6 +40,12 @@ a safety section, the judge that scored it, and an exportable report.
   Criteria** shows the engine's real numbers read-only: a No-Go / Review / Go scale built
   from the 0.60 and 0.80 thresholds, every metric with its weight, group and hard-gate
   bar, the five decision rules in the order they run, and the not-instrumented rule.
+- **Charts on a run:** a finished run's verdict card carries a Charts block — the score
+  gauge with the 0.60/0.80 bands, metric bars, safety per attack category, and the slowest
+  case latencies — and Results plots the score trend across finished runs. A metric the run
+  never measured is drawn as an empty slot labelled "not measured", never as zero; every
+  chart has an aria-label and a toggleable data table with the same numbers, and is built
+  only from data the run already stored (`local-prompts/report-viz-datagen.md`).
   Editing criteria is not supported yet.
 - **The app shell:** full-height sidebar and a single scrolling main region that fill the
   whole window at every size, in both themes, proven by `frontend/tests/e2e-ui-shell.spec.ts`.
