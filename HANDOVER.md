@@ -910,17 +910,16 @@ Proof: `python -m pytest tests/test_dataset_drafts.py` → **8 passed**; `ruff c
 `ruff format --check`, `mypy` clean; `npx vitest run` → **43 files passed** with six component
 tests for the panel and review table.
 
-### Browser proof: written, NOT RUN
+### Browser proof: passing
 
 Three specs were added: `frontend/tests/e2e-model-defaults.spec.ts`,
 `e2e-charts.spec.ts`, `e2e-datagen.spec.ts`, plus a one-line change so the shared fake provider
-recognises the draft generator's system prompt. **They were never executed**: `bash
-scripts/run-e2e.sh` could not bring up the disposable stack because Docker Desktop's engine was
-not running (`failed to connect to the docker API at npipe://.../dockerDesktopLinuxEngine`), so
-the datastores never became healthy. `npx playwright test --list` lists **38 tests in 19
-files** and `npx tsc --noEmit` plus `npm run lint` are clean, but no screenshot was produced
-and no browser assertion has passed. The charts, the model panel and the draft flow are
-proven by component tests and backend tests only.
+recognises the draft generator's system prompt. Docker Desktop's engine was down on the first
+attempts; once it was up, every spec ran alone on the disposable stack with the ports clear
+and no container left behind. RAW results: model defaults **1 passed (11.8s)**, charts **2
+passed (4.6m)**, datagen **1 passed (9.0s)**, and the two required existing specs **ui-shell 5
+passed (1.1m)** and **session-refresh 2 passed (10.7s)**. Screenshots are in
+`local-prompts/screens/`.
 
 ### Not built
 
