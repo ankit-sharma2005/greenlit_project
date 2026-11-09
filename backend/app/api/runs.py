@@ -61,6 +61,7 @@ from app.services.run_service import (
     create_run_from_request,
     get_enqueue,
 )
+from app.services.untrusted import detect_judge_manipulation
 
 router = APIRouter(prefix="/api/v1", tags=["runs"])
 
@@ -553,6 +554,9 @@ def get_run_items(
                 tokens_in=item.tokens_in,
                 tokens_out=item.tokens_out,
                 trace=item.trace,
+                # Derived from the stored answer, never stored: text aimed at the judge is
+                # reported on the case and changes no score.
+                possible_judge_manipulation=detect_judge_manipulation(item.output),
             )
             for item in window
         ],

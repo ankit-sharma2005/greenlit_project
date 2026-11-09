@@ -34,6 +34,7 @@ _WHITESPACE = re.compile(r"[ \t\f\v]+")
 # Any data tag, with or without attributes: `<data nonce="forged">` is just as good a
 # breakout as `</data>`, and the test that found this was right to insist on it.
 _DELIMITER_TAG = re.compile(r"</?data\b[^>]*>?", re.IGNORECASE)
+_NONCE_TAG = re.compile(r"</?nonce\b[^>]*>?", re.IGNORECASE)
 
 _ROLE_MARKERS = (
     "<system>",
@@ -83,18 +84,28 @@ def scrub_secrets(text: str) -> str:
     return cleaned
 
 
-def make_envelope(content: str, nonce: str | None = None) -> tuple[str, str]:
+def make_envelope(
+    content: str, nonce: str | None = None, *, attribute: bool = True
+) -> tuple[str, str]:
     """Wrap untrusted content so it cannot break out of its block or impersonate a role.
 
     Returns the wrapped text and the nonce used. The nonce appears in the opening tag only;
-    every copy of it, of the delimiter and of a role marker inside the content is replaced.
+    every copy of it, of the delimiter, of a nonce tag and of a role marker inside the content
+    is replaced.
+
+    ``attribute=False`` writes the nonce on its own line inside the block instead of in the
+    opening tag. Some callers must keep the opening tag exactly `<data>` (the judge prompt
+    has done so since M7 and its tests pin it), and the nonce travels just as well inside.
     """
     chosen = nonce or secrets.token_hex(12)
     body = _DELIMITER_TAG.sub("[marker removed]", content)
+    body = _NONCE_TAG.sub("[marker removed]", body)
     for marker in _ROLE_MARKERS:
         body = re.sub(re.escape(marker), "[marker removed]", body, flags=re.IGNORECASE)
     body = body.replace(chosen, "[nonce removed]")
-    return f'<data nonce="{chosen}">\n{body}\n</data>', chosen
+    if attribute:
+        return f'<data nonce="{chosen}">\n{body}\n</data>', chosen
+    return f"<data>\n<nonce>{chosen}</nonce>\n{body}\n</data>", chosen
 
 
 def scan_output(
@@ -120,6 +131,31 @@ def scan_output(
         if pattern.search(text):
             return False, "secret"
     return True, ""
+
+
+# Text aimed at the judge rather than at the question. This is a NON-verdict signal: it is
+# reported on the case, and it changes no score, no metric and no verdict.
+_JUDGE_DIRECTED: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?i)ignore (?:the |your )?(?:rubric|instructions?|rules?|scoring|criteria)"),
+    re.compile(r"(?i)\bscore (?:this |it |me )?(?:as )?1(?:\.0+)?\b"),
+    re.compile(r"(?i)\bmark (?:this|it) (?:as )?(?:a )?pass\b"),
+    re.compile(r"(?i)\byou are (?:the |a )?judge\b"),
+    re.compile(r"(?i)\b(?:award|give) (?:this|it) (?:a )?(?:full|perfect|max\w*) score\b"),
+    re.compile(r"(?i)\boverride (?:the )?(?:score|verdict|rubric)\b"),
+    re.compile(r"(?i)\bdo not penalise\b|\bdo not penalize\b"),
+)
+
+
+def detect_judge_manipulation(text: str | None) -> bool:
+    """True when an answer contains text addressed to the judge.
+
+    Derived at read time from the stored answer, so no column and no migration is needed and
+    a run recorded before this flag existed is reported the same way. It never feeds a score
+    or a verdict; it is shown to the person reading the case.
+    """
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in _JUDGE_DIRECTED)
 
 
 def _number(value: Any) -> str:

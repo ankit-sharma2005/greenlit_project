@@ -1,7 +1,8 @@
 # Security: text that comes from outside GreenLit
 
-Status: **step 6.0 — read-only audit and threat model.** Nothing below is described as
-implemented unless its row says so. The controls are listed with what exists today and what is
+Status: **steps 6.0–6.2 done.** The audit below is the 6.0 snapshot; the judge prompt now
+carries the S3 envelope and S10's flag is live on every case read (see the controls table).
+Nothing below is described as implemented unless its row says so. The controls are listed with what exists today and what is
 still missing, so the final version of this document (step 6.6) can record the test that proves
 each one. GreenLit is **not claimed to be immune to prompt injection**; the only claims this
 repository makes are the ones a named test proves.
@@ -59,17 +60,17 @@ by a model:
 | --- | --- |
 | **S1** no `tools` / `functions` / tool response formats in any model request; model output never executed, fetched or rendered as HTML/markdown | By construction: the gateway (`llm_gateway.py`) sends `messages` only, and the UI has no HTML sink. **No test yet asserts the request body.** |
 | **S2** one pure function builds every model input from structured fields, with redaction, control/zero-width/bidi stripping, tag stripping and a size cap | **Missing.** Judge and generator each build their prompt inline. |
-| **S3** per-request nonce envelope; delimiter, nonce and role markers neutralised inside content | **Missing.** Current delimiters are static. |
+| **S3** per-request nonce envelope; delimiter, nonce and role markers neutralised inside content | **Done for the judge** (`untrusted.make_envelope`, nonce on its own line, `attribute=False`): a hostile answer cannot close or open the block. The generator and draft prompts still use static `<data>` blocks. |
 | **S4** every number and verdict comes from the backend; model text sits in a labelled block; output is schema-validated and cites only real case ids | Analyst not built; the judge's output is already schema-checked and a bad reply becomes "judge unsure", never a pass. |
 | **S5** output scanner rejecting URLs, markdown links/images, HTML, shell code fences, secret patterns, canaries and over-length text | **Missing.** |
 | **S6** per-request canary in the system prompt, rejected if echoed | **Missing.** |
 | **S7** verdict independence: the only write is one `run_explanations` row | Holds vacuously: no analyst exists, and the judge writes scores only through the existing run path. |
 | **S8** explicit user action, preview of exactly what is sent, confirmation for remote providers, cache by input hash, one call per click, timeout, token cap, 429 stops | **Missing** (analyst not built). |
 | **S9** ownership check before building the input | Existing for runs, datasets and drafts (`owner_id` filters); the analyst must reuse it. |
-| **S10** judge prompt hardening + a non-verdict `possible_judge_manipulation` flag for judge-directed text | **Partial:** the answer is tagged and the judge's contract is validated, but there is no nonce and no flag. |
+| **S10** judge prompt hardening + a non-verdict `possible_judge_manipulation` flag for judge-directed text | **Done.** Envelope, score/confidence range and `label` enum validation (`pass`/`fail`/`unsure`; anything else is "judge unsure", never a pass), and `detect_judge_manipulation` derived at read time on `/runs/{id}/items` with the notice shown above the charts. No column, no migration, no score or verdict touched. |
 | **S11** stored injection: dataset items, drafts and documents are untrusted wherever they are later sent to a model | **Partial:** generation and drafts wrap their inputs; dataset items are not enveloped when they later reach the judge. |
 | **S12** MCP fields marked untrusted and truncated; no secrets returned | **Partial:** truncation and secret-free tools exist; the untrusted marking does not. |
-| **S13** spreadsheet formula neutralisation in CSV (and XLSX if it ever exists) | **Done for CSV** (`report.py`), with the existing export tests passing unmodified. |
+| **S13** spreadsheet formula neutralisation in CSV (and XLSX if it ever exists) | **Done for CSV** (`report.py`), with the existing export tests passing unmodified and new tests pinning `=`, `+`, `-`, `@`, tab and CR. There is no XLSX export (XLSX is upload-only), so there is nothing else to neutralise. |
 
 ## 6. Why there is no autonomous planner
 

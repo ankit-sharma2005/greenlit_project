@@ -226,6 +226,9 @@ class RunItemRead(BaseModel):
     tokens_in: int | None = None
     tokens_out: int | None = None
     trace: dict[str, object] | None = None
+    # Derived from the stored answer at read time, never stored and never scored: the answer
+    # contains text addressed to the judge. Shown on the case, changes no verdict.
+    possible_judge_manipulation: bool = False
 
 
 class RunItemsResponse(BaseModel):

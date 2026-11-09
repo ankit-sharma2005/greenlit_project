@@ -298,6 +298,8 @@ export interface RunItem {
   tokens_in: number | null;
   tokens_out: number | null;
   trace: Record<string, unknown> | null;
+  /** Derived by the server from the stored answer; never scored, shown for review. */
+  possible_judge_manipulation?: boolean;
 }
 
 export interface RunItemsResponse {

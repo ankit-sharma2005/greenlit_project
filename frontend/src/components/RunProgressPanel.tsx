@@ -1,5 +1,6 @@
 import { BaselinePanel } from "./BaselinePanel";
 import { Button } from "./Button";
+import { JudgeManipulationNotice } from "./JudgeManipulationNotice";
 import { OperationsPanel } from "./OperationsPanel";
 import { ProgressBar } from "./ProgressBar";
 import { ReportExport } from "./ReportExport";
@@ -311,6 +312,7 @@ function RunVerdict({ run }: { run: Run }) {
         </section>
       ) : null}
 
+      <JudgeManipulationNotice runId={run.id} />
       <RunCharts run={run} />
     </>
   );
