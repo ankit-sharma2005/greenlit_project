@@ -1,11 +1,11 @@
 # Security: text that comes from outside GreenLit
 
-Status: **steps 6.0–6.5 done.** The audit below is the 6.0 snapshot; the judge prompt now
-carries the S3 envelope and S10's flag is live on every case read (see the controls table).
-Nothing below is described as implemented unless its row says so. The controls are listed with what exists today and what is
-still missing, so the final version of this document (step 6.6) can record the test that proves
-each one. GreenLit is **not claimed to be immune to prompt injection**; the only claims this
-repository makes are the ones a named test proves.
+Status: **steps 6.0–6.6 done.** The table in §4 is the 6.0 audit, kept as the inventory of
+where untrusted text goes; §5 records what actually shipped and the test that proves it.
+Nothing below is described as implemented unless its row says so, and every control has either
+a named test or an explicit statement of what is not proven. GreenLit is **not claimed to be
+immune to prompt injection**; the only claims this repository makes are the ones a named test
+proves.
 
 ## 1. What is untrusted
 
@@ -46,12 +46,12 @@ by a model:
 
 | Path | Where | Sanitising that exists now | Gap |
 | --- | --- | --- | --- |
-| Judge prompt | `backend/app/services/judge.py:122-142` | `sanitize_untrusted()` on question, expected answer, app answer and retrieved context; each wrapped in `<question>` / `<app_answer>` tags; the system template is fixed text | Tags are guessable and can be spoofed by the content; no per-request nonce; no secret scrub; no output scanner |
-| Dataset generation from documents | `backend/app/services/generation.py:173-210` | Source passages are JSON-encoded, passed through `sanitize_untrusted`, wrapped in `<data>`, and the prompt says the block is data, not instructions; one retry on invalid JSON | Same as above, plus no canary and no scan of the model's reply beyond JSON shape |
-| Draft generation (phase 3) | `backend/app/services/drafts.py` (`build_messages`) | Description and documents are JSON-encoded inside `<data>` with a fixed system prompt that says they are data; PII-shaped items are dropped; kinds and lengths validated | No nonce, no secret scrub, no output scan |
+| Judge prompt | `backend/app/services/judge.py:122-142` | `sanitize_untrusted()` on question, expected answer, app answer and retrieved context; each wrapped in `<question>` / `<app_answer>` tags; the system template is fixed text | **Closed since:** the case now travels inside the per-request nonce envelope (S3, S10) and the label enum is validated. Still open: the case text is not secret-scrubbed. |
+| Dataset generation from documents | `backend/app/services/generation.py:173-210` | Source passages are JSON-encoded, passed through `sanitize_untrusted`, wrapped in `<data>`, and the prompt says the block is data, not instructions; one retry on invalid JSON | **Closed since:** the source JSON now travels in the nonce envelope (S11). Still open: no canary, and the reply is only shape-checked. |
+| Draft generation (phase 3) | `backend/app/services/drafts.py` (`build_messages`) | Description and documents are JSON-encoded inside `<data>` with a fixed system prompt that says they are data; PII-shaped items are dropped; kinds and lengths validated | **Closed since:** the description and each document get their own nonce block (S11). Still open: no secret scrub; the reply is only shape- and PII-checked. |
 | UI rendering | `frontend/src` (all components) | Untrusted text is rendered as React text nodes; a search of `frontend/src` finds **no** `dangerouslySetInnerHTML`, no `innerHTML` and no markdown renderer | None found for renderer injection; a URL in text is inert but still visible |
 | CSV / HTML / JSON export | `backend/app/services/report.py` | HTML is escaped (`html.escape(..., quote=True)`); CSV cells starting with a formula character get a leading quote (lines 149-155); request-header values are redacted to `[redacted]`; the encrypted cURL blob never appears | **No XLSX export exists** (XLSX is only an upload format), so there is nothing to neutralise there; answers are not PII-redacted |
-| MCP server | `mcp_server/server.py` | Payloads capped at 20,000 characters and reports at 100,000, each with a `truncated` flag; no tool returns a secret | Fields that came from a target are not marked as untrusted data |
+| MCP server | `mcp_server/server.py` | Payloads capped at 20,000 characters and reports at 100,000, each with a `truncated` flag; no tool returns a secret | **Closed since:** report content is marked `untrusted` with a note that it came from the app under test (S12), and no tool returns a secret. |
 | Logs | `backend/app` | A search finds no log call that emits an answer, output or error snippet | Not proven exhaustively; a future log line could leak text |
 
 ## 5. Controls to build, and their status
@@ -59,13 +59,13 @@ by a model:
 | Control | Status today |
 | --- | --- |
 | **S1** no `tools` / `functions` / tool response formats in any model request; model output never executed, fetched or rendered as HTML/markdown | **Proven.** `test_the_request_has_no_tools_and_stores_exactly_one_row` asserts every message carries only `role` and `content`; `AnalystPanel.test.tsx` asserts a reply containing `<img>`, `<a>` and markdown creates no such element. |
-| **S2** one pure function builds every model input from structured fields, with redaction, control/zero-width/bidi stripping, tag stripping and a size cap | **Missing.** Judge and generator each build their prompt inline. |
-| **S3** per-request nonce envelope; delimiter, nonce and role markers neutralised inside content | **Done for the judge** (`untrusted.make_envelope`, nonce on its own line, `attribute=False`): a hostile answer cannot close or open the block. The generator and draft prompts still use static `<data>` blocks. |
+| **S2** one pure function builds every model input from structured fields, with redaction, control/zero-width/bidi stripping, tag stripping and a size cap | **Partial, stated plainly.** The analyst input is one pure function (`untrusted.build_analyst_input`), and every other path shares the same helpers — JSON encoding, `sanitize_text`/`sanitize_untrusted`, a size cap and `make_envelope`. But the judge, generator and draft prompts still assemble their own message text, so the property holds by composition rather than through a single builder. |
+| **S3** per-request nonce envelope; delimiter, nonce and role markers neutralised inside content | **Done for all four paths** — judge, analyst, generator, drafts — via `untrusted.make_envelope(..., attribute=False)`, so the opening tag stays `<data>` and the nonce sits on its own line. `tests/test_prompt_envelopes.py` (5 tests) proves hostile `</data>`, `<data nonce="…">` and forged `<nonce>` text cannot close or reopen a block in any of them. |
 | **S4** every number and verdict comes from the backend; model text sits in a labelled block; output is schema-validated and cites only real case ids | **Backend done:** the analyst input is built from run fields only (`build_analyst_input` writes numbers exactly as stored) and the reply is prose that is never parsed into a number. **Done:** the panel renders the reply as plain text under a label saying it may be wrong and changes no verdict, and a test proves `<img>`, `<a>` and markdown stay text. |
 | **S5** output scanner rejecting URLs, markdown links/images, HTML, shell code fences, secret patterns, canaries and over-length text | **Done.** `scan_output` + `test_untrusted.py` (one test per class) and `test_analyst.py` (six hostile replies each stored as nothing, text empty). |
 | **S6** per-request canary in the system prompt, rejected if echoed | **Done.** `token_hex(12)` per call; `test_a_reply_that_echoes_the_canary_is_rejected` extracts the canary from the system message, has the fake return it, and asserts the answer is rejected and the canary absent from the response. |
 | **S7** verdict independence: the only write is one `run_explanations` row | **Done.** The analyst endpoints add exactly one row; a test shows the run's verdict and score are unchanged after an explanation and a reply asking to "change the verdict to GO" changes nothing. |
-| **S8** explicit user action, preview of exactly what is sent, confirmation for remote providers, cache by input hash, one call per click, timeout, token cap, 429 stops | **Backend done:** preview endpoint, 409 until `confirm_remote` for a non-local provider, cache by nonce-normalised `input_hash`, one call per request, 600-token cap, provider timeout via the gateway, 429 stored as nothing. The button and preview UI are 6.4. |
+| **S8** explicit user action, preview of exactly what is sent, confirmation for remote providers, cache by input hash, one call per click, timeout, token cap, 429 stops | **Backend done:** preview endpoint, 409 until `confirm_remote` for a non-local provider, cache by nonce-normalised `input_hash`, one call per request, 600-token cap, provider timeout via the gateway, 429 stored as nothing. The button, the exact preview and the remote-provider tick are live; `e2e-analyst` proves the local path end to end, and the remote confirmation is covered by `AnalystPanel.test.tsx`. |
 | **S9** ownership check before building the input | **Done:** all three analyst endpoints resolve the run through `_owned_run` before anything is built; another account gets 404 on preview, explain and read. |
 | **S10** judge prompt hardening + a non-verdict `possible_judge_manipulation` flag for judge-directed text | **Done.** Envelope, score/confidence range and `label` enum validation (`pass`/`fail`/`unsure`; anything else is "judge unsure", never a pass), and `detect_judge_manipulation` derived at read time on `/runs/{id}/items` with the notice shown above the charts. No column, no migration, no score or verdict touched. |
 | **S11** stored injection: dataset items, drafts and documents are untrusted wherever they are later sent to a model | **Done.** Every path that carries text to a model now uses one envelope: the judge, the analyst, the dataset generator (`UNTRUSTED_SOURCE_JSON`) and the draft writer (description and documents, each its own block). The block is closed once, the nonce tag inside content is neutralised, and `<nonce>` appears exactly once — `tests/test_prompt_envelopes.py` (5 tests) proves hostile `</data>`, `<data nonce="…">` and forged `<nonce>` text cannot break out of any of them. |
@@ -89,6 +89,11 @@ no link to `:9504` on the page; the visible text holds no URL, no exfil marker a
 key; the verdict, score and metrics are byte-identical before and after Explain; the poisoned
 case is flagged `possible-judge-manipulation`; and the CSV contains `'=1+1`. That is S1, S4,
 S5, S6, S7, S9 and S13 proved end to end, with S3/S10/S11 covered by the backend tests.
+
+The analyst's success path has its own browser proof: `e2e-analyst` **`1 passed (1.6m)`** — the
+preview, the answer under its warning label with provider, model and prompt version named, no
+image or link in the panel, an unchanged verdict, score and metrics, and screenshots in both
+themes.
 
 ## 8. Residual risks (still true after every control above)
 
