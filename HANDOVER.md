@@ -1032,3 +1032,48 @@ which case the judge passed, failed or doubted.
   joined on question text; a missing log is reported, never filled in.
 - The browser path for any of this is still unproven: Docker did not start, so no
   Playwright spec ran.
+## M17 — Account → Sessions, and what a role means
+
+**Status: implemented and tested** (the browser path is unproven: Docker would not
+start, so no Playwright spec ran).
+
+### What exists
+
+| Part | Where |
+| --- | --- |
+| One session per refresh-token family | `services/sessions.py`: `list_sessions()` groups the user's tokens by `family_id`, keeps a family only while it has a live token, and orders by newest activity |
+| Honest times | `created_at` = the family's oldest token, `last_activity` = its newest — the product has **no last-used column**, so the UI says "Last activity", never "last seen online" |
+| Device labels | `describe_device()`: a browser and a platform from the stored agent, `unknown device` for nothing stored, `unrecognised browser` for something it cannot place |
+| Endpoints | `GET /auth/sessions`, `POST /auth/sessions/{id}/revoke` (404 for a foreign family), `POST /auth/sessions/revoke-others` |
+| Behaviour | Revoking another device keeps the current session; revoking the current one clears the cookies and behaves like Sign out; revoke-others reuses the same revoke logic and returns the count |
+| Panel | `components/SessionsSection.tsx` inside `AccountPanel`: rows with the device, a "This device" badge and last activity, per-row "Sign out this device", and "Sign out all other devices" behind a confirmation |
+| Roles | `AccountPanel` shows the role and one sentence about what it allows (admin / reviewer / member); no control promotes or demotes anybody |
+| Privacy | Responses carry a family UUID, a device label and two timestamps — no token, no hash, no IP; the audit trail records `auth.session_revoked` and `auth.sessions_revoked_others` with the family id |
+
+### Tests actually run
+
+- `cd backend && python -m pytest tests/test_sessions.py` — **9 passed**: two sign-ins
+  are two rows with the current one marked, per-agent labels, `unknown device` and
+  `unrecognised browser`, no 64-hex or "token"/"hash"/IP text in the response, a
+  foreign account cannot list or revoke (404), revoking another device keeps this one
+  signed in **and** the revoked device can no longer refresh, revoking the current one
+  signs out, revoke-others keeps only the current family and reports its count, and a
+  rotation moves last activity while the start stays put.
+- `cd backend && python -m pytest tests/test_auth.py tests/test_account_preferences.py`
+  with the new file — **31 passed**; `ruff check .`, `ruff format --check .` (186 files)
+  and `mypy` (96 source files) clean.
+- `cd frontend && npx vitest run` — **293 passed** (283 before; `SessionsSection.test.tsx`
+  7 and `AccountPanel.role.test.tsx` 3); `npx tsc --noEmit` and `npm run lint` clean.
+- `npx prettier --check` on every file added or edited here — clean.
+
+### Known limitations
+
+- **A refresh token is a session.** Switching browsers, clearing cookies or signing in
+  twice in one browser creates more than one family, so the list can show two rows for
+  what a person thinks of as one device. The rows are still honest about what they are.
+- **Last activity is not usage.** A rotation happens on a token refresh, not on every
+  request, so a session in constant use can look older than it is.
+- **No IP address, by design**, and no location or revocation history beyond the audit
+  trail.
+- **The browser path is unproven**: `e2e-session-refresh.spec.ts` was re-run only when
+  Docker starts, and no two-context sessions spec has ever executed.
