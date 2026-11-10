@@ -338,10 +338,14 @@ def _case_label_rows(results_dir: Path) -> list[dict[str, str]]:
     for path in sorted(results_dir.glob("*/run-*.cases.csv")):
         with path.open(encoding="utf-8", newline="") as handle:
             for row in csv.DictReader(handle):
+                app = path.parent.name
+                row_index = (row.get("row_index") or "").strip()
                 rows.append(
                     {
-                        "app": path.parent.name,
-                        "question_id": (row.get("row_index") or "").strip(),
+                        "app": app,
+                        # The sheet's key: this app's answer to this dataset row.
+                        "question_id": f"{app}.{row_index}" if row_index else "",
+                        "row_index": row_index,
                         "judge_label": (row.get("judge_label") or "").strip().lower(),
                     }
                 )
@@ -406,7 +410,11 @@ def judge_human_table(results_dir: Path, labels_path: Path) -> dict[str, Any]:
         pairs: list[tuple[str, str]] = []
         for case in cases:
             judge_label = case["judge_label"]
-            human_label = labels[rater].get(case["question_id"], "")
+            # ``app.row`` is the sheet's key; a bare row number is accepted too, for a
+            # label file written about the question rather than one app's answer.
+            human_label = labels[rater].get(case["question_id"], "") or labels[
+                rater
+            ].get(case["row_index"], "")
             if not judge_label:
                 unjudged += 1
                 continue
