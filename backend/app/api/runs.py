@@ -34,6 +34,7 @@ from app.schemas.runs import (
 )
 from app.services.audit import record
 from app.services.generation import ChatFn, get_chat_fn
+from app.services.labels import judge_case_label, judge_rows_for_run
 from app.services.operations import (
     compute_operations,
     prices_from_metadata,
@@ -61,6 +62,7 @@ from app.services.run_service import (
     create_run_from_request,
     get_enqueue,
 )
+from app.services.target_error import redact_snippet
 from app.services.untrusted import detect_judge_manipulation
 
 router = APIRouter(prefix="/api/v1", tags=["runs"])
@@ -542,6 +544,9 @@ def get_run_items(
     run = _owned_run(db, run_id, user)
     items = list_run_items(db, run.id)
     window = items[offset : offset + limit]
+    # The judge's per-case rows, keyed by the item each one graded: a case the judge
+    # never scored keeps nulls rather than borrowing the run's average.
+    judge_rows = judge_rows_for_run(db, run.id)
     return RunItemsResponse(
         items=[
             RunItemRead(
@@ -557,6 +562,19 @@ def get_run_items(
                 # Derived from the stored answer, never stored: text aimed at the judge is
                 # reported on the case and changes no score.
                 possible_judge_manipulation=detect_judge_manipulation(item.output),
+                judge_label=judge_case_label(judge_rows.get(item.id)),
+                judge_score=(
+                    judge_rows[item.id].score
+                    if item.id in judge_rows and judge_rows[item.id].instrumented
+                    else None
+                ),
+                # Bounded and credential-free, like every other stored excerpt; the
+                # rubric, the prompt and the raw reply are never exposed.
+                judge_reason=(
+                    redact_snippet(judge_rows[item.id].explanation)
+                    if item.id in judge_rows and judge_rows[item.id].instrumented
+                    else None
+                ),
             )
             for item in window
         ],

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal, cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -38,6 +38,9 @@ from app.services.judge import (
 
 LABEL_PASS = "pass"
 LABEL_FAIL = "fail"
+JudgeLabel = Literal["pass", "fail", "unsure"]
+# The judge's own reply may also be "unsure"; a human label is always pass/fail.
+LABEL_UNSURE: JudgeLabel = "unsure"
 LABELS: tuple[str, ...] = (LABEL_PASS, LABEL_FAIL)
 
 REASON_UNAVAILABLE = "the judge could not score this case"
@@ -115,6 +118,36 @@ def _confidence(row: MetricResultRow | None) -> float | None:
     details = row.details or {}
     value = details.get("confidence")
     return float(value) if isinstance(value, (int, float)) else None
+
+
+def judge_rows_for_run(session: Session, run_id: uuid.UUID) -> dict[uuid.UUID, MetricResultRow]:
+    """The judge's per-case rows of one run, keyed by the item they graded."""
+    rows = session.scalars(
+        select(MetricResultRow)
+        .join(RunItem, RunItem.id == MetricResultRow.run_item_id)
+        .where(
+            MetricResultRow.name == ANSWER_QUALITY,
+            RunItem.run_id == run_id,
+        )
+    )
+    return {row.run_item_id: row for row in rows if row.run_item_id is not None}
+
+
+def judge_case_label(row: MetricResultRow | None) -> JudgeLabel | None:
+    """The judge's own label for one case, or None when it did not score it.
+
+    This is the product's existing rule, per case and nothing more: a case the
+    judge did not score has no label; a score it was not sure of is the
+    ``unsure`` the review queue already names (:data:`REASON_LOW_CONFIDENCE`);
+    a confident score is bucketed with :func:`pass_fail` at the answer-quality
+    threshold.
+    """
+    if row is None or not row.instrumented:
+        return None
+    confidence = _confidence(row)
+    if confidence is not None and confidence < DEFAULT_LOW_CONFIDENCE_THRESHOLD:
+        return LABEL_UNSURE
+    return cast(JudgeLabel, pass_fail(row.score, DEFAULT_ANSWER_QUALITY_THRESHOLD))
 
 
 def review_queue(

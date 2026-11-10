@@ -229,6 +229,12 @@ class RunItemRead(BaseModel):
     # Derived from the stored answer at read time, never stored and never scored: the answer
     # contains text addressed to the judge. Shown on the case, changes no verdict.
     possible_judge_manipulation: bool = False
+    # The judge's own per-case label, read from its answer_quality row and keyed by
+    # row_index. Null means the judge never scored this case — not a pass and not a fail.
+    # The score and a bounded, redacted reason come with it; the rubric stays out.
+    judge_label: Literal["pass", "fail", "unsure"] | None = None
+    judge_score: float | None = None
+    judge_reason: str | None = None
 
 
 class RunItemsResponse(BaseModel):

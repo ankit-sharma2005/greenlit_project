@@ -31,12 +31,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Dataset, DatasetItem, DatasetVersion, Provider, Run, RunItem
+from app.services.labels import judge_case_label, judge_rows_for_run
 from app.services.operations import (
     compute_operations,
     prices_from_metadata,
     samples_from_items,
 )
 from app.services.run_repository import get_metric_results, list_run_items
+from app.services.target_error import redact_snippet
 
 REPORT_VERSION = "1.0"
 PROJECT_NAME = "Default project"
@@ -246,6 +248,9 @@ def _provider_block(session: Session, snapshot: dict[str, Any]) -> dict[str, Any
 
 def _case_rows(session: Session, run: Run, items: list[RunItem]) -> list[dict[str, Any]]:
     by_index, by_input = _expected_map(session, run)
+    # The judge's per-case rows, keyed by the item they graded: a case nobody scored
+    # exports empty cells, never a borrowed label.
+    judge_rows = judge_rows_for_run(session, run.id)
     cases: list[dict[str, Any]] = []
     for item in items:
         expected = by_input.get(item.input_text.strip().lower())
@@ -276,6 +281,18 @@ def _case_rows(session: Session, run: Run, items: list[RunItem]) -> list[dict[st
                 "target": detail.get("target") or None,
                 "error_snippet": detail.get("snippet") or None,
                 "error_summary": detail.get("summary") or None,
+                # The judge's own label for this case, when it scored it.
+                "judge_label": judge_case_label(judge_rows.get(item.id)),
+                "judge_score": (
+                    judge_rows[item.id].score
+                    if item.id in judge_rows and judge_rows[item.id].instrumented
+                    else None
+                ),
+                "judge_reason": (
+                    redact_snippet(judge_rows[item.id].explanation)
+                    if item.id in judge_rows and judge_rows[item.id].instrumented
+                    else None
+                ),
             }
         )
     return cases
@@ -575,6 +592,11 @@ def render_csv(document: dict[str, Any]) -> str:
             "tokens_in_total",
             "tokens_out_total",
             "cost_estimate",
+            # The judge's per-case label. It sits before the permission block so the
+            # columns that were already last stay last for a spreadsheet built on them.
+            "judge_label",
+            "judge_score",
+            "judge_reason",
             # Who allowed testing this target, when it was not the user's own app.
             "permission_confirmed",
             "permission_reference",
@@ -615,6 +637,9 @@ def render_csv(document: dict[str, Any]) -> str:
                 csv_cell(operations.get("tokens_in_total")),
                 csv_cell(operations.get("tokens_out_total")),
                 csv_cell(operations.get("cost_estimate")),
+                csv_cell(case.get("judge_label")),
+                csv_cell(case.get("judge_score")),
+                csv_cell(case.get("judge_reason")),
                 csv_cell(permission_confirmed),
                 csv_cell(permission_reference),
                 csv_cell(safety_attacks_confirmed),
