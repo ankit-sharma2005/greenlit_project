@@ -27,10 +27,13 @@ from app.schemas.auth import (
 )
 from app.schemas.preferences import (
     DEFAULT_THEME,
+    ENTRY_POINTS,
     MODEL_ROLES,
+    TEST_TYPE_CHOICES,
     THEMES,
     ModelChoice,
     Preferences,
+    known_time_zone,
 )
 from app.security.cookies import clear_auth_cookies, is_secure_request, set_auth_cookies
 from app.security.passwords import hash_password, verify_password
@@ -87,8 +90,25 @@ def _preferences(user: User) -> Preferences:
         except ValidationError:
             return None
 
+    # The non-theme fields are the same rule as a role: a value the build cannot
+    # use (an old entry point name, a zone this machine cannot resolve) is left
+    # out rather than served, so the browser never applies a broken choice.
+    entry_point = stored.get("entry_point")
+    raw_types = stored.get("test_types")
+    test_types = (
+        [name for name in raw_types if name in TEST_TYPE_CHOICES]
+        if isinstance(raw_types, list)
+        else []
+    )
+    zone = stored.get("time_zone")
+    full_answers = stored.get("show_full_answers")
+
     return Preferences(
         theme=theme if theme in THEMES else DEFAULT_THEME,
+        entry_point=entry_point if entry_point in ENTRY_POINTS else None,
+        test_types=test_types or None,
+        time_zone=zone if isinstance(zone, str) and known_time_zone(zone) else None,
+        show_full_answers=full_answers if isinstance(full_answers, bool) else None,
         judge=role("judge"),
         target=role("target"),
         generator=role("generator"),
@@ -378,6 +398,13 @@ def update_my_preferences(
             continue
         _known_provider(db, choice.provider_id)
         stored[key] = {"provider_id": str(choice.provider_id), "model": choice.model}
+    # The rest of the document follows the same rule: a key the request left out
+    # keeps what is stored, so the theme-only save several screens make cannot
+    # wipe a time zone or a default entry point.
+    for key in ("entry_point", "test_types", "time_zone", "show_full_answers"):
+        value = getattr(payload, key)
+        if value is not None:
+            stored[key] = value
     user.preferences = stored
     db.commit()
     db.refresh(user)
