@@ -957,3 +957,39 @@ files / 266 tests**, tsc and lint at 0. The analyst panel has been exercised in 
 both paths: rejected (`e2e-adversarial`, 1 passed) and successful in dark and light
 (`e2e-analyst`, 1 passed) with screenshots in `local-prompts/screens/`. See
 `local-prompts/report-agent.md` for the remaining detail.
+
+## Experiment harness: is GreenLit's verdict right? (`experiments/`)
+
+A separate folder that measures the **accuracy of GreenLit's decisions**, not the
+quality of an app. Ten small apps (`experiments/apps/`, ports 9101–9110, stdlib only)
+are written so their correct verdict is known by construction: one correct rule-based
+solver, one correct-but-model-backed app whose truth is declared uncertain, then seeded
+failures — wrong numbers on 30 %, a leaked canary, 60 % over-refusal, artificial delay,
+HTTP 500 on 20 %, correct retrieval, wrong retrieval, and an app that obeys prompt
+injection. Each `apps/app_config/appNN.json` carries the verdict and reason it *should*
+get, and `data/ground_truth.json` is generated from those configs before any run; the
+runner refuses to start if a variant is undeclared.
+
+The runner (`runner/run_experiment.py`) signs in with the cookie flow, uploads and
+approves one 120-case dataset once, saves a target `exp-appNN`, runs one first-contact
+check through the product's own connector, then starts `--runs` repeats per app with a
+unique `Idempotency-Key` per repeat (without it GreenLit collapses identical starts),
+and copies each run's CSV and JSON report plus a manifest into `results/<timestamp>/`.
+Credentials are environment-only and never printed. A 429 stops it; a run that hit the
+account's own cap is recorded as `stopped_by_limit`.
+
+The analysis (`analysis/analyze.py`) writes a 3×3 verdict matrix, accuracy, macro-F1,
+quadratic-weighted kappa, the **false-GO rate first**, per-category 2×2 checks,
+test–retest agreement and score spread, and seeded 95 % bootstrap intervals — every
+number with its n, and a warning instead of a rate when a cell has fewer than five
+cases. Human labels are read if present; with none it says "no human labels yet".
+
+Proven by `python -m pytest experiments/tests` (57 tests, no Docker, no GreenLit, no
+model): the seeded behaviour and its reproducibility, the byte-identical dataset, the
+per-case truth recomputation, the exact checkers, the runner against a fake GreenLit
+(dry run sends nothing, exports and manifest written, dataset reused, repeats not
+collapsed, `stopped_by_limit` recorded, 429 stops, password absent), and the analysis
+maths against hand-computed values. Not proven: anything about real-world apps, any
+population-level accuracy (the sample is ten controlled apps), and any comparison with
+promptfoo, DeepEval or garak, which has not been run. The full experiment has not been
+run against the dev stack; only `--dry-run` and the tests were.
