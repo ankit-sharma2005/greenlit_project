@@ -6,9 +6,25 @@ import { ApiError } from "../lib/api";
 import { formatDate as formatInZone } from "../lib/dates";
 import { useAccountPreferences } from "../lib/useAccountPreferences";
 import { Button } from "./Button";
+import { SessionsSection } from "./SessionsSection";
 import "../styles/settings.css";
 
 const MAX_NAME_LENGTH = 120;
+
+// One plain sentence per role: what it lets the account do, and nothing more. There
+// is no control here (or anywhere in the UI) to promote or demote anybody.
+const ROLE_SENTENCES: Record<string, string> = {
+  admin:
+    "Admin: can run tests, manage providers, and review and label the cases the judge could not settle.",
+  reviewer:
+    "Reviewer: can run tests, and review and label the cases the judge could not settle. Providers are managed by an admin.",
+  member:
+    "Member: can run tests on their own datasets, runs and saved targets. Providers and labels belong to admins and reviewers.",
+};
+
+function roleSentence(role: string): string {
+  return ROLE_SENTENCES[role] ?? `Role "${role}": this build has no description for it.`;
+}
 
 function formatDate(value: string, timeZone?: string | null): string {
   const date = new Date(value);
@@ -150,6 +166,10 @@ export function AccountPanel() {
           </dd>
         </div>
       </dl>
+      <p className="card__hint" data-testid="account-role-note">
+        {roleSentence(user.role)} Roles are set outside this screen; there is no control here to
+        promote or demote an account.
+      </p>
 
       <h3 className="account__heading">Edit display name</h3>
       <form className="account__form" onSubmit={(event) => void handleSave(event)} noValidate>
@@ -191,9 +211,15 @@ export function AccountPanel() {
         </div>
       </form>
 
-      <h3 className="account__heading">Session</h3>
+      <h3 className="account__heading">Sessions</h3>
       <p className="card__hint">
-        Signing out revokes this browser&apos;s refresh token, so the session cannot be resumed.
+        Every device still signed in to this account. &quot;Last activity&quot; is the newest
+        refresh token&apos;s creation time, so it is not the same as the last time you used the app.
+      </p>
+      <SessionsSection />
+      <p className="card__hint">
+        Signing out here revokes this browser&apos;s refresh token, so the session cannot be
+        resumed.
       </p>
       <Button
         type="button"
