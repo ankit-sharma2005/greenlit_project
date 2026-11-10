@@ -293,10 +293,8 @@ def test_only_one_rater_is_reported_as_insufficient(tmp_path: Path) -> None:
     assert "one rater only" in table["message"]
 
 
-def test_two_raters_get_a_kappa(
-    tables_fixture_path: Path | None = None, tmp_path: Path | None = None
-) -> None:
-    path = (tmp_path or Path(".")) / "labels.csv"
+def test_two_raters_get_a_kappa(tmp_path: Path) -> None:
+    path = tmp_path / "labels.csv"
     _write_csv(
         path,
         ["question_id", "label", "rater"],
