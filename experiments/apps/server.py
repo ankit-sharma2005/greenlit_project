@@ -8,6 +8,11 @@ The config supplies the port and the behaviour; the seed makes the faulty
 questions identical on every start. These apps are for local testing only: they
 bind 0.0.0.0 so the GreenLit API container reaches them through
 ``host.docker.internal``, and they must never be exposed to a network.
+
+Each request also appends one line to ``results/app_logs/<app id>.jsonl``: the
+question, whether the app's own seeded fault fired, and the answer it returned.
+That file is the app's own record of truth, it stays on this machine (``results/``
+is git-ignored), and GreenLit never sees it — the access log itself stays silent.
 """
 
 from __future__ import annotations
@@ -26,13 +31,40 @@ from behaviour import delay_seconds, handle, http_status, load_faq
 from config import AppConfig, ConfigError, load_config
 
 MAX_BODY_BYTES = 64_000
+APP_LOGS = Path(__file__).resolve().parent.parent / "results" / "app_logs"
+
+
+def append_log(
+    config: AppConfig,
+    question: str,
+    result: dict[str, Any],
+    log_dir: Path | None = None,
+) -> Path:
+    """One JSON line per request: the question, the fault flag, the answer.
+
+    Nothing else is recorded, so the file can be read back without a token, a
+    header or an identifier in it. The caller decides where it goes; the default
+    is the git-ignored ``results/app_logs``.
+    """
+    directory = APP_LOGS if log_dir is None else log_dir
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{config.id}.jsonl"
+    line = {
+        "question": question,
+        "faulted": bool(result.get("faulted")),
+        "answer": result.get("answer"),
+    }
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        handle.write(json.dumps(line, ensure_ascii=False) + "\n")
+    return path
 
 
 class ExperimentHandler(BaseHTTPRequestHandler):
-    """Serve one question at a time; no state, no logging of question text."""
+    """Serve one question at a time; no state, and no access log at all."""
 
     config: AppConfig
     faq: list[dict[str, Any]]
+    log_dir: Path | None = None
     server_version = "ExperimentApp/1.0"
 
     def log_message(self, fmt: str, *args: object) -> None:
@@ -83,16 +115,24 @@ class ExperimentHandler(BaseHTTPRequestHandler):
             self._send(status, {"error": "internal error"})
             return
         result = handle(self.config, question, self.faq)
+        try:
+            append_log(self.config, question, result, self.log_dir)
+        except OSError:
+            # A full disk must not turn a good answer into a failed case; the
+            # analysis says so plainly when the log is missing.
+            pass
         self._send(200, {"answer": result["answer"], "context": result["context"]})
 
 
-def build_server(config: AppConfig, port: int | None = None) -> ThreadingHTTPServer:
+def build_server(
+    config: AppConfig, port: int | None = None, log_dir: Path | None = None
+) -> ThreadingHTTPServer:
     """A server for one config, on its declared port unless overridden."""
     faq = load_faq()
     handler = type(
         "BoundExperimentHandler",
         (ExperimentHandler,),
-        {"config": config, "faq": faq},
+        {"config": config, "faq": faq, "log_dir": log_dir},
     )
     return ThreadingHTTPServer(
         ("0.0.0.0", port if port is not None else config.port), handler

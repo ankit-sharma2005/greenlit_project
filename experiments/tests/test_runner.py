@@ -102,6 +102,28 @@ class FakeHandler(BaseHTTPRequestHandler):
                 self._send(200, buffer.getvalue())
             else:
                 self._send(200, {"run": {"verdict": "GO"}, "cases": []})
+        elif path.startswith("/api/v1/runs/") and path.endswith("/items"):
+            # The judge scored the only case; the runner saves this beside the CSV.
+            self._send(
+                200,
+                {
+                    "items": [
+                        {
+                            "row_index": 1,
+                            "judge_label": "pass",
+                            "judge_score": 0.9,
+                            "judge_reason": "the answer matches",
+                        },
+                        {
+                            "row_index": 2,
+                            "judge_label": None,
+                            "judge_score": None,
+                            "judge_reason": None,
+                        },
+                    ],
+                    "total": 2,
+                },
+            )
         elif path.startswith("/api/v1/runs/"):
             run_id = path.rsplit("/", 1)[-1]
             self._send(200, state.runs[run_id])
@@ -262,6 +284,12 @@ def test_a_full_run_exports_every_verdict_and_a_manifest(
             .startswith("row_index")
         )
         assert (results / app_id / f"run-{index}.report.json").exists()
+        cases = (results / app_id / f"run-{index}.cases.csv").read_text(encoding="utf-8")
+        assert cases.splitlines()[0] == "row_index,judge_label,judge_score,judge_reason"
+        # The label is kept for the case the judge scored, and stays empty for the one
+        # it did not: a missing label is never dropped from the file.
+        assert ",pass,0.9,the answer matches" in cases
+        assert cases.splitlines()[2] == "2,,,"
 
 
 def test_the_dataset_is_reused_instead_of_uploaded_again(

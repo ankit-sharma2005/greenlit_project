@@ -312,6 +312,18 @@ class GreenLitClient:
     def report(self, run_id: str, fmt: str) -> str:
         return self.request_text("GET", f"/api/v1/runs/{run_id}/report?format={fmt}")
 
+    def items(self, run_id: str) -> list[dict[str, Any]]:
+        """Every case of one run, each with the judge's own per-case label.
+
+        The label comes from ``GET /runs/{id}/items`` (``judge_label``,
+        ``judge_score``, ``judge_reason``), which is null for a case the judge never
+        scored. It is saved beside the run's CSV so the analysis can compare it with
+        a human label by dataset row, without asking GreenLit again.
+        """
+        payload = self.request_json("GET", f"/api/v1/runs/{run_id}/items?limit=1000")
+        items = payload.get("items") if isinstance(payload, dict) else None
+        return [item for item in items or [] if isinstance(item, dict)]
+
 
 def normalise_api_url(value: str) -> str:
     """Reject anything that is not a plain http(s) URL with a host."""

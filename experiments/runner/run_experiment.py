@@ -165,6 +165,34 @@ def wait_for_run(
         time.sleep(poll_seconds)
 
 
+CASE_LABEL_COLUMNS = ("row_index", "judge_label", "judge_score", "judge_reason")
+
+
+def write_case_labels(items: list[dict[str, Any]], path: Path) -> None:
+    """One row per case: its dataset row and the judge's own label for it.
+
+    ``row_index`` is the join key — it is the dataset row the case came from, so a
+    human label written against the same question lines up without matching text. A
+    case the judge did not score keeps empty cells; it is never dropped, because a
+    dropped case would quietly flatter every rate computed from the file.
+    """
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle, fieldnames=list(CASE_LABEL_COLUMNS), extrasaction="ignore"
+        )
+        writer.writeheader()
+        for item in sorted(items, key=lambda row: int(row.get("row_index") or 0)):
+            score = item.get("judge_score")
+            writer.writerow(
+                {
+                    "row_index": item.get("row_index") or "",
+                    "judge_label": item.get("judge_label") or "",
+                    "judge_score": "" if score is None else score,
+                    "judge_reason": item.get("judge_reason") or "",
+                }
+            )
+
+
 def run_app(
     client: GreenLitClient,
     plan: AppPlan,
@@ -236,11 +264,16 @@ def run_app(
         reason = finished.get("verdict_reason")
         csv_path = app_dir / f"run-{index}.csv"
         json_path = app_dir / f"run-{index}.report.json"
+        cases_path = app_dir / f"run-{index}.cases.csv"
         try:
             csv_path.write_text(client.report(run_id, "csv"), encoding="utf-8")
             json_path.write_text(client.report(run_id, "json"), encoding="utf-8")
         except GreenLitError as exc:
             log(f"  {plan.config.id} run {index}: export failed: {exc}")
+        try:
+            write_case_labels(client.items(run_id), cases_path)
+        except GreenLitError as exc:
+            log(f"  {plan.config.id} run {index}: per-case judge labels failed: {exc}")
         row = {
             "app": plan.config.id,
             "run_index": index,
@@ -252,6 +285,7 @@ def run_app(
             "expected_verdict": plan.config.expected_verdict,
             "csv_path": str(csv_path.relative_to(results_dir.parent)),
             "json_path": str(json_path.relative_to(results_dir.parent)),
+            "cases_path": str(cases_path.relative_to(results_dir.parent)),
             "target_id": target_id,
         }
         rows.append(row)
@@ -275,6 +309,7 @@ def write_summary(rows: list[dict[str, Any]], results_dir: Path) -> None:
         "verdict_reason",
         "csv_path",
         "json_path",
+        "cases_path",
     ]
     with (results_dir / "runs.csv").open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
