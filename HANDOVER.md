@@ -993,3 +993,42 @@ maths against hand-computed values. Not proven: anything about real-world apps, 
 population-level accuracy (the sample is ten controlled apps), and any comparison with
 promptfoo, DeepEval or garak, which has not been run. The full experiment has not been
 run against the dev stack; only `--dry-run` and the tests were.
+## M16 — The judge, per case (and the experiment that checks it)
+
+**Status: implemented and tested.** The judge already stored one `answer_quality` row
+per case; the read paths now expose it, so a person and the experiment can both see
+which case the judge passed, failed or doubted.
+
+### What exists
+
+| Part | Where |
+| --- | --- |
+| The rule (unchanged) | `services/labels.py`: `pass_fail(score, 0.70)`, `None` when the row is missing or not instrumented, and `unsure` when confidence < 0.50 — the same words the review queue already uses |
+| New helpers | `judge_rows_for_run()` (that run's per-case rows, keyed by `run_item_id`), `judge_case_label()` |
+| Per-case read | `RunItemRead` + `GET /api/v1/runs/{id}/items`: `judge_label`, `judge_score`, `judge_reason` (reason through `redact_snippet`) |
+| Exports | `services/report.py::_case_rows` → JSON cases; `render_csv` writes `judge_label, judge_score, judge_reason` before the permission block, so the three columns that were last stay last |
+| Experiments | `runner` saves `<app>/run-<n>.cases.csv`; `analysis` reports judge-versus-human (accuracy, precision, recall, F1, kappa, fail as the positive class, `unsure` as its own column); `analysis/make_label_sheet.py` writes a blind sheet and merges two raters; each app logs its own requests to `results/app_logs/<app>.jsonl` |
+| Lint | `mcp_server/ruff.toml` and `scripts/ruff.toml` extend `backend/pyproject.toml`, so `ruff check .` at the root applies one rule set everywhere |
+
+### Tests actually run
+
+- `cd backend && python -m pytest` — **815 passed, 1 skipped** (8 of them in
+  `tests/test_run_judge_labels.py`), exit 0.
+- `python -m pytest experiments/tests` — **70 passed** (13 new: judge-versus-human,
+  the label sheet, the app logs and the logged truth).
+- `ruff check .` at the root — All checks passed. `ruff format --check .` still reports
+  three files in `mcp_server/` whose only difference is line-wrapping width; they were
+  deliberately not rewritten.
+- `mypy` — no issues in 94 source files.
+
+### Known limitations
+
+- `unsure` is the product's word for a **low-confidence** score, not a label the judge
+  stored: the reply may carry one, but the row keeps only score and confidence.
+- The judge-versus-human comparison covers only the cases a person labelled, and the
+  label is that person's opinion; the sheet is blind and shuffled, which removes
+  pattern-labelling, not bias.
+- Per-case truth for `app04` and `app10` is the app's own "the fault did not fire",
+  joined on question text; a missing log is reported, never filled in.
+- The browser path for any of this is still unproven: Docker did not start, so no
+  Playwright spec ran.

@@ -22,8 +22,10 @@ data/ground_truth.json    every app's declared verdict — written before any ru
 build_ground_truth.py     regenerates that file from the configs
 runner/                   cookie-session client + the experiment runner
 analysis/                 checkers (number, key fact, canary) + the tables
+analysis/make_label_sheet.py  a blind sheet for a human rater, and the merge
+data/human_labels_TEMPLATE.csv  the shape the merge writes
 tests/                    pytest, no Docker, no GreenLit, no model
-results/                  outputs (git-ignored)
+results/                  outputs (git-ignored); results/app_logs/ is the apps' log
 ```
 
 ## Start the ten apps
@@ -70,7 +72,14 @@ and is not a failure; a 429 stops the experiment instead of looping.
 Everything lands in `experiments/results/<timestamp>/`: `runs.csv`, `manifest.json`
 (GreenLit health, criteria, the selected judge's provider and model, dataset version,
 seeds, dates), and `<app>/run-<n>.csv` plus `run-<n>.report.json` copied from
-GreenLit's own exports.
+GreenLit's own exports. Beside them, `<app>/run-<n>.cases.csv` holds each case's own
+judge label (`row_index, judge_label, judge_score, judge_reason`), which is what the
+human comparison needs; a case the judge did not score keeps empty cells.
+
+The apps write their own record at `experiments/results/app_logs/<app id>.jsonl`: one
+line per request with the question, whether the seeded fault fired, and the answer.
+That is how per-case truth exists at all for `app04` and `app10`, whose failures only
+an attack triggers — the harness does not copy GreenLit's safety probes to get it.
 
 ## Analyse
 
@@ -85,9 +94,44 @@ than five cases prints a warning instead of a rate. Human labels are read from
 `data/human_labels.csv` if it exists — with no file, the report says "no human labels
 yet" and invents nothing.
 
+## Judge versus human
+
+GreenLit's per-case judge labels and a person's labels can now be compared, and the
+comparison is only as good as the sheet the person fills in blind:
+
+```bash
+python experiments/analysis/analyze.py experiments/results/<timestamp>   # also writes judge_human.csv
+
+# one blind sheet per rater: question, the app's answer, an empty label, shuffled
+python experiments/analysis/make_label_sheet.py experiments/results/<timestamp> --rater alice
+python experiments/analysis/make_label_sheet.py experiments/results/<timestamp> --rater bob
+
+# after filling them in, join the two raters into the file the analysis reads
+python experiments/analysis/make_label_sheet.py --merge sheets/alice.csv \
+    sheets/bob.csv --out experiments/data/human_labels.csv
+```
+
+A sheet carries no app id and no judge label, and its rows are shuffled with a fixed
+seed, so a rater cannot label by pattern. `question_id` is `<app id>.<dataset row>`
+(`app04.17`): the label is about *that* app's answer to *that* question. The merge
+refuses a word outside `pass`/`fail`/`unsure` and skips an empty cell rather than
+guessing; `data/human_labels_TEMPLATE.csv` shows the shape.
+
+The analysis then reports, per rater: accuracy, precision, recall and F1 with **fail
+as the positive class** (the expensive mistake is a bad case the judge lets through),
+Cohen's kappa against the judge, and the rater-versus-rater kappa from the shared
+cases. Every number carries its `n`. `unsure` on either side is its own column and is
+never folded into pass or fail, and a case the judge never scored is excluded from
+`n` rather than counted as correct.
+
+Per-case truth for `app04` and `app10` comes from the apps' logs, joined to GreenLit's
+case by the question text (whitespace and case ignored). A question the log never saw
+is reported as unjoined, a question logged both ways is ambiguous, and a missing log
+names the path it looked for — nothing is counted correct on silence.
+
 ## What the tests prove
 
-`python -m pytest experiments/tests` (57 tests, no Docker, no GreenLit, no model):
+`python -m pytest experiments/tests` (70 tests, no Docker, no GreenLit, no model):
 
 - each variant answers as its config says, and the seeded faulty set is identical across
   starts (`test_apps.py`, `test_ground_truth.py`);
@@ -102,7 +146,15 @@ yet" and invents nothing.
   appears in the output (`test_runner.py`, against a fake GreenLit);
 - the analysis maths agrees with values computed by hand on a tiny results folder:
   the 3×3 matrix, accuracy, macro-F1, quadratic-weighted kappa, the false-GO rate,
-  test–retest, the bootstrap intervals and the rater kappa (`test_analysis.py`).
+  test–retest, the bootstrap intervals and the rater kappa (`test_analysis.py`);
+- the judge-versus-human counters are the ones worked out by hand, with `unsure` and
+  an unjudged case excluded rather than folded in (`test_judge_human.py`);
+- a sheet holds the question, the answer and nothing else — no app id, no judge label
+  — the merge refuses an unknown word and skips empty cells, and a sheet label meets
+  the judge label on the same key (`test_label_sheet.py`);
+- each app writes one log line per request and nothing identifying
+  (`test_app_logs.py`), and the log joins to GreenLit's case by question text, with a
+  missing log reported instead of a made-up truth (`test_logged_truth.py`).
 
 ## What is NOT proven
 
@@ -121,6 +173,11 @@ yet" and invents nothing.
 - **Other frameworks are NOT yet compared.** promptfoo, DeepEval and garak exist and
   would be the natural baselines; this harness has not been run against them, so it
   makes no claim about being better, worse or equivalent.
-- **Judge-versus-human is not measurable from the current export.** GreenLit exports
-  per-run metrics, not a per-case judge label, so the analysis reports rater-versus-rater
-  kappa only and says why.
+- **Judge-versus-human needs a person to do the work.** The harness can compare the
+  judge's per-case label with a human label, but only for the cases somebody actually
+  labelled, and the label's quality is that person's. Cohen's kappa on thirty cases is a
+  weak claim; the sheet is blind and shuffled, which removes pattern-labelling, not the
+  author's own reading of "good enough to ship".
+- **The apps' logs are the app's word.** Per-case truth for `app04` and `app10` says
+  "the seeded fault did not fire", which is the app's own admission and not an
+  independent judgement that the answer was good.

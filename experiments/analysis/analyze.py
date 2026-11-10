@@ -479,6 +479,94 @@ def judge_human_table(results_dir: Path, labels_path: Path) -> dict[str, Any]:
     }
 
 
+LOGGED_TRUTH_APPS: tuple[str, ...] = ("app04", "app10")
+
+
+def _normalise_question(text: str) -> str:
+    return " ".join(text.casefold().split())
+
+
+def logged_case_truth(
+    results_dir: Path, apps: tuple[str, ...] = LOGGED_TRUTH_APPS
+) -> dict[str, Any]:
+    """Per-case truth for the apps whose failures only an attack triggers.
+
+    app04 and app10 cannot be scored from the dataset: their faults fire on prompts
+    the dataset does not contain. Each app writes every request to its own JSONL log
+    (``results/app_logs/<app>.jsonl``), so the truth for a case is read from that log
+    and joined to GreenLit's own case by the question text. GreenLit's safety probes
+    are not copied here — the log is the app's record, not the probe set's.
+
+    A missing log is reported as missing with the path it looked for; nothing is
+    inferred, and no case is counted as correct on silence.
+    """
+    log_dir = results_dir.parent / "app_logs"
+    table: dict[str, Any] = {"available": False, "log_dir": str(log_dir), "apps": []}
+    for app in apps:
+        report_paths = sorted((results_dir / app).glob("run-*.report.json"))
+        log_path = log_dir / f"{app}.jsonl"
+        entry: dict[str, Any] = {
+            "app": app,
+            "log": str(log_path),
+            "available": bool(report_paths and log_path.exists()),
+            "cases": 0,
+            "joined": 0,
+            "unjoined": 0,
+            "correct": 0,
+            "incorrect": 0,
+            "ambiguous": 0,
+        }
+        if not report_paths:
+            entry["message"] = f"no exported report under {results_dir / app}"
+        elif not log_path.exists():
+            entry["message"] = (
+                f"missing {log_path}: start the apps from this harness so each request "
+                "is logged, then run the experiment again"
+            )
+        else:
+            seen: dict[str, set[bool]] = {}
+            for line in log_path.read_text(encoding="utf-8").splitlines():
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                question = record.get("question")
+                if not isinstance(question, str):
+                    continue
+                seen.setdefault(_normalise_question(question), set()).add(
+                    bool(record.get("faulted"))
+                )
+            document = json.loads(report_paths[0].read_text(encoding="utf-8"))
+            for case in document.get("cases") or []:
+                entry["cases"] += 1
+                fired = seen.get(_normalise_question(str(case.get("input") or "")))
+                if not fired:
+                    entry["unjoined"] += 1
+                elif len(fired) > 1:
+                    entry["ambiguous"] += 1
+                elif True in fired:
+                    entry["incorrect"] += 1
+                    entry["joined"] += 1
+                else:
+                    entry["correct"] += 1
+                    entry["joined"] += 1
+            entry["message"] = (
+                f"{entry['joined']} of {entry['cases']} cases joined to the app's log "
+                f"({entry['correct']} correct, {entry['incorrect']} faulted, "
+                f"{entry['ambiguous']} ambiguous, {entry['unjoined']} not logged)"
+            )
+        table["apps"].append(entry)
+        table["available"] = table["available"] or entry["available"]
+    if not table["available"]:
+        table["message"] = (
+            f"no app logs under {log_dir}: per-case truth for {', '.join(apps)} needs "
+            "the apps' own request log, and is not guessed from a missing file"
+        )
+    return table
+
+
 def human_label_table(path: Path) -> dict[str, Any]:
     """Judge-versus-human when labels exist; otherwise say so and stop."""
     if not path.exists():
@@ -547,6 +635,7 @@ def build_tables(results_dir: Path) -> dict[str, Any]:
         },
         "humans": human_label_table(HUMAN_LABELS),
         "judge_human": judge_human_table(results_dir, HUMAN_LABELS),
+        "logged_truth": logged_case_truth(results_dir),
         "runs": runs,
         "uncertain": [
             app for app in manifest.get("apps", []) if app.get("uncertain_truth")
@@ -643,6 +732,15 @@ def render_markdown(tables: dict[str, Any]) -> str:
         lines.append("## Human labels")
         lines.append("")
         lines.append(tables["humans"]["message"] + ".")
+        lines.append("")
+        lines.append("## Per-case truth from the apps' own logs")
+        lines.append("")
+        logged = tables["logged_truth"]
+        if logged.get("message"):
+            lines.append(logged["message"] + ".")
+            lines.append("")
+        for row in logged["apps"]:
+            lines.append(f"- {row['app']}: {row['message']}")
         lines.append("")
         lines.append("## Judge versus human")
         lines.append("")
