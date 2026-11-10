@@ -35,6 +35,7 @@ from app.schemas.preferences import (
     Preferences,
     known_time_zone,
 )
+from app.schemas.sessions import RevokedCount, SessionRead, SessionsResponse
 from app.security.cookies import clear_auth_cookies, is_secure_request, set_auth_cookies
 from app.security.passwords import hash_password, verify_password
 from app.security.rate_limit import RateLimiter, get_rate_limiter
@@ -55,6 +56,13 @@ from app.services.auth import (
     revoke_all_for_user,
     revoke_family,
     revoke_token,
+)
+from app.services.sessions import (
+    family_of,
+    list_sessions,
+    owned_family,
+    revoke_family_of_user,
+    revoke_other_families,
 )
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -334,6 +342,88 @@ def logout(
             db.commit()
     clear_auth_cookies(response, _secure(request, settings))
     return MessageResponse(message="Signed out.")
+
+
+def _current_family(db: Session, request: Request, user: User) -> UUID | None:
+    """The family behind the cookie this request presented, if it is this user's."""
+    raw_token = request.cookies.get(REFRESH_COOKIE)
+    if not raw_token:
+        return None
+    family_id = family_of(db, raw_token)
+    if family_id is None or not owned_family(db, user.id, family_id):
+        return None
+    return family_id
+
+
+@router.get("/sessions", response_model=SessionsResponse)
+def sessions(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> SessionsResponse:
+    """Every device still signed in to this account, current one first class."""
+    current = _current_family(db, request, user)
+    items = [
+        SessionRead(
+            id=session.family_id,
+            device=session.device,
+            created_at=session.created_at,
+            last_activity=session.last_activity,
+            current=session.current,
+        )
+        for session in list_sessions(db, user.id, current)
+    ]
+    return SessionsResponse(items=items, total=len(items))
+
+
+@router.post("/sessions/{session_id}/revoke", response_model=MessageResponse)
+def revoke_session(
+    session_id: UUID,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    user: User = Depends(get_current_user),
+) -> MessageResponse:
+    """Sign out one device. Revoking the current one behaves like Sign out."""
+    current = _current_family(db, request, user)
+    if not revoke_family_of_user(db, user.id, session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
+    audit.record(
+        db,
+        "auth.session_revoked",
+        actor_id=user.id,
+        target_type="session",
+        target_id=str(session_id),
+        request=request,
+    )
+    db.commit()
+    if current == session_id:
+        clear_auth_cookies(response, _secure(request, settings))
+        return MessageResponse(message="Signed out this device.")
+    return MessageResponse(message="That device has been signed out.")
+
+
+@router.post("/sessions/revoke-others", response_model=RevokedCount)
+def revoke_other_sessions(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RevokedCount:
+    """Sign out every other device and keep this one."""
+    current = _current_family(db, request, user)
+    revoked = revoke_other_families(db, user.id, current)
+    audit.record(
+        db,
+        "auth.sessions_revoked_others",
+        actor_id=user.id,
+        target_type="session",
+        target_id=str(current or ""),
+        metadata={"revoked": len(revoked)},
+        request=request,
+    )
+    db.commit()
+    return RevokedCount(revoked=len(revoked))
 
 
 @router.get("/me", response_model=UserRead)
