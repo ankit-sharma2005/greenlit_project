@@ -1,0 +1,4 @@
+# The same rules as the backend, at the width this folder was written at. Ruff uses
+# the nearest config, so `ruff check .` from the repository root applies this file to
+# everything under scripts/ instead of the bare defaults.
+extend = "../backend/pyproject.toml"

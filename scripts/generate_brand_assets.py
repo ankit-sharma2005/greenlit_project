@@ -52,7 +52,7 @@ def draw_mark(size: int = CANVAS) -> Image.Image:
     image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
 
     def s(value: float) -> int:
-        return int(round(value * scale))
+        return round(value * scale)
 
     # Green "G": a thick ring, open above the crossbar that meets the ring on the east.
     ring = Image.new("RGBA", (size, size), (0, 0, 0, 0))
@@ -151,7 +151,8 @@ def main() -> int:
     _write(logo, ROOT / "docs" / "greenlit-logo.png")
 
     for px in (16, 32):
-        _write(mark.resize((px, px), Image.LANCZOS), ROOT / "frontend" / "public" / f"favicon-{px}x{px}.png")
+        icon = ROOT / "frontend" / "public" / f"favicon-{px}x{px}.png"
+        _write(mark.resize((px, px), Image.LANCZOS), icon)
     _write(
         mark.resize((180, 180), Image.LANCZOS),
         ROOT / "frontend" / "public" / "apple-touch-icon.png",
