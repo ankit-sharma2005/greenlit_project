@@ -332,6 +332,145 @@ def _scores(bucket: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _case_label_rows(results_dir: Path) -> list[dict[str, str]]:
+    """Every judge label the runner saved, one row per exported case."""
+    rows: list[dict[str, str]] = []
+    for path in sorted(results_dir.glob("*/run-*.cases.csv")):
+        with path.open(encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                rows.append(
+                    {
+                        "app": path.parent.name,
+                        "question_id": (row.get("row_index") or "").strip(),
+                        "judge_label": (row.get("judge_label") or "").strip().lower(),
+                    }
+                )
+    return rows
+
+
+def _human_labels(path: Path) -> dict[str, dict[str, str]]:
+    """``{rater: {question_id: label}}`` — an ``unsure`` label is kept as itself."""
+    labels: dict[str, dict[str, str]] = {}
+    with path.open(encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            rater = (row.get("rater") or "").strip()
+            question = (row.get("question_id") or "").strip()
+            label = (row.get("label") or "").strip().lower()
+            if rater and question and label in {"pass", "fail", "unsure"}:
+                labels.setdefault(rater, {})[question] = label
+    return labels
+
+
+def judge_human_table(results_dir: Path, labels_path: Path) -> dict[str, Any]:
+    """How often the judge's own per-case label agrees with each human rater.
+
+    ``fail`` is the positive class, because the expensive mistake is a bad case
+    the judge lets through: recall is the share of human-failed cases the judge
+    also failed. ``unsure`` is its own answer on both sides and is never folded
+    into pass or fail. Every judged case counts once, so repeats of a question
+    are repeated observations; ``n_questions`` says how many distinct questions
+    stand behind ``n``.
+    """
+    cases = _case_label_rows(results_dir)
+    if not cases:
+        return {
+            "available": False,
+            "n_cases": 0,
+            "message": (
+                "no per-case judge labels in this folder: the runner writes "
+                "run-N.cases.csv, so re-run the experiment with this harness"
+            ),
+        }
+    questions = {case["question_id"] for case in cases}
+    if not labels_path.exists():
+        return {
+            "available": False,
+            "n_cases": len(cases),
+            "n_questions": len(questions),
+            "message": (
+                "no human labels yet: write a blind sheet with "
+                "analysis/make_label_sheet.py, fill data/human_labels.csv "
+                "(question_id, rater, label) and run this again"
+            ),
+        }
+    labels = _human_labels(labels_path)
+    raters: list[dict[str, Any]] = []
+    for rater in sorted(labels):
+        cell = {
+            "judge_pass_human_pass": 0,
+            "judge_pass_human_fail": 0,
+            "judge_fail_human_pass": 0,
+            "judge_fail_human_fail": 0,
+        }
+        judge_unsure = human_unsure = unjudged = unlabelled = 0
+        pairs: list[tuple[str, str]] = []
+        for case in cases:
+            judge_label = case["judge_label"]
+            human_label = labels[rater].get(case["question_id"], "")
+            if not judge_label:
+                unjudged += 1
+                continue
+            if judge_label == "unsure":
+                judge_unsure += 1
+                continue
+            if human_label == "unsure":
+                human_unsure += 1
+                continue
+            if human_label not in {"pass", "fail"}:
+                unlabelled += 1
+                continue
+            cell[f"judge_{judge_label}_human_{human_label}"] += 1
+            pairs.append((judge_label, human_label))
+        bucket = {
+            "tp": cell["judge_fail_human_fail"],
+            "fp": cell["judge_fail_human_pass"],
+            "fn": cell["judge_pass_human_fail"],
+            "tn": cell["judge_pass_human_pass"],
+        }
+        scores = _scores(bucket)
+        n = scores["n"]
+        accuracy = (bucket["tp"] + bucket["tn"]) / n if n else None
+        both_sides = (
+            n >= 2
+            and len({a for a, _ in pairs}) == 2
+            and len({b for _, b in pairs}) == 2
+        )
+        raters.append(
+            {
+                "rater": rater,
+                "n": n,
+                "judge_unsure": judge_unsure,
+                "human_unsure": human_unsure,
+                "unjudged": unjudged,
+                "unlabelled": unlabelled,
+                **bucket,
+                "accuracy": accuracy,
+                "precision": scores["precision"],
+                "recall": scores["recall"],
+                "f1": scores["f1"],
+                "kappa": (
+                    float(
+                        cohen_kappa_score([a for a, _ in pairs], [b for _, b in pairs])
+                    )
+                    if both_sides
+                    else None
+                ),
+                "warning": scores["warning"],
+            }
+        )
+    return {
+        "available": True,
+        "n_cases": len(cases),
+        "n_questions": len(questions),
+        "positive_class": "fail",
+        "raters": raters,
+        "message": (
+            f"judge versus human over {len(cases)} judged cases "
+            f"({len(questions)} distinct questions), per rater, fail as the positive class"
+        ),
+    }
+
+
 def human_label_table(path: Path) -> dict[str, Any]:
     """Judge-versus-human when labels exist; otherwise say so and stop."""
     if not path.exists():
@@ -348,8 +487,8 @@ def human_label_table(path: Path) -> dict[str, Any]:
             "available": True,
             "n_labels": len(rows),
             "message": (
-                "one rater only: rater-versus-rater kappa needs two, and GreenLit's export "
-                "carries no per-case judge label to compare against"
+                "one rater only: rater-versus-rater kappa needs two; the judge's own "
+                "per-case labels are compared under 'judge versus human'"
             ),
         }
     names = sorted(raters)[:2]
@@ -369,8 +508,8 @@ def human_label_table(path: Path) -> dict[str, Any]:
         "raters": names,
         "rater_kappa": float(cohen_kappa_score(first, second)),
         "message": (
-            "judge-versus-human is not computable from the current export: it has no "
-            "per-case judge label, only per-run metrics"
+            "rater-versus-rater kappa over the shared cases; the judge's own per-case "
+            "labels are compared under 'judge versus human'"
         ),
     }
 
@@ -399,6 +538,7 @@ def build_tables(results_dir: Path) -> dict[str, Any]:
             "false_go_rate": bootstrap(runs, _false_go_metric),
         },
         "humans": human_label_table(HUMAN_LABELS),
+        "judge_human": judge_human_table(results_dir, HUMAN_LABELS),
         "runs": runs,
         "uncertain": [
             app for app in manifest.get("apps", []) if app.get("uncertain_truth")
@@ -496,6 +636,35 @@ def render_markdown(tables: dict[str, Any]) -> str:
         lines.append("")
         lines.append(tables["humans"]["message"] + ".")
         lines.append("")
+        lines.append("## Judge versus human")
+        lines.append("")
+        judge_human = tables["judge_human"]
+        lines.append(judge_human["message"] + ".")
+        if judge_human.get("raters"):
+            lines.append("")
+            lines.append(
+                "| rater | n | unsure (judge) | unsure (human) | TP | FP | FN | TN | "
+                "accuracy | precision | recall | F1 | kappa |"
+            )
+            lines.append(
+                "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+            )
+            for row in judge_human["raters"]:
+                lines.append(
+                    f"| {row['rater']} | {row['n']} | {row['judge_unsure']} | "
+                    f"{row['human_unsure']} | {row['tp']} | {row['fp']} | {row['fn']} | "
+                    f"{row['tn']} | {_fmt(row['accuracy'])} | {_fmt(row['precision'])} | "
+                    f"{_fmt(row['recall'])} | {_fmt(row['f1'])} | {_fmt(row['kappa'])} |"
+                )
+            lines.append("")
+            lines.append(
+                "`fail` is the positive class: precision is the share of the judge's fails "
+                "a human also failed, recall the share of human fails the judge caught. "
+                "`unsure` on either side is counted in its own column and never folded "
+                "into pass or fail, and the cases the judge never scored are excluded "
+                "from n rather than counted as passes."
+            )
+        lines.append("")
     else:
         lines.append("No completed runs with a verdict were found in this folder.")
         lines.append("")
@@ -560,6 +729,51 @@ def write_outputs(tables: dict[str, Any], results_dir: Path, out_dir: Path) -> N
                     interval["high"],
                     interval.get("resamples", ""),
                     interval.get("seed", ""),
+                ]
+            )
+    with (out_dir / "judge_human.csv").open(
+        "w", encoding="utf-8", newline=""
+    ) as handle:
+        writer = csv.writer(handle, lineterminator="\n")
+        writer.writerow(
+            [
+                "rater",
+                "n",
+                "judge_unsure",
+                "human_unsure",
+                "unjudged",
+                "unlabelled",
+                "tp",
+                "fp",
+                "fn",
+                "tn",
+                "accuracy",
+                "precision",
+                "recall",
+                "f1",
+                "kappa",
+                "positive_class",
+            ]
+        )
+        for row in tables["judge_human"].get("raters", []):
+            writer.writerow(
+                [
+                    row["rater"],
+                    row["n"],
+                    row["judge_unsure"],
+                    row["human_unsure"],
+                    row["unjudged"],
+                    row["unlabelled"],
+                    row["tp"],
+                    row["fp"],
+                    row["fn"],
+                    row["tn"],
+                    row["accuracy"],
+                    row["precision"],
+                    row["recall"],
+                    row["f1"],
+                    row["kappa"],
+                    tables["judge_human"].get("positive_class", ""),
                 ]
             )
     (out_dir / "summary.md").write_text(render_markdown(tables), encoding="utf-8")
