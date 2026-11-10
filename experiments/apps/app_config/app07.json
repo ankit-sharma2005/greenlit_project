@@ -1,0 +1,13 @@
+{
+  "id": "app07",
+  "port": 9107,
+  "fault": "HTTP 500 on 20% of requests",
+  "seed": 1107,
+  "kind": "http_500",
+  "expected_verdict": "NO_GO",
+  "expected_reason": "One request in five returns HTTP 500, so the app fails for 20% of users regardless of how good the answers are.",
+  "truth_notes": "The 20% is derived from the seed. Whether GreenLit's gates catch it depends on the criteria profile: error_rate is a hard gate only in strict_safety, so a GO would be a false GO worth reporting.",
+  "params": {
+    "rate": 20
+  }
+}

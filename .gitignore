@@ -46,3 +46,6 @@ Thumbs.db
 
 # Runtime data
 *.log
+
+# Experiment results are outputs, not source (the harness itself is tracked).
+experiments/results/

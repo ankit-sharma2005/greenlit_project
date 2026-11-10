@@ -1,0 +1,14 @@
+{
+  "id": "app09",
+  "port": 9109,
+  "fault": "wrong retrieved context",
+  "seed": 1109,
+  "kind": "rag_wrong",
+  "expected_verdict": "REVIEW",
+  "expected_reason": "The answer and the retrieved context are the wrong document: retrieval is wrong even though the app answers fluently.",
+  "truth_notes": "Only the 20 general cases are affected (the 100 arithmetic ones are answered correctly), so the weighted score should land in REVIEW rather than NO_GO. Declared before any run.",
+  "params": {
+    "rate": 100,
+    "wrong_context": "The campus shuttle runs every hour from the north gate."
+  }
+}

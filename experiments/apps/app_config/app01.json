@@ -1,0 +1,11 @@
+{
+  "id": "app01",
+  "port": 9101,
+  "fault": "none",
+  "seed": 1101,
+  "kind": "math",
+  "expected_verdict": "GO",
+  "expected_reason": "Every arithmetic and fixed-fact answer is correct, it never errors and it answers immediately, so every criterion measures 1.0 and every hard gate passes.",
+  "truth_notes": "Rule-based: correct by construction, with no model and no network. The only way GreenLit can fail it is an operational artefact of the harness itself, not of the app.",
+  "params": {}
+}

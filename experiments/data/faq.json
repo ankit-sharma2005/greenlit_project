@@ -1,0 +1,165 @@
+{
+  "note": "Fixed facts the controlled apps answer from. No network, no scraping.",
+  "entries": [
+    {
+      "question": "What time does the library open?",
+      "answer": "The library opens at 8am.",
+      "key_facts": [
+        "8am"
+      ],
+      "context": "The university library opens at 8am and closes at 10pm on weekdays."
+    },
+    {
+      "question": "Where is the student health centre?",
+      "answer": "The student health centre is in Building C.",
+      "key_facts": [
+        "Building C"
+      ],
+      "context": "The student health centre is located in Building C, next to the pharmacy."
+    },
+    {
+      "question": "How do I reset my campus password?",
+      "answer": "Use the self-service portal at password.example.edu.",
+      "key_facts": [
+        "password.example.edu"
+      ],
+      "context": "Campus passwords are reset through the self-service portal at password.example.edu."
+    },
+    {
+      "question": "When does the autumn semester start?",
+      "answer": "The autumn semester starts on 2 September.",
+      "key_facts": [
+        "2 September"
+      ],
+      "context": "Teaching for the autumn semester starts on 2 September and ends on 20 December."
+    },
+    {
+      "question": "What is the deadline for tuition payment?",
+      "answer": "Tuition is due on 15 August.",
+      "key_facts": [
+        "15 August"
+      ],
+      "context": "Tuition fees must be paid by 15 August for the autumn semester."
+    },
+    {
+      "question": "How many books can I borrow at once?",
+      "answer": "You can borrow up to ten books.",
+      "key_facts": [
+        "ten"
+      ],
+      "context": "Students may borrow up to ten books at a time for three weeks."
+    },
+    {
+      "question": "Who do I contact about a broken laptop?",
+      "answer": "Contact the IT service desk in Building A.",
+      "key_facts": [
+        "IT service desk"
+      ],
+      "context": "Hardware problems are handled by the IT service desk in Building A."
+    },
+    {
+      "question": "Is there a shuttle between campuses?",
+      "answer": "Yes, the shuttle runs every 20 minutes.",
+      "key_facts": [
+        "20 minutes"
+      ],
+      "context": "A free shuttle bus connects the two campuses every 20 minutes from 7am to 9pm."
+    },
+    {
+      "question": "What is the maximum class size?",
+      "answer": "Seminars are capped at 24 students.",
+      "key_facts": [
+        "24"
+      ],
+      "context": "Seminars are capped at 24 students; lectures have no cap."
+    },
+    {
+      "question": "How do I apply for a scholarship?",
+      "answer": "Apply through the scholarships office by 30 April.",
+      "key_facts": [
+        "30 April"
+      ],
+      "context": "Scholarship applications go to the scholarships office and close on 30 April."
+    },
+    {
+      "question": "Where can I print my assignments?",
+      "answer": "Printers are on the ground floor of the library.",
+      "key_facts": [
+        "ground floor"
+      ],
+      "context": "Student printers are on the ground floor of the library and in Building B."
+    },
+    {
+      "question": "Does the cafeteria serve vegetarian food?",
+      "answer": "Yes, the cafeteria has a vegetarian counter.",
+      "key_facts": [
+        "vegetarian"
+      ],
+      "context": "The main cafeteria has a vegetarian counter open from 11am to 3pm."
+    },
+    {
+      "question": "What is the exam resit policy?",
+      "answer": "One resit is allowed per module.",
+      "key_facts": [
+        "one resit"
+      ],
+      "context": "Students may resit a failed module once, in the resit period in August."
+    },
+    {
+      "question": "How do I join the gym?",
+      "answer": "Sign up at the sports centre reception.",
+      "key_facts": [
+        "sports centre"
+      ],
+      "context": "Gym membership is arranged at the sports centre reception; student rate is 15 per month."
+    },
+    {
+      "question": "Which email address does the registrar use?",
+      "answer": "The registrar writes from registrar@example.edu.",
+      "key_facts": [
+        "registrar@example.edu"
+      ],
+      "context": "Official letters come from the registrar at registrar@example.edu."
+    },
+    {
+      "question": "What are the library weekend hours?",
+      "answer": "The library is open 10am to 6pm at weekends.",
+      "key_facts": [
+        "10am to 6pm"
+      ],
+      "context": "At weekends the library opens at 10am and closes at 6pm."
+    },
+    {
+      "question": "How do I appeal a grade?",
+      "answer": "Submit a grade appeal within 14 days.",
+      "key_facts": [
+        "14 days"
+      ],
+      "context": "Grade appeals must be submitted to the examinations office within 14 days."
+    },
+    {
+      "question": "Is there childcare on campus?",
+      "answer": "A campus nursery takes children from age two.",
+      "key_facts": [
+        "nursery"
+      ],
+      "context": "The campus nursery accepts children from age two and is open 7:30am to 6pm."
+    },
+    {
+      "question": "How do I get a student ID card?",
+      "answer": "Collect your ID card from the library desk.",
+      "key_facts": [
+        "library desk"
+      ],
+      "context": "Student ID cards are printed at the library desk during the first two weeks."
+    },
+    {
+      "question": "What is the counselling appointment wait?",
+      "answer": "Counselling appointments are usually within five working days.",
+      "key_facts": [
+        "five working days"
+      ],
+      "context": "Counselling requests are triaged within 24 hours; routine appointments are offered within five working days."
+    }
+  ]
+}

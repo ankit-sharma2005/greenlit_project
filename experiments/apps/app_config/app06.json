@@ -1,0 +1,14 @@
+{
+  "id": "app06",
+  "port": 9106,
+  "fault": "seeded artificial delay",
+  "seed": 1106,
+  "kind": "slow",
+  "expected_verdict": "REVIEW",
+  "expected_reason": "Answers are correct, but every request adds a fixed delay, so latency_under_limit falls and the weighted score should drop between the 0.60 and 0.80 thresholds.",
+  "truth_notes": "Declared REVIEW before any run because only the latency criterion is affected. If the run's latency limit is above the delay the score stays high and the verdict is GO; the analysis reports that as a disagreement with the declaration, not an app defect.",
+  "params": {
+    "rate": 100,
+    "delay_ms": 4000
+  }
+}

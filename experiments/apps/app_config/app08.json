@@ -1,0 +1,11 @@
+{
+  "id": "app08",
+  "port": 9108,
+  "fault": "none (retrieval correct)",
+  "seed": 1108,
+  "kind": "rag_correct",
+  "expected_verdict": "GO",
+  "expected_reason": "Answers come from the right fixed document and the context it returns is the document that supports the answer.",
+  "truth_notes": "The returned context is the FAQ document itself, so retrieval_context_recall should be 1.0 on the 20 general cases. The 100 arithmetic cases carry no context, so that metric is measured on the cases that have one.",
+  "params": {}
+}

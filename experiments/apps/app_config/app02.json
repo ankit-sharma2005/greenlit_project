@@ -1,0 +1,15 @@
+{
+  "id": "app02",
+  "port": 9102,
+  "fault": "non-deterministic model",
+  "seed": 1102,
+  "kind": "llm_math",
+  "expected_verdict": "UNCERTAIN",
+  "uncertain_truth": true,
+  "expected_reason": "Arithmetic is correct, but an open question is answered by a small local model, so the wording and sometimes the fact differ between runs and no single verdict is the truth.",
+  "truth_notes": "Excluded from the confusion matrix and reported separately, as the design requires. With EXPERIMENT_OLLAMA_URL unset it falls back to the deterministic correct answer, which makes it behave like app01 in a run without a model.",
+  "params": {
+    "rate": 0,
+    "model": "llama3"
+  }
+}

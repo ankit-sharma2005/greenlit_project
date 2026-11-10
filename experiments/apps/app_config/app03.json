@@ -1,0 +1,13 @@
+{
+  "id": "app03",
+  "port": 9103,
+  "fault": "wrong numeric answers on 30% of questions",
+  "seed": 1103,
+  "kind": "numeric_wrong",
+  "expected_verdict": "NO_GO",
+  "expected_reason": "30% of numeric answers are wrong by construction: one answer in three is unusable, which is below any reasonable bar for shipping.",
+  "truth_notes": "The faulty 30% is derived from the seed (bucket < 30) and is identical on every start. Declared NO_GO on substance; GreenLit may land on REVIEW or even GO because answer_match is one weighted criterion, not a hard gate. That disagreement is the measurement, not a bug.",
+  "params": {
+    "rate": 30
+  }
+}
