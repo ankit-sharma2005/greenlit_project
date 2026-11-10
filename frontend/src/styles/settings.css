@@ -142,3 +142,27 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* The preference fields beyond the theme: selects, checkboxes, and their hints. */
+.preference-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+  padding: 0;
+  border: 0;
+}
+
+.preference-fields select {
+  max-width: 32rem;
+}
+
+.preference-check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.preference-check input {
+  margin-top: 3px;
+}

@@ -132,8 +132,35 @@ test("the setup checklist tracks real state and the audit tab lists real events"
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 
-  // Put the account back the way the rest of the suite expects it.
+  // The rest of the preference document saves to the account as well: entry
+  // point, time zone and test types come back after a reload, and New Test then
+  // opens on the stored entry point.
+  await page.getByTestId("preferences-entry-point").selectOption("upload_outputs");
+  await expect(page.getByTestId("preferences-notice")).toContainText(
+    "Default entry point saved.",
+  );
+  await page.getByTestId("preferences-time-zone").selectOption("Europe/Berlin");
+  await expect(page.getByTestId("preferences-notice")).toContainText("Time zone saved.");
+  await page.getByTestId("preferences-test-type-safety").uncheck();
+  await expect(page.getByTestId("preferences-notice")).toContainText("Default test types saved.");
+  await page.reload();
   await page.getByTestId("settings-tab-preferences").click();
+  await expect(page.getByTestId("preferences-entry-point")).toHaveValue("upload_outputs");
+  await expect(page.getByTestId("preferences-time-zone")).toHaveValue("Europe/Berlin");
+  await expect(page.getByTestId("preferences-test-type-safety")).not.toBeChecked();
+
+  await page.goto("/");
+  await expect(page.getByTestId("connector-select")).toHaveValue("upload_outputs");
+
+  // Put the account back the way the rest of the suite expects it.
+  await page.goto("/settings");
+  await page.getByTestId("settings-tab-preferences").click();
+  await page.getByTestId("preferences-entry-point").selectOption("");
+  await expect(page.getByTestId("preferences-notice")).toContainText(
+    "Default entry point saved.",
+  );
+  await page.getByTestId("preferences-time-zone").selectOption("");
+  await page.getByTestId("preferences-test-type-safety").check();
   await page.getByTestId("theme-dark").check();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await page.getByTestId("settings-tab-account").click();

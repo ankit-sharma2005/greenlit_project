@@ -3,15 +3,18 @@ import { useNavigate } from "react-router-dom";
 
 import { useAuth } from "../auth/authContext";
 import { ApiError } from "../lib/api";
+import { formatDate as formatInZone } from "../lib/dates";
+import { useAccountPreferences } from "../lib/useAccountPreferences";
 import { Button } from "./Button";
 import "../styles/settings.css";
 
 const MAX_NAME_LENGTH = 120;
 
-function formatDate(value: string): string {
+function formatDate(value: string, timeZone?: string | null): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Unknown";
-  return date.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+  // The zone comes from the account; with none chosen this is the browser's own.
+  return formatInZone(value, timeZone);
 }
 
 /**
@@ -31,6 +34,9 @@ export function AccountPanel() {
   const [signingOut, setSigningOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // The creation date is shown in the account's chosen zone, when there is one.
+  const preferences = useAccountPreferences();
+  const timeZone = preferences?.time_zone ?? null;
 
   // Keep the field in step when the shared user changes (a save, or a refresh).
   useEffect(() => {
@@ -135,7 +141,7 @@ export function AccountPanel() {
         </div>
         <div>
           <dt>Member since</dt>
-          <dd data-testid="account-created">{formatDate(user.created_at)}</dd>
+          <dd data-testid="account-created">{formatDate(user.created_at, timeZone)}</dd>
         </div>
         <div>
           <dt>Account ID</dt>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "../components/Button";
 import { DemoPanel } from "../components/DemoPanel";
@@ -610,7 +610,37 @@ export function NewTestPage() {
     };
   }, [runId, runState]);
 
+  // A stored default fills the form once, and never overwrites a choice the user
+  // has already made here: the refs record both kinds of decision.
+  const connectorTouched = useRef(false);
+  const testTypesTouched = useRef(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetchPreferences()
+      .then((stored) => {
+        if (cancelled) return;
+        if (stored.entry_point && !connectorTouched.current) {
+          setConnector(stored.entry_point);
+        }
+        const chosen = stored.test_types ?? [];
+        if (chosen.length > 0 && !testTypesTouched.current) {
+          setTestTypes({
+            quality: chosen.includes("quality"),
+            safety: chosen.includes("safety"),
+            operations: chosen.includes("operations"),
+          });
+        }
+      })
+      .catch(() => {
+        /* no stored default behaves exactly like the built-in one */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleConnectorChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    connectorTouched.current = true;
     setConnector(e.target.value as EntryPoint);
     setUrl("");
     setCurlNotice(null);
@@ -620,6 +650,7 @@ export function NewTestPage() {
   };
 
   const toggleTestType = (key: keyof TestTypes) => {
+    testTypesTouched.current = true;
     setTestTypes((previous) => ({ ...previous, [key]: !previous[key] }));
   };
 

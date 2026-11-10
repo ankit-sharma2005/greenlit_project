@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import { AnalystPanel } from "./AnalystPanel";
 import { BaselinePanel } from "./BaselinePanel";
 import { Button } from "./Button";
@@ -9,6 +11,7 @@ import { SafetySection } from "./SafetySection";
 import { RunCharts } from "./charts/RunCharts";
 import { Spinner } from "./Spinner";
 import { INTERRUPTED_NOTE, isTerminal, type Run } from "../lib/runs";
+import { useAccountPreferences } from "../lib/useAccountPreferences";
 import "../styles/results.css";
 
 const VERDICT_LABEL: Record<string, string> = {
@@ -41,6 +44,34 @@ export interface RunProgressPanelProps {
 }
 
 /** Live progress while the worker runs, then the verdict with its evidence. */
+/** How much of a long answer the run view shows before the "Show more" control. */
+export const ANSWER_PREVIEW_CHARS = 280;
+
+/**
+ * One answer, shortened unless the account asked for full answers.
+ *
+ * The cut is at a stated length and always announced by a control, so a long
+ * answer is never silently presented as a short one.
+ */
+export function AnswerCell({ answer, full }: { answer: string | null; full: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const text = answer ?? "";
+  if (!text) return <>—</>;
+  if (full || text.length <= ANSWER_PREVIEW_CHARS) return <>{text}</>;
+  return (
+    <span data-testid="answer-cell">
+      {expanded ? text : `${text.slice(0, ANSWER_PREVIEW_CHARS)}…`}{" "}
+      <Button
+        variant="ghost"
+        onClick={() => setExpanded((current) => !current)}
+        data-testid="answer-show-more"
+      >
+        {expanded ? "Show less" : "Show more"}
+      </Button>
+    </span>
+  );
+}
+
 export function RunProgressPanel({ run, onCancel, cancelling = false }: RunProgressPanelProps) {
   const active = !isTerminal(run.state);
   const total = run.progress.items_total;
@@ -141,6 +172,7 @@ export function RunProgressPanel({ run, onCancel, cancelling = false }: RunProgr
 }
 
 function RunVerdict({ run }: { run: Run }) {
+  const showFullAnswers = useAccountPreferences()?.show_full_answers === true;
   return (
     <>
       <section
@@ -299,7 +331,9 @@ function RunVerdict({ run }: { run: Run }) {
               {run.failed_cases.map((failure) => (
                 <tr key={`${failure.input}-${failure.reason}`}>
                   <td>{failure.input}</td>
-                  <td>{failure.actual || "—"}</td>
+                  <td>
+                    <AnswerCell answer={failure.actual} full={showFullAnswers} />
+                  </td>
                   <td>{failure.error_summary || failure.reason}</td>
                   <td data-testid="failed-case-target">
                     {failure.http_status ? `HTTP ${failure.http_status} · ` : ""}
