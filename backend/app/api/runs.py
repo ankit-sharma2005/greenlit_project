@@ -31,6 +31,7 @@ from app.schemas.runs import (
     RunPermissionRead,
     RunProgressRead,
     RunRead,
+    RunSummaryRead,
 )
 from app.services.audit import record
 from app.services.generation import ChatFn, get_chat_fn
@@ -62,6 +63,7 @@ from app.services.run_service import (
     create_run_from_request,
     get_enqueue,
 )
+from app.services.run_summary import build_run_summary
 from app.services.target_error import redact_snippet
 from app.services.untrusted import detect_judge_manipulation
 
@@ -289,6 +291,38 @@ def _operations_read(
     )
 
 
+def _summary_read(
+    run: Run,
+    snapshot: dict[str, Any],
+    metrics: list[MetricOut],
+    cases_total: int,
+) -> RunSummaryRead | None:
+    """The plain-words block: the same builder the HTML export uses."""
+    if not run.verdict and not run.verdict_reason:
+        return None
+    if run.state in ("queued", "running", "cancelling"):
+        return None
+    recorded = snapshot.get("decision")
+    decision = dict(recorded) if isinstance(recorded, dict) else None
+    judge_meta = snapshot.get("judge")
+    judge: dict[str, Any] | None = None
+    if isinstance(judge_meta, dict):
+        judge = {
+            "unavailable_items": judge_meta.get("judge_unavailable_items") or 0,
+            "low_confidence_items": judge_meta.get("judge_low_confidence_items") or 0,
+        }
+    payload = build_run_summary(
+        verdict=run.verdict,
+        score=run.score,
+        decision=decision,
+        metrics=[metric.model_dump() for metric in metrics],
+        judge=judge,
+        cases_total=cases_total,
+        state=run.state,
+    )
+    return RunSummaryRead.model_validate(payload)
+
+
 def _run_read(
     db: Session,
     run: Run,
@@ -373,6 +407,7 @@ def _run_read(
             if operations_payload is not None
             else None
         ),
+        summary=(_summary_read(run, snapshot, metrics, len(items or [])) if detail else None),
     )
 
 

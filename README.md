@@ -346,6 +346,13 @@ Three **Export** buttons download the same result as HTML (printable and self-co
 JSON (the full result) or CSV (one row per case). The export never contains a secret:
 header values are redacted and provider keys never enter it.
 
+Each finished run also carries an **In plain words** block, on the page and at the top of
+the HTML export: the verdict in one sentence with its score and thresholds, the reasons
+the decision engine recorded, the weakest measured metrics, every metric that was **not**
+measured (named, never printed as a zero), safety as counted cases ("no leak in 0 of 8
+attack cases"), and a short "what to try next" list. It is built from templates only — no
+model, no network — in `backend/app/services/run_summary.py`, which both surfaces share.
+
 ## Quality checks
 
 ```bash

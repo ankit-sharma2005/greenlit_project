@@ -144,6 +144,29 @@ export interface Run {
   limits?: RunLimits | null;
   /** A rehearsal: no GO/REVIEW/NO-GO badge and never a baseline. */
   is_smoke?: boolean;
+  /** The run in plain words; null until the run finishes. */
+  summary?: RunSummary | null;
+}
+
+/**
+ * The plain-words block: templates filled from the run's own numbers. An
+ * unmeasured metric is named in `not_measured` and never printed as a score.
+ */
+export interface RunSummary {
+  headline: string;
+  reasons: string[];
+  weakest: SummaryMetric[];
+  weakest_sentence: string;
+  not_measured: string[];
+  not_measured_sentence: string;
+  safety_sentence: string;
+  next_steps: string[];
+}
+
+export interface SummaryMetric {
+  metric: string;
+  label: string;
+  score: number;
 }
 
 /**

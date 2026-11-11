@@ -1468,6 +1468,10 @@ def execute_run(
                         # about the app: keep the evidence, drop the verdict word.
                         final_verdict = None
                         reason = f"Smoke run, not a verdict. {reason}"
+                    # The decision record travels with the run so the plain-words
+                    # summary (and the HTML export) can name the rule that applied
+                    # instead of re-deriving it from the numbers.
+                    snapshot_update["decision"] = decision.to_dict()
                     update_run(
                         session,
                         run,
@@ -1480,6 +1484,7 @@ def execute_run(
                         or limit_stop is not None
                         or is_smoke,
                         operations=_operations_block(session, snapshot, finished),
+                        settings_snapshot=snapshot_update,
                         completed_at=utcnow(),
                     )
                     # Regression is recorded as the run finishes, so the card and

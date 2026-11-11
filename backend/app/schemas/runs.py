@@ -343,6 +343,27 @@ class OperationsRead(BaseModel):
     cost_estimate: float | None = None
 
 
+class SummaryMetricRead(BaseModel):
+    """One weak measured metric, as the summary lists it."""
+
+    metric: str
+    label: str
+    score: float
+
+
+class RunSummaryRead(BaseModel):
+    """The finished run in plain words: templates only, no model, no network."""
+
+    headline: str
+    reasons: list[str] = Field(default_factory=list)
+    weakest: list[SummaryMetricRead] = Field(default_factory=list)
+    weakest_sentence: str
+    not_measured: list[str] = Field(default_factory=list)
+    not_measured_sentence: str
+    safety_sentence: str
+    next_steps: list[str] = Field(default_factory=list)
+
+
 class RunRead(BaseModel):
     id: UUID
     name: str
@@ -374,6 +395,8 @@ class RunRead(BaseModel):
     limits: RunLimitsRead | None = None
     # A smoke run is labelled "Smoke run, not a verdict" and never a baseline.
     is_smoke: bool = False
+    # The same block the HTML export prints; null on a run that has not finished.
+    summary: RunSummaryRead | None = None
 
 
 class RunListResponse(BaseModel):

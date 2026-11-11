@@ -7,6 +7,7 @@ import { JudgeManipulationNotice } from "./JudgeManipulationNotice";
 import { OperationsPanel } from "./OperationsPanel";
 import { ProgressBar } from "./ProgressBar";
 import { ReportExport } from "./ReportExport";
+import { RunSummary } from "./RunSummary";
 import { SafetySection } from "./SafetySection";
 import { RunCharts } from "./charts/RunCharts";
 import { Spinner } from "./Spinner";
@@ -266,6 +267,8 @@ function RunVerdict({ run }: { run: Run }) {
       <BaselinePanel run={run} />
 
       <OperationsPanel operations={run.operations} />
+
+      {run.summary ? <RunSummary summary={run.summary} /> : null}
 
       <SafetySection metrics={run.metrics} />
 

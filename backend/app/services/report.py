@@ -38,6 +38,7 @@ from app.services.operations import (
     samples_from_items,
 )
 from app.services.run_repository import get_metric_results, list_run_items
+from app.services.run_summary import build_run_summary
 from app.services.target_error import redact_snippet
 
 REPORT_VERSION = "1.0"
@@ -520,7 +521,37 @@ def build_report(session: Session, run: Run) -> dict[str, Any]:
         "judge_skipped_reason": snapshot.get("judge_skipped_reason"),
         "regression": _regression_block(snapshot),
         "operations": _operations_block(session, run, items, snapshot),
+        "summary": _summary_block(run, snapshot, metrics, judged, cases),
     }
+
+
+def _summary_block(
+    run: Run,
+    snapshot: dict[str, Any],
+    metrics: list[dict[str, Any]],
+    judge: dict[str, Any] | None,
+    cases: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """The same plain-words block the run page shows, built once in run_summary."""
+    if run.state in ("queued", "running", "cancelling"):
+        return None
+    recorded = snapshot.get("decision")
+    decision = dict(recorded) if isinstance(recorded, dict) else None
+    summary_judge: dict[str, Any] | None = None
+    if judge is not None:
+        summary_judge = {
+            "unavailable_items": judge.get("unavailable_items") or 0,
+            "low_confidence_items": judge.get("low_confidence_items") or 0,
+        }
+    return build_run_summary(
+        verdict=run.verdict,
+        score=run.score,
+        decision=decision,
+        metrics=metrics,
+        judge=summary_judge,
+        cases_total=len(cases),
+        state=run.state,
+    )
 
 
 def _operations_block(
@@ -648,6 +679,37 @@ def render_csv(document: dict[str, Any]) -> str:
     return buffer.getvalue()
 
 
+def _summary_html(summary: dict[str, Any]) -> str:
+    """The run in plain words, as its own printable block."""
+    parts: list[str] = ['<h2>In plain words</h2><div data-testid="report-summary">']
+    parts.append(
+        f'<p class="big" data-testid="report-summary-headline">{_esc(summary.get("headline"))}</p>'
+    )
+    reasons = summary.get("reasons") or []
+    if reasons:
+        parts.append("<h3>Why</h3><ul>")
+        for reason in reasons:
+            parts.append(f"<li>{_esc(reason)}</li>")
+        parts.append("</ul>")
+    parts.append(
+        f'<p data-testid="report-summary-weakest">{_esc(summary.get("weakest_sentence"))}</p>'
+    )
+    parts.append(
+        f'<p data-testid="report-summary-safety">{_esc(summary.get("safety_sentence"))}</p>'
+    )
+    not_measured = summary.get("not_measured_sentence")
+    if not_measured:
+        parts.append(f'<p data-testid="report-summary-not-measured">{_esc(not_measured)}</p>')
+    steps = summary.get("next_steps") or []
+    if steps:
+        parts.append("<h3>What to try next</h3><ol>")
+        for step in steps:
+            parts.append(f"<li>{_esc(step)}</li>")
+        parts.append("</ol>")
+    parts.append("</div>")
+    return "".join(parts)
+
+
 def _format_number(value: object) -> str:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return "—"
@@ -739,6 +801,11 @@ def render_html(document: dict[str, Any]) -> str:
 <p>{_esc(verdict["reason"])}</p>
 """
     )
+
+    # The plain-words block (L1): the same text the run page shows.
+    summary = document.get("summary")
+    if isinstance(summary, dict):
+        parts.append(_summary_html(summary))
 
     # The settings snapshot and where the run pointed.
     parts.append("<h2>Test setup</h2><dl>")

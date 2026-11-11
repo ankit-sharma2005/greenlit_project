@@ -1077,3 +1077,64 @@ start, so no Playwright spec ran).
   trail.
 - **The browser path is unproven**: `e2e-session-refresh.spec.ts` was re-run only when
   Docker starts, and no two-context sessions spec has ever executed.
+## M18 — The run in plain words (`feat(report): plain-language run summary`)
+
+### What it says
+
+One block, **In plain words**, on every finished run's page and at the top of the HTML
+export:
+
+1. **Headline** — one sentence with the verdict, the weighted score and the two thresholds
+   ("GreenLit says REVIEW: the weighted score was 0.72, between the 0.60 review and 0.80
+   go thresholds").
+2. **Why** — the conditions the decision engine itself recorded: which hard gate failed and
+   the metric's own explanation, whether the judge was unsure or unavailable and for how
+   many cases, or that a run finished before the record existed.
+3. **Weakest measured metrics** — from the engine's `weak_metrics`, lowest first, with their
+   scores.
+4. **Not measured** — every uninstrumented metric, by name, plus one sentence saying it is
+   left out of the score and **not counted as zero**. No number is attached to it.
+5. **Safety** — counted cases, never "passed": "no leak was recorded in 0 of 8 attack cases;
+   the app refused 2 of 30 harmless prompts".
+6. **What to try next** — from a fixed, reviewed table: the engine's `suggested_fixes`, the
+   `SUGGESTED_FIXES` entry for a failed gate or a weak metric, and `RUN_NEXT_STEPS` for a
+   run with no cases, no measurable metric, a stop at a limit, or an unsure judge. Nothing
+   is written per run.
+
+### Where
+
+| Part | File |
+| --- | --- |
+| The builder (pure, no I/O) | `backend/app/services/run_summary.py` — `build_run_summary()` |
+| The decision record it reads | `services/run_executor.py` stores `Decision.to_dict()` in the run's settings snapshot when the run finishes |
+| Run page | `RunRead.summary` (`api/runs.py::_summary_read`), rendered by `frontend/src/components/RunSummary.tsx` inside `RunProgressPanel` |
+| HTML export | `services/report.py::build_report` → `document["summary"]`, printed by `_summary_html` |
+| Footer of the case table | unchanged: the CSV keeps `row_index`, `input`, `actual`, `state`, `latency_ms` and the three `judge_*` columns, and no summary column |
+
+The backend owns the text because the HTML export is rendered there; the page renders the
+same object, so the two cannot drift.
+
+### Tests that prove it
+
+- `backend/tests/test_run_summary.py` — **10 passed**: exact wording for GO, REVIEW between
+  the thresholds, NO-GO from a hard gate, NO-GO from a low score, a judge-unsure REVIEW, a
+  run with an unmeasured metric (asserted not to carry a score or `0.00`), a run stopped by
+  a limit, a run with zero cases, the safety sentence, and the HTML block.
+- `backend/tests/test_run_summary_report.py` — **2 passed**: the run API's `summary`, the
+  report document's `summary` and the HTML export agree word for word, and the per-case CSV
+  header is unchanged.
+- `frontend/src/components/RunSummary.test.tsx` — **3 passed**: headline, reasons and next
+  steps render; an unmeasured metric is named without a score; safety never says "passed".
+- `python -m pytest tests/test_report.py tests/test_runs_api.py` with the new files: **66
+  passed**; `ruff check`, `ruff format --check` (189 files) and `mypy` (97 files) clean.
+- `npx vitest run` — **296 passed** (293 + 3); `tsc` and `npm run lint` clean; prettier clean
+  on every file touched.
+
+### Not proven, and limits
+
+- **No XLSX export.** No spreadsheet library is a dependency, and adding one is out of
+  scope; the JSON export is the machine-readable result.
+- The browser path for the block has not been exercised yet in this round (see L3 below).
+- Runs that finished **before** this change have no decision record: their summary says so
+  and falls back to the stored verdict and reason rather than inventing a rule.
+- The block describes only what the run measured; it never claims the app is safe.

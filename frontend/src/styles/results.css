@@ -143,3 +143,21 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* The run in plain words: the same block the HTML export prints. */
+.run-summary__headline {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.run-summary__heading {
+  margin: 0.9rem 0 0.35rem;
+  font-size: 0.95rem;
+}
+
+.run-summary__list {
+  margin: 0 0 0.35rem;
+  padding-left: 1.15rem;
+  display: grid;
+  gap: 0.3rem;
+}
