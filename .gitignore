@@ -49,3 +49,5 @@ Thumbs.db
 
 # Experiment results are outputs, not source (the harness itself is tracked).
 experiments/results/
+# The test apps' own virtualenv (the MCP SDK lives only here, never in backend/).
+experiments/llm_apps/.venv/
