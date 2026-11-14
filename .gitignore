@@ -51,3 +51,5 @@ Thumbs.db
 experiments/results/
 # The test apps' own virtualenv (the MCP SDK lives only here, never in backend/).
 experiments/llm_apps/.venv/
+# The test apps' launcher records only its own PIDs here.
+experiments/llm_apps/.run/

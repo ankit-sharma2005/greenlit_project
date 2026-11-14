@@ -1138,3 +1138,39 @@ same object, so the two cannot drift.
 - Runs that finished **before** this change have no decision record: their summary says so
   and falls back to the stored verdict and reason rather than inventing a rule.
 - The block describes only what the run measured; it never claims the app is safe.
+
+## M19 — Four real LLM-backed apps to test against
+
+`experiments/llm_apps/` (new; `experiments/apps/` untouched) holds four local apps that
+GreenLit can be pointed at, beside the rule-based variants: **A1 support-bot** (9111, one
+JSON body), **A2 docs-rag** (9112, BM25 over nine documents, returns `context`), **A3
+stream-bot** (9113, SSE / NDJSON / chunked text / JSON) and **A4 tool-agent** (9114, an MCP
+server over Streamable HTTP with `calculator`, `lookup_order`, `ask_assistant`).
+
+Shared code is in `common/`: an OpenAI-compatible client (Ollama or Groq, key from the
+environment only, one retry on a connection error, 429/timeout as `provider_unavailable`
+for a clean 503 with `Retry-After`), the guarded and weak prompts, the JSONL request log
+and the small HTTP helpers. Every app binds `127.0.0.1` by default; `LLM_APPS_HOST=0.0.0.0`
+is documented for the Docker/`host.docker.internal` case only. `ground_truth.json` declares
+before any run what is deterministic (each with the test that proves it) and what is
+uncertain and therefore excluded from a confusion matrix.
+
+### Tests actually run
+
+- `python -m pytest experiments/llm_apps/tests` — **41 passed** with the system interpreter
+  and **41 passed** with `experiments/llm_apps/.venv/Scripts/python.exe` (the SDK round trip
+  uses the venv). No real model and no third-party site: one local fake provider serves
+  deterministic answers, streams, 429s, stalls, dies mid-stream and sends malformed bodies.
+- `ruff check experiments/llm_apps` and `ruff format --check experiments/llm_apps` — clean.
+- The MCP SDK is `mcp` **1.30.0**, installed only in `experiments/llm_apps/.venv`
+  (git-ignored); nothing was installed into `backend/` or the system Python for this work.
+  The real round trip (initialize, `tools/list`, three `tools/call`s) runs through the
+  official client against a subprocess of the app.
+
+### Not proven
+
+- No real model was called by any test; a green suite proves the wiring, prompts, shapes and
+  failure modes, not answer quality.
+- The calculator's AST whitelist is tested on the named attacks, not fuzzed.
+- A4 was not driven through GreenLit's MCP panel in a browser; only the SDK client is proven.
+- Streaming was proven against the fake provider, not against a real Ollama/Groq stream.
