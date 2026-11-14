@@ -92,6 +92,15 @@ test("a finished run draws its charts, says not measured, and keeps the page sti
   const label = name.replaceAll("_", " ");
   await expect(table).toContainText(label);
 
+  // The same run in plain words: the block is on the page, and it names the metric
+  // this run never measured instead of scoring it.
+  await expect(page.getByTestId("run-summary")).toBeVisible();
+  await expect(page.getByTestId("run-summary-headline")).not.toBeEmpty();
+  await expect(page.getByTestId("run-summary-not-measured")).toContainText(
+    "Not measured on this run:",
+  );
+  await expect(page.getByTestId("run-summary-not-measured")).toContainText(label);
+
   await page.screenshot({ path: path.join(SCREENS, "after-charts-run-1280x800-dark.png") });
 
   // Light theme: the fills come from tokens, so the same chart must render.
@@ -131,5 +140,7 @@ test("the Results page draws the score trend once two runs are finished", async 
   const svg = page.getByTestId("run-trend-svg");
   await expect(svg).toHaveAttribute("aria-label", /Scores of 2 finished runs/);
   await expect(page.getByTestId("run-trend-point-0")).toBeVisible();
-  await page.screenshot({ path: path.join(SCREENS, "after-charts-results-trend-1280x800-dark.png") });
+  await page.screenshot({
+    path: path.join(SCREENS, "after-charts-results-trend-1280x800-dark.png"),
+  });
 });
