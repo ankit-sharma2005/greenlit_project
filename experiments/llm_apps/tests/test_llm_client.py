@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, ClassVar, cast
@@ -207,3 +208,60 @@ def test_malformed_and_oversized_input_gets_400(echo_server: str) -> None:
     )
     empty = requests.post(f"{echo_server}/", json={"question": ""}, timeout=5)
     assert empty.status_code == 200
+
+
+def test_the_default_timeout_depends_on_the_provider() -> None:
+    assert load_settings({}).timeout_seconds == 120.0
+    assert (
+        load_settings(
+            {"LLM_PROVIDER": "groq", "GROQ_API_KEY": SENTINEL}
+        ).timeout_seconds
+        == 60.0
+    )
+
+
+def test_the_timeout_comes_from_the_environment() -> None:
+    assert load_settings({"LLM_TIMEOUT_SECONDS": "7.5"}).timeout_seconds == 7.5
+
+
+def test_a_bad_timeout_falls_back_to_the_default_with_a_warning(caplog: Any) -> None:
+    with caplog.at_level("WARNING", logger="common.config"):
+        assert load_settings({"LLM_TIMEOUT_SECONDS": "soon"}).timeout_seconds == 120.0
+        assert load_settings({"LLM_TIMEOUT_SECONDS": "0"}).timeout_seconds == 120.0
+    assert "LLM_TIMEOUT_SECONDS" in caplog.text
+    assert caplog.text.count("using the default") == 2
+
+
+def test_a_slow_answer_under_the_timeout_succeeds() -> None:
+    with FakeLLM(delay=0.4) as fake:
+        client = LLMClient(settings_for(fake, LLM_TIMEOUT_SECONDS="3"))
+        assert client.chat([{"role": "user", "content": "hi"}])
+        assert fake.count == 1
+
+
+def test_an_answer_slower_than_the_timeout_is_unavailable_and_not_retried() -> None:
+    with FakeLLM(delay=3.0) as fake:
+        client = LLMClient(settings_for(fake, LLM_TIMEOUT_SECONDS="0.6"))
+        began = time.monotonic()
+        with pytest.raises(ProviderUnavailable):
+            client.chat([{"role": "user", "content": "hi"}])
+        elapsed = time.monotonic() - began
+        assert 0.5 <= elapsed < 3
+        assert fake.count == 1
+
+
+class _RecordingSession:
+    def __init__(self) -> None:
+        self.timeouts: list[Any] = []
+
+    def post(self, *args: Any, **kwargs: Any) -> Any:
+        self.timeouts.append(kwargs.get("timeout"))
+        return _Response()
+
+
+def test_the_connect_timeout_is_short_and_the_read_timeout_is_the_setting() -> None:
+    recorder = _RecordingSession()
+    settings = load_settings({"LLM_TIMEOUT_SECONDS": "90"})
+    client = LLMClient(settings, cast(Any, recorder))
+    client.chat([{"role": "user", "content": "hi"}])
+    assert recorder.timeouts == [(10.0, 90.0)]

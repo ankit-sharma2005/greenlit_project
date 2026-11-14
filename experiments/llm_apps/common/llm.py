@@ -16,7 +16,7 @@ from typing import Any
 
 import requests
 
-from .config import Settings
+from .config import CONNECT_TIMEOUT_SECONDS, Settings
 
 
 class LLMError(Exception):
@@ -60,12 +60,15 @@ class LLMClient:
     def _post(self, messages: Sequence[Message], stream: bool) -> requests.Response:
         headers = {"Content-Type": "application/json", **self.settings.auth_headers()}
         payload = self._payload(messages, stream)
+        # Connecting is quick; only waiting for the answer may take minutes. For a
+        # stream this read timeout applies between chunks, not to the whole stream.
+        timeout = (CONNECT_TIMEOUT_SECONDS, self.settings.timeout_seconds)
         try:
             response = self.session.post(
                 self.url,
                 json=payload,
                 headers=headers,
-                timeout=self.settings.timeout_seconds,
+                timeout=timeout,
                 stream=stream,
             )
         except requests.ConnectionError as exc:
@@ -75,7 +78,7 @@ class LLMClient:
                     self.url,
                     json=payload,
                     headers=headers,
-                    timeout=self.settings.timeout_seconds,
+                    timeout=timeout,
                     stream=stream,
                 )
             except (requests.ConnectionError, requests.Timeout) as second:
@@ -123,6 +126,15 @@ class LLMClient:
             yield from _chunks(answer)
             return
 
+        try:
+            yield from self._sse_pieces(response)
+        except requests.Timeout as exc:
+            raise ProviderUnavailable("provider_unavailable") from exc
+        except requests.ConnectionError as exc:
+            raise ProviderUnavailable("provider_unavailable") from exc
+
+    @staticmethod
+    def _sse_pieces(response: requests.Response) -> Iterator[str]:
         for raw in response.iter_lines(decode_unicode=True):
             if not raw:
                 continue

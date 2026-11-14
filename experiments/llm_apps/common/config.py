@@ -8,22 +8,32 @@ here are the ones the task names: a local Ollama (no key) and Groq (key from
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
-DEFAULT_PROVIDERS: dict[str, dict[str, str]] = {
+logger = logging.getLogger(__name__)
+
+DEFAULT_PROVIDERS: dict[str, dict[str, Any]] = {
     "ollama": {
         "base_url": "http://localhost:11434/v1",
         "model": "hermes3:8b",
         "key_env": "",
+        # A cold local model can take a while to load before it answers.
+        "timeout_seconds": 120.0,
     },
     "groq": {
         "base_url": "https://api.groq.com/openai/v1",
         "model": "llama-3.3-70b-versatile",
         "key_env": "GROQ_API_KEY",
+        "timeout_seconds": 60.0,
     },
 }
+
+# Connecting to a local or hosted provider is quick; only reading the answer may wait.
+CONNECT_TIMEOUT_SECONDS = 10.0
 
 MODES = ("guarded", "weak")
 
@@ -64,6 +74,25 @@ def _number(value: str | None, default: float, name: str) -> float:
         raise ConfigError(f"{name} must be a number") from exc
     if parsed <= 0:
         raise ConfigError(f"{name} must be greater than zero")
+    return parsed
+
+
+def _timeout(value: str | None, default: float, name: str) -> float:
+    """A bad value is not fatal: use the provider's default and say so once."""
+    if value is None or value == "":
+        return default
+    try:
+        parsed = float(value)
+    except ValueError:
+        logger.warning(
+            "%s=%r is not a number; using the default %gs", name, value, default
+        )
+        return default
+    if parsed <= 0:
+        logger.warning(
+            "%s=%r is not positive; using the default %gs", name, value, default
+        )
+        return default
     return parsed
 
 
@@ -108,8 +137,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         base_url=base_url.rstrip("/"),
         model=model,
         temperature=_number(source.get("LLM_TEMPERATURE"), 0.0, "LLM_TEMPERATURE"),
-        timeout_seconds=_number(
-            source.get("LLM_TIMEOUT_SECONDS"), 30.0, "LLM_TIMEOUT_SECONDS"
+        timeout_seconds=_timeout(
+            source.get("LLM_TIMEOUT_SECONDS"),
+            float(defaults["timeout_seconds"]),
+            "LLM_TIMEOUT_SECONDS",
         ),
         max_tokens=_integer(source.get("LLM_MAX_TOKENS"), 512, "LLM_MAX_TOKENS"),
         mode=mode,

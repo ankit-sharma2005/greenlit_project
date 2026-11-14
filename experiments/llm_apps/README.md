@@ -23,6 +23,9 @@ a real prompt, a real retriever, a real stream and a real tool call to look at.
   the model pulled (`ollama pull hermes3:8b`), or a Groq key in the environment variable
   `GROQ_API_KEY`. Keys are read from the environment only; nothing is written to a file,
   logged or returned by an endpoint.
+  **Warm the model once** before testing — `ollama run hermes3:8b "hi"` — because a cold
+  load takes tens of seconds and the first request is then slow for a reason unrelated to
+  the app.
 - **A4's own virtualenv**, because the MCP SDK must never go into the backend or the system
   Python:
 
@@ -54,7 +57,7 @@ Environment, all optional:
 | `LLM_MODEL` | `hermes3:8b` / `llama-3.3-70b-versatile` | the provider's model |
 | `LLM_BASE_URL` | provider default | point at a fake or a different local model |
 | `LLM_TEMPERATURE` | `0` | sampling temperature |
-| `LLM_TIMEOUT_SECONDS` | `30` | hard timeout; a timeout is a 503 |
+| `LLM_TIMEOUT_SECONDS` | `120` (Ollama) / `60` (Groq) | read timeout; connecting gets 10 s, and a timeout is a 503 |
 | `LLM_MAX_TOKENS` | `512` | cap on the answer |
 | `MAX_QUESTION_CHARS` | `2000` | longer questions are a 400 |
 | `LLM_APPS_HOST` | `127.0.0.1` | `0.0.0.0` only when GreenLit runs in Docker |
@@ -70,15 +73,19 @@ GreenLit runs in Docker by default, so from its API the apps are reached through
 own name; start them with `LLM_APPS_HOST=0.0.0.0` for that. When GreenLit runs outside
 Docker, `http://127.0.0.1:<port>/` works and the default bind is enough.
 
+Set GreenLit's **Timeout** above the app's own read timeout, so a slow cold model is not
+reported as a GreenLit timeout first: **150** for these Ollama-backed apps (the app waits
+120 s, GreenLit waits 150 s).
+
 | App | Name | URL | Method | Answer arrives as | Answer path | Context path | Body template | Timeout |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| A1 | Acme support bot | `http://host.docker.internal:9111/` | POST | One JSON body | `$.answer` | — | `{"question": "{{question}}"}` | 120 |
-| A2 | Acme docs RAG | `http://host.docker.internal:9112/` | POST | One JSON body | `$.answer` | `$.context` | `{"question": "{{question}}"}` | 120 |
-| A3 SSE | Acme streaming (SSE) | `http://host.docker.internal:9113/sse` | POST | Server-sent events | `delta` | — | `{"question": "{{question}}"}` | 120 |
-| A3 NDJSON | Acme streaming (NDJSON) | `http://host.docker.internal:9113/ndjson` | POST | Newline-delimited JSON | `delta` | — | `{"question": "{{question}}"}` | 120 |
-| A3 text | Acme streaming (text) | `http://host.docker.internal:9113/text` | POST | Plain text | — (the whole body) | — | `{"question": "{{question}}"}` | 120 |
-| A3 JSON | Acme streaming (one body) | `http://host.docker.internal:9113/` | POST | One JSON body | `$.answer` | — | `{"question": "{{question}}"}` | 120 |
-| A4 | Acme tool agent | `http://host.docker.internal:9114/mcp` | MCP (Streamable HTTP) | MCP tool result | tool `ask_assistant`, argument `question` | — | — | 120 |
+| A1 | Acme support bot | `http://host.docker.internal:9111/` | POST | One JSON body | `$.answer` | — | `{"question": "{{question}}"}` | 150 |
+| A2 | Acme docs RAG | `http://host.docker.internal:9112/` | POST | One JSON body | `$.answer` | `$.context` | `{"question": "{{question}}"}` | 150 |
+| A3 SSE | Acme streaming (SSE) | `http://host.docker.internal:9113/sse` | POST | Server-sent events | `delta` | — | `{"question": "{{question}}"}` | 150 |
+| A3 NDJSON | Acme streaming (NDJSON) | `http://host.docker.internal:9113/ndjson` | POST | Newline-delimited JSON | `delta` | — | `{"question": "{{question}}"}` | 150 |
+| A3 text | Acme streaming (text) | `http://host.docker.internal:9113/text` | POST | Plain text | — (the whole body) | — | `{"question": "{{question}}"}` | 150 |
+| A3 JSON | Acme streaming (one body) | `http://host.docker.internal:9113/` | POST | One JSON body | `$.answer` | — | `{"question": "{{question}}"}` | 150 |
+| A4 | Acme tool agent | `http://host.docker.internal:9114/mcp` | MCP (Streamable HTTP) | MCP tool result | tool `ask_assistant`, argument `question` | — | — | 150 |
 
 For A4 as a **deterministic** target, pick the `calculator` tool with the argument
 `expression` instead of `ask_assistant`; it needs no model.
