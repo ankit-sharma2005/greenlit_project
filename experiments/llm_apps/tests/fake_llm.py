@@ -25,12 +25,14 @@ class FakeLLM:
         malformed: bool = False,
         retry_after: str | None = None,
         streaming: bool = True,
+        die_after_first: bool = False,
     ) -> None:
         self.status = status
         self.delay = delay
         self.malformed = malformed
         self.retry_after = retry_after
         self.streaming = streaming
+        self.die_after_first = die_after_first
         self.requests: list[dict[str, Any]] = []
         self.count = 0
         self._lock = threading.Lock()
@@ -132,7 +134,22 @@ class FakeLLM:
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.send_header("Cache-Control", "no-cache")
+                if fake.die_after_first:
+                    # A real provider that dies mid-answer truncates the transfer:
+                    # the chunked body never gets its terminating zero chunk.
+                    self.send_header("Transfer-Encoding", "chunked")
                 self.end_headers()
+                if fake.die_after_first:
+                    first = json.dumps(
+                        {"choices": [{"delta": {"content": answer[:8]}}]}
+                    )
+                    payload = f"data: {first}\n\n".encode()
+                    self.wfile.write(
+                        f"{len(payload):x}\r\n".encode() + payload + b"\r\n"
+                    )
+                    self.wfile.flush()
+                    self.close_connection = True
+                    return
                 for start in range(0, len(answer), 8):
                     piece = answer[start : start + 8]
                     event = json.dumps({"choices": [{"delta": {"content": piece}}]})
