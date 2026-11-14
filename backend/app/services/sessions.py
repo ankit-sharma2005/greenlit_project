@@ -114,6 +114,24 @@ def list_sessions(
     return sessions
 
 
+def is_live_family(db: Session, user_id: uuid.UUID, family_id: uuid.UUID) -> bool:
+    """True while this session still has a refresh token that is neither revoked nor expired.
+
+    An access token carries its session id, so this is what makes "sign out this
+    device" take effect on that device's next request rather than when its access
+    cookie happens to expire.
+    """
+    now = utcnow()
+    rows = db.scalars(
+        select(RefreshToken).where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.family_id == family_id,
+            RefreshToken.revoked_at.is_(None),
+        )
+    ).all()
+    return any(ensure_utc(row.expires_at) > now for row in rows)
+
+
 def owned_family(db: Session, user_id: uuid.UUID, family_id: uuid.UUID) -> bool:
     """True when this family belongs to this user, so a foreign id cannot be touched."""
     return (

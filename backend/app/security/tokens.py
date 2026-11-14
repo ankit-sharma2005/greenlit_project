@@ -33,8 +33,18 @@ def password_reset_expiry(settings: Settings) -> datetime:
     return utcnow() + timedelta(minutes=settings.password_reset_expire_minutes)
 
 
-def create_access_token(user_id: uuid.UUID, role: str, settings: Settings | None = None) -> str:
-    """Issue a short-lived access JWT."""
+def create_access_token(
+    user_id: uuid.UUID,
+    role: str,
+    settings: Settings | None = None,
+    family_id: uuid.UUID | None = None,
+) -> str:
+    """Issue a short-lived access JWT.
+
+    ``family_id`` ties the token to the session (refresh-token family) it was
+    issued for, so signing that device out ends its access immediately instead of
+    leaving a valid token behind until it expires.
+    """
     resolved = settings or get_settings()
     now = utcnow()
     payload: dict[str, Any] = {
@@ -45,6 +55,8 @@ def create_access_token(user_id: uuid.UUID, role: str, settings: Settings | None
         "iat": now,
         "exp": now + timedelta(minutes=resolved.access_token_expire_minutes),
     }
+    if family_id is not None:
+        payload["sid"] = str(family_id)
     return jwt.encode(payload, resolved.app_secret_key, algorithm=JWT_ALGORITHM)
 
 

@@ -144,6 +144,27 @@ def test_revoking_another_device_keeps_this_one_signed_in(client: TestClient) ->
     assert client.post("/api/v1/auth/refresh").status_code == 401
 
 
+def test_a_revoked_device_is_out_on_its_next_request(client: TestClient) -> None:
+    _register(client)
+    # Keep the first device's access cookie: it stays cryptographically valid for
+    # minutes after the revoke, so only the session check can refuse it.
+    first_device = dict(client.cookies)
+    _login(client, CHROME)
+    other = next(item["id"] for item in _sessions(client)["items"] if not item["current"])
+
+    assert client.post(f"/api/v1/auth/sessions/{other}/revoke").status_code == 200
+    # The device that did the revoking is untouched.
+    assert client.get("/api/v1/auth/me").status_code == 200
+
+    client.cookies.clear()
+    client.cookies.update(first_device)
+    refused = client.get("/api/v1/auth/me")
+    assert refused.status_code == 401
+    assert refused.json()["error"]["message"] == "You signed this device out. Sign in again."
+    # And its refresh cookie cannot bring it back.
+    assert client.post("/api/v1/auth/refresh").status_code == 401
+
+
 def test_revoking_the_current_session_behaves_like_sign_out(client: TestClient) -> None:
     _register(client)
     mine = next(item["id"] for item in _sessions(client)["items"] if item["current"])

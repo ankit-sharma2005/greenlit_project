@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import User
 from app.security.tokens import ACCESS_COOKIE, decode_access_token
+from app.services.sessions import is_live_family
 
 
 def _unauthorized(message: str) -> HTTPException:
@@ -38,6 +39,18 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     user = db.get(User, user_id)
     if user is None or not user.is_active:
         raise _unauthorized("This account is not available. Sign in again.")
+
+    # A token issued for a session ends when that session is signed out, so the
+    # device is out on its next request instead of when its cookie expires. A
+    # token without a session id predates this check and is left as it was.
+    family_id = payload.get("sid")
+    if family_id is not None:
+        try:
+            family = uuid.UUID(str(family_id))
+        except (TypeError, ValueError) as exc:
+            raise _unauthorized("Your session is not valid. Sign in again.") from exc
+        if not is_live_family(db, user.id, family):
+            raise _unauthorized("You signed this device out. Sign in again.")
     return user
 
 

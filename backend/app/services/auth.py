@@ -38,17 +38,18 @@ def issue_session(db: Session, user: User, request: Request, settings: Settings)
     """Create an access token and a new refresh token family/session."""
     ip_address, user_agent = request_meta(request)
     raw_refresh = generate_opaque_token()
+    family_id = uuid.uuid4()
     db.add(
         RefreshToken(
             user_id=user.id,
             token_hash=hash_token(raw_refresh),
-            family_id=uuid.uuid4(),
+            family_id=family_id,
             expires_at=refresh_token_expiry(settings),
             ip_address=ip_address,
             user_agent=user_agent,
         )
     )
-    access_token = create_access_token(user.id, user.role, settings)
+    access_token = create_access_token(user.id, user.role, settings, family_id=family_id)
     return access_token, raw_refresh
 
 

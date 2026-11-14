@@ -304,7 +304,7 @@ def refresh(
     db.add(new_token)
     db.flush()
     revoke_token(db, stored, replaced_by=new_token.id)
-    access_token = create_access_token(user.id, user.role, settings)
+    access_token = create_access_token(user.id, user.role, settings, family_id=stored.family_id)
     db.commit()
 
     set_auth_cookies(
