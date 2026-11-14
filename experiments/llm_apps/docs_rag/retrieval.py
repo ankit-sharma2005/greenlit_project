@@ -16,6 +16,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 TOKEN = re.compile(r"[a-z0-9]+")
+# A query word this long may also match a longer word it is the start of.
+PREFIX_MIN_LENGTH = 4
+# A heading is the document's own summary, so its words count this many times.
+TITLE_BOOST = 2
 STOPWORDS = frozenset(
     {
         "a",
@@ -88,7 +92,18 @@ class Retriever:
         self._tokens = [tokenize(document.text) for document in documents]
         self._lengths = [len(tokens) for tokens in self._tokens]
         self._average = sum(self._lengths) / max(len(self._lengths), 1)
-        self._frequencies = [Counter(tokens) for tokens in self._tokens]
+        self._frequencies = [
+            Counter(tokens)
+            + Counter(
+                {
+                    word: TITLE_BOOST * count
+                    for word, count in Counter(
+                        tokenize(document.text.splitlines()[0] if document.text else "")
+                    ).items()
+                }
+            )
+            for tokens, document in zip(self._tokens, documents, strict=True)
+        ]
         self._document_frequency: Counter[str] = Counter()
         for tokens in self._tokens:
             for term in set(tokens):
@@ -99,6 +114,23 @@ class Retriever:
         frequency = self._document_frequency.get(term, 0)
         return math.log(1 + (total - frequency + 0.5) / (frequency + 0.5))
 
+    @staticmethod
+    def _frequency(frequencies: Counter[str], term: str) -> int:
+        """Exact matches, plus a word the query is a prefix of (ship → shipping).
+
+        No stemming library and no new dependency: a short prefix rule keeps
+        "ship" finding "shipping", and the minimum length keeps it from matching
+        everything.
+        """
+        total = frequencies.get(term, 0)
+        if len(term) >= PREFIX_MIN_LENGTH:
+            total += sum(
+                count
+                for word, count in frequencies.items()
+                if word != term and word.startswith(term)
+            )
+        return total
+
     def scores(self, question: str) -> list[float]:
         terms = tokenize(question)
         result: list[float] = []
@@ -106,7 +138,7 @@ class Retriever:
             length = self._lengths[index] or 1
             score = 0.0
             for term in terms:
-                frequency = frequencies.get(term, 0)
+                frequency = self._frequency(frequencies, term)
                 if not frequency:
                     continue
                 denominator = frequency + self.k1 * (

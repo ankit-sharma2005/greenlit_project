@@ -1157,8 +1157,8 @@ uncertain and therefore excluded from a confusion matrix.
 
 ### Tests actually run
 
-- `python -m pytest experiments/llm_apps/tests` — **41 passed** with the system interpreter
-  and **41 passed** with `experiments/llm_apps/.venv/Scripts/python.exe` (the SDK round trip
+- `python -m pytest experiments/llm_apps/tests` — **42 passed** with the system interpreter
+  and **42 passed** with `experiments/llm_apps/.venv/Scripts/python.exe` (the SDK round trip
   uses the venv). No real model and no third-party site: one local fake provider serves
   deterministic answers, streams, 429s, stalls, dies mid-stream and sends malformed bodies.
 - `ruff check experiments/llm_apps` and `ruff format --check experiments/llm_apps` — clean.

@@ -57,6 +57,13 @@ def test_the_expected_document_is_in_the_top_three() -> None:
         assert expected in names, f"{question} -> {names}"
 
 
+def test_a_short_word_finds_the_longer_form_it_starts() -> None:
+    # The smoke run found this: "ship" did not match "shipping"/"shipped".
+    retriever = Retriever(load_documents(DOCUMENTS))
+    names = [document.name for document in retriever.search("When do you ship?")]
+    assert "shipping.md" in names
+
+
 def test_an_unrelated_question_finds_nothing_and_is_not_sent_to_the_model(
     rag: Any,
 ) -> None:
