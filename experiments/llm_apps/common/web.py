@@ -8,7 +8,7 @@ with a 4xx and a short JSON message instead of a traceback.
 from __future__ import annotations
 
 import json
-from http.server import BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from .config import Settings
@@ -92,6 +92,13 @@ def send_unavailable(handler: BaseHTTPRequestHandler, exc: ProviderUnavailable) 
 
 def health_body(app: str, settings: Settings) -> dict[str, str]:
     return {"status": "ok", "app": app, **settings.public()}
+
+
+class AppServer(ThreadingHTTPServer):
+    """A server that carries the settings and the app's name for /health."""
+
+    settings: Settings
+    app_name: str
 
 
 class QuietHandler(BaseHTTPRequestHandler):
