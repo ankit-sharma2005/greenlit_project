@@ -31,6 +31,9 @@ REFUSAL_PORT="${E2E_REFUSAL_PORT:-9503}"
 # The adversarial spec starts its own "evil" counter on this port; a leftover
 # server there would make "zero requests reached it" meaningless, so it is checked.
 EVIL_PORT="${E2E_EVIL_PORT:-9504}"
+# The catalog spec's health stand-in and the regression spec's deterministic app.
+DEMO_STANDIN_PORT="${E2E_DEMO_STANDIN_PORT:-9505}"
+REGRESSION_PORT="${E2E_REGRESSION_APP_PORT:-9506}"
 E2E_BASE_URL="${E2E_BASE_URL:-http://localhost:${WEB_PORT}}"
 E2E_API_URL="${E2E_API_URL:-http://localhost:${API_PORT}}"
 E2E_API_BIND="${E2E_API_BIND:-0.0.0.0}"
@@ -48,6 +51,14 @@ export E2E_EVIL_PORT="${EVIL_PORT}"
 # so its spec reaches the same server through the host's own name (the API runs
 # on this host, and the demo servers are bound the same way).
 export E2E_REFUSAL_CHECK_URL="http://host.docker.internal:${REFUSAL_PORT}"
+# The catalog probe and the regression spec's app. The backend honours these two
+# only together, only at startup, and only for known catalog entries; they never
+# reach the dev stack.
+export GREENLIT_E2E=1
+export DEMO_CATALOG_PROBE_ORIGINS="support-bot=http://127.0.0.1:${DEMO_STANDIN_PORT},math-solver=http://host.docker.internal:${REGRESSION_PORT}"
+export E2E_DEMO_STANDIN_URL="http://127.0.0.1:${DEMO_STANDIN_PORT}"
+export E2E_REGRESSION_APP_URL="http://127.0.0.1:${REGRESSION_PORT}"
+export E2E_REGRESSION_TARGET_URL="http://host.docker.internal:${REGRESSION_PORT}/"
 
 # The API, worker and migrations all run from backend/ on the host, so they need
 # the e2e datastores rather than the dev ones. Real environment beats the .env
@@ -150,6 +161,30 @@ if [ -z "${SKIP_STACK:-}" ]; then
     echo "Evil-counter port ${EVIL_PORT} is already in use; set E2E_EVIL_PORT." >&2
     exit 1
   fi
+
+  for standin_port in "$DEMO_STANDIN_PORT" "$REGRESSION_PORT"; do
+    if curl -sf "http://127.0.0.1:${standin_port}/health" >/dev/null 2>&1; then
+      echo "Stand-in port ${standin_port} is already in use; set E2E_DEMO_STANDIN_PORT / E2E_REGRESSION_APP_PORT." >&2
+      exit 1
+    fi
+  done
+  log "Starting the catalog stand-in on :${DEMO_STANDIN_PORT} and the deterministic app on :${REGRESSION_PORT}"
+  (cd backend && exec "$PYTHON" tests/support/demo_standin.py --port "$DEMO_STANDIN_PORT") >"${ROOTDIR}/e2e-standin.log" 2>&1 &
+  PIDS+=($!)
+  (cd backend && exec "$PYTHON" tests/support/regression_app.py --port "$REGRESSION_PORT") >"${ROOTDIR}/e2e-regression-app.log" 2>&1 &
+  PIDS+=($!)
+  for standin_port in "$DEMO_STANDIN_PORT" "$REGRESSION_PORT"; do
+    for i in $(seq 1 30); do
+      if curl -sf "http://127.0.0.1:${standin_port}/health" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+    done
+    if ! curl -sf "http://127.0.0.1:${standin_port}/health" >/dev/null; then
+      echo "The stand-in on :${standin_port} did not become healthy; see ${ROOTDIR}/e2e-standin.log and e2e-regression-app.log" >&2
+      exit 1
+    fi
+  done
 
   log "Starting API on :${API_PORT}"
   (cd backend && exec "$PYTHON" -m uvicorn app.main:app --host "$E2E_API_BIND" --port "$API_PORT") \

@@ -13,10 +13,16 @@ These apps are weak by design (no auth, no TLS) and must stay on this machine.
 from __future__ import annotations
 
 import json
+import logging
+import os
 import urllib.error
+import urllib.parse
 import urllib.request
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 HEALTH_TIMEOUT_SECONDS = 2.0
 HEALTH_FIELDS = ("app", "mode", "provider", "model")
@@ -204,14 +210,66 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+E2E_FLAG_ENV = "GREENLIT_E2E"
+ORIGINS_ENV = "DEMO_CATALOG_PROBE_ORIGINS"
+
+
+def read_probe_origins(env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The test-only probe origins, read once from the process environment.
+
+    This exists because the e2e stack cannot reach the real catalog ports. It is
+    honoured only when ``GREENLIT_E2E=1`` is also set; without that flag it is
+    ignored with one warning. It can only replace the scheme, host and port of a
+    *known* catalog entry — never add an address, never add an id — and it is
+    never read from a request, a header, a query string or the database.
+    """
+    source = os.environ if env is None else env
+    raw = (source.get(ORIGINS_ENV) or "").strip()
+    if not raw:
+        return {}
+    if (source.get(E2E_FLAG_ENV) or "").strip() != "1":
+        logger.warning("%s is ignored: it only works when %s=1", ORIGINS_ENV, E2E_FLAG_ENV)
+        return {}
+    origins: dict[str, str] = {}
+    known = {entry.id for entry in CATALOG}
+    for pair in raw.split(","):
+        app_id, separator, origin = pair.partition("=")
+        app_id = app_id.strip()
+        origin = origin.strip()
+        if not separator or app_id not in known:
+            logger.warning("%s: ignoring unknown entry %r", ORIGINS_ENV, app_id)
+            continue
+        parsed = urllib.parse.urlsplit(origin)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            logger.warning("%s: ignoring %r for %s", ORIGINS_ENV, origin, app_id)
+            continue
+        # Scheme, host and port only: the catalog's own path is kept.
+        origins[app_id] = f"{parsed.scheme}://{parsed.netloc}"
+    return origins
+
+
+# Read once at import, which is the process start for the API worker.
+PROBE_ORIGINS: dict[str, str] = read_probe_origins()
+
+
+def probe_url(entry: DemoApp) -> str:
+    """The /health URL for one entry: the catalog's, or its e2e override's origin."""
+    url = entry.url.split("?", 1)[0]
+    override = PROBE_ORIGINS.get(entry.id)
+    if override:
+        parsed = urllib.parse.urlsplit(url)
+        path = parsed.path or "/"
+        url = override + path
+    return url if url.endswith("/health") else url.rstrip("/") + "/health"
+
+
 def probe_health(entry: DemoApp) -> dict[str, str]:
     """GET the entry's own /health and keep only the four known strings.
 
     The URL comes from the catalog argument, never from a request, and the
     timeout is short so a dead app cannot hold the page.
     """
-    url = entry.url.split("?", 1)[0]
-    url = url if url.endswith("/health") else url.rstrip("/") + "/health"
+    url = probe_url(entry)
     opener = urllib.request.build_opener(_NoRedirect)
     try:
         with opener.open(url, timeout=HEALTH_TIMEOUT_SECONDS) as response:

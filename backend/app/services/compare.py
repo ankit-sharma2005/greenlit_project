@@ -160,14 +160,25 @@ def is_deterministic_target(run: Run) -> bool:
     ``upload_outputs`` replays recorded answers, and the catalog's math solver is
     arithmetic with no model; everything else may vary run to run.
     """
-    from app.services.demo_catalog import CATALOG
+    from urllib.parse import urlsplit
+
+    from app.services.demo_catalog import CATALOG, PROBE_ORIGINS
 
     snapshot = run.settings_snapshot or {}
     if snapshot.get("entry_point") == "upload_outputs":
         return True
     target = _target_url(run)
     solver = next((entry for entry in CATALOG if entry.id == "math-solver"), None)
-    return solver is not None and target.rstrip("/") == solver.url.rstrip("/")
+    if solver is None or not target:
+        return False
+    # The e2e stand-in replaces the solver's origin, and it is still the same app.
+    expected = PROBE_ORIGINS.get("math-solver") or solver.url
+    target_origin = urlsplit(target)
+    expected_origin = urlsplit(expected)
+    return (target_origin.scheme, target_origin.netloc) == (
+        expected_origin.scheme,
+        expected_origin.netloc,
+    )
 
 
 def _case_states(session: Session, run: Run) -> dict[int, CaseState]:
