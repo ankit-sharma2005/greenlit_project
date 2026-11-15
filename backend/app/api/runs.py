@@ -34,6 +34,7 @@ from app.schemas.runs import (
     RunSummaryRead,
 )
 from app.services.audit import record
+from app.services.compare import CompareError, compare_detail
 from app.services.generation import ChatFn, get_chat_fn
 from app.services.labels import judge_case_label, judge_rows_for_run
 from app.services.operations import (
@@ -692,6 +693,46 @@ def set_baseline(
     db.commit()
     db.refresh(baseline)
     return _baseline_read(db, baseline)
+
+
+@router.get("/runs/{run_id}/compare")
+def compare_run(
+    run_id: uuid.UUID,
+    against: str | None = Query(default=None),
+    tolerance: float = Query(default=0.05, ge=0, le=0.5),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Compare this run with a baseline (default) or another of its owner's runs.
+
+    Comparability is checked first: a different dataset version, criteria profile
+    or rules, safety set versions or test types returns the reasons and no deltas.
+    Both runs must belong to the signed-in user, or the answer is 404.
+    """
+    run = _owned_run(db, run_id, user)
+    if against is None or against == "baseline":
+        baseline = baseline_for_run(db, run)
+        if baseline is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No baseline is set for this dataset version, so there is nothing "
+                "to compare.",
+            )
+        baseline_run = db.get(Run, baseline.run_id)
+        if baseline_run is None:
+            raise HTTPException(status_code=404, detail="The baseline run no longer exists.")
+    else:
+        try:
+            baseline_id = uuid.UUID(against)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422, detail="against must be a run id or 'baseline'."
+            ) from exc
+        baseline_run = _owned_run(db, baseline_id, user)
+    try:
+        return compare_detail(db, run, baseline_run, tolerance=tolerance)
+    except CompareError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
 
 
 @router.delete("/runs/{run_id}/baseline", status_code=204)
