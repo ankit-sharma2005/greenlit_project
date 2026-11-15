@@ -47,6 +47,7 @@ export function RunTrend({ runs, thresholds }: RunTrendProps) {
     );
   }
 
+  const baseline = points.find((point) => point.baseline === true);
   const path = points.map((point, index) => `${x(index, points.length)},${y(point.score)}`).join(" ");
 
   const ariaLabel =
@@ -94,6 +95,24 @@ export function RunTrend({ runs, thresholds }: RunTrendProps) {
         <text className="chart-svg__muted" x={RIGHT - 2} y={y(thresholds.review) - 3} textAnchor="end">
           REVIEW {thresholds.review.toFixed(2)}
         </text>
+        {baseline ? (
+          <g data-testid="run-trend-baseline">
+            <line
+              className="baseline-line"
+              x1={LEFT}
+              y1={y(baseline.score)}
+              x2={RIGHT}
+              y2={y(baseline.score)}
+            />
+            <text
+              className="chart-svg__muted"
+              x={LEFT + 2}
+              y={y(baseline.score) - 3}
+            >
+              baseline {baseline.score.toFixed(2)}
+            </text>
+          </g>
+        ) : null}
         <polyline className="trend-line" points={path} />
         {points.map((point, index) => {
           const cx = x(index, points.length);

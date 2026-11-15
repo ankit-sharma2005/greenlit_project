@@ -214,6 +214,11 @@ export function RunHistory() {
                       {STATE_LABEL[run.state] ?? run.state}
                       {run.is_partial ? " · partial" : ""}
                     </span>
+                    {run.is_baseline ? (
+                      <span className="badge" data-testid="run-baseline-badge">
+                        baseline
+                      </span>
+                    ) : null}
                     {run.state === "interrupted" ? (
                       <p className="card__hint" data-testid="run-history-interrupted-note">
                         {INTERRUPTED_NOTE}

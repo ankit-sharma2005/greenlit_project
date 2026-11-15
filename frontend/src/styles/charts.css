@@ -174,3 +174,10 @@
 .shape--no-go {
   fill: var(--color-no-go);
 }
+
+/* The baseline run's score, as a dashed reference line under the trend. */
+.baseline-line {
+  stroke: var(--color-text-subtle);
+  stroke-width: 1;
+  stroke-dasharray: 5 3;
+}

@@ -4,6 +4,7 @@ import { Button } from "./Button";
 import { ApiError } from "../lib/api";
 import { clearBaseline, getBaseline, setBaseline, type Baseline } from "../lib/baselines";
 import { getRun, type Run, type RunRegression } from "../lib/runs";
+import { RegressionCompare } from "./RegressionCompare";
 import "../styles/results.css";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -34,6 +35,8 @@ export function BaselinePanel({ run }: BaselinePanelProps) {
   const [baseline, setBaselineValue] = useState<Baseline | null | undefined>(undefined);
   const [regression, setRegression] = useState<RunRegression | null>(run.regression ?? null);
   const [busy, setBusy] = useState(false);
+  // The detailed comparison loads only when asked for, so the card stays cheap.
+  const [showCompare, setShowCompare] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const completed = run.state === "completed";
@@ -197,6 +200,24 @@ export function BaselinePanel({ run }: BaselinePanelProps) {
                 ))}
               </ul>
             </div>
+          ) : null}
+        </>
+      ) : null}
+
+      {regression && baseline && !isBaseline ? (
+        <>
+          <Button
+            variant="secondary"
+            onClick={() => setShowCompare((current) => !current)}
+            data-testid="compare-toggle"
+          >
+            {showCompare ? "Hide the detailed comparison" : "Compare in detail"}
+          </Button>
+          {showCompare ? (
+            <RegressionCompare
+              runId={run.id}
+              baselineName={baseline.run_name ?? "the baseline"}
+            />
           ) : null}
         </>
       ) : null}

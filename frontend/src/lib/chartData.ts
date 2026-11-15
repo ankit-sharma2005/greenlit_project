@@ -205,6 +205,8 @@ export interface TrendRun {
   created_at: string;
   score: number | null;
   verdict: Verdict | null;
+  /** Set on the run pinned as the baseline, drawn as a dashed reference line. */
+  is_baseline?: boolean;
 }
 
 export interface TrendPoint {
@@ -214,6 +216,7 @@ export interface TrendPoint {
   at: string;
   score: number;
   verdict: Verdict;
+  baseline?: boolean;
 }
 
 /**
@@ -230,6 +233,7 @@ export function trendPoints(runs: readonly TrendRun[]): TrendPoint[] {
       at: run.created_at,
       score: run.score as number,
       verdict: run.verdict as Verdict,
+      baseline: run.is_baseline === true,
     }))
     .sort((a, b) => a.at.localeCompare(b.at));
 }
