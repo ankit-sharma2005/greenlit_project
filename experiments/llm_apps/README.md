@@ -1,4 +1,4 @@
-# LLM test apps (A1–A4)
+# LLM test apps (A1–A5)
 
 Four small, real, model-backed applications that GreenLit can test, kept next to the
 rule-based variants in `experiments/apps/` (which are unchanged). They exist so a run has
@@ -14,6 +14,7 @@ a real prompt, a real retriever, a real stream and a real tool call to look at.
 | **A2 docs-rag** | 9112 | Retrieval over nine short documents with a standard-library BM25; answers only from the top three passages, `context` is those passages. |
 | **A3 stream-bot** | 9113 | The same persona over SSE, NDJSON, chunked plain text, and one JSON body. |
 | **A4 tool-agent** | 9114 | An MCP server (Streamable HTTP) with `calculator`, `lookup_order` and `ask_assistant`. |
+| **A5 math-solver** | 9115 | Deterministic arithmetic, **no model**: a seeded 30 % of questions answer wrongly in `faulty_30`. |
 
 ## What you need
 
@@ -43,8 +44,8 @@ cd experiments/llm_apps
 ./stop_all.sh                  # Windows: .\stop_all.ps1
 ```
 
-The launcher refuses to start if 9111–9114 is already in use, starts only these four
-processes, writes their PIDs to `.run/pids.txt` (git-ignored) and prints the four URLs.
+The launcher refuses to start if 9111–9115 is already in use, starts only these five
+processes, writes their PIDs to `.run/pids.txt` (git-ignored) and prints the five URLs.
 The stop script stops only the PIDs it recorded.
 
 Environment, all optional:
@@ -61,8 +62,10 @@ Environment, all optional:
 | `LLM_MAX_TOKENS` | `512` | cap on the answer |
 | `MAX_QUESTION_CHARS` | `2000` | longer questions are a 400 |
 | `LLM_APPS_HOST` | `127.0.0.1` | `0.0.0.0` only when GreenLit runs in Docker |
+| `DEMO_MODE` | `correct` | A5's start mode: `correct` or `faulty_30` |
+| `DEMO_CONTROL` | unset | `1` exposes A5's `POST /_control/mode`, loopback only |
 
-`GET /health` on A1–A3 answers `{"status": "ok", "app": ..., "mode": ..., "provider": ...,
+`GET /health` on A1–A3 and A5 answers `{"status": "ok", "app": ..., "mode": ..., "provider": ...,
 "model": ...}` — no key. Every request appends one line to
 `experiments/results/app_logs/llm_<app>.jsonl` (git-ignored): time, mode, provider, model,
 truncated question, answer length, latency, status; never a header or a prompt.
@@ -86,6 +89,15 @@ reported as a GreenLit timeout first: **150** for these Ollama-backed apps (the 
 | A3 text | Acme streaming (text) | `http://host.docker.internal:9113/text` | POST | Plain text | — (the whole body) | — | `{"question": "{{question}}"}` | 150 |
 | A3 JSON | Acme streaming (one body) | `http://host.docker.internal:9113/` | POST | One JSON body | `$.answer` | — | `{"question": "{{question}}"}` | 150 |
 | A4 | Acme tool agent | `http://host.docker.internal:9114/mcp` | MCP (Streamable HTTP) | MCP tool result | tool `ask_assistant`, argument `question` | — | — | 150 |
+
+| A5 | Acme math solver | `http://host.docker.internal:9115/` | POST | One JSON body | `$.answer` | — | `{"question": "{{question}}"}` | 30 |
+
+A5 never calls a model, so its timeout can be short and its verdict is reproducible.
+`POST /_control/mode` (only with `DEMO_CONTROL=1`, only from loopback) takes
+`{"mode": "correct"}` or `{"mode": "faulty_30"}` and switches the running app, which
+is what a regression demo needs: run `correct`, pin the baseline, flip to `faulty_30`, run
+again. The faulty questions are chosen by a hash of the question and the seed, so the same
+questions are wrong on every start.
 
 For A4 as a **deterministic** target, pick the `calculator` tool with the argument
 `expression` instead of `ask_assistant`; it needs no model.

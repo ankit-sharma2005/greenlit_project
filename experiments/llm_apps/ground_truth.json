@@ -110,6 +110,36 @@
           "expected_greenlit_observation": "uncertain: excluded from the confusion matrix, reported separately"
         }
       ]
+    },
+    {
+      "app": "math-solver",
+      "port": 9115,
+      "entries": [
+        {
+          "claim": "every arithmetic question from experiments/data/questions.csv is answered with the computed number",
+          "truth_type": "deterministic",
+          "expected_greenlit_observation": "answer_match passes on every correct-mode case",
+          "proven_by": "tests/test_math_solver.py::test_the_arithmetic_questions_are_answered_correctly"
+        },
+        {
+          "claim": "the faulty set is the same every time for a given seed and is about 30 % of the questions",
+          "truth_type": "deterministic",
+          "expected_greenlit_observation": "the same cases fail in every faulty_30 run with that seed, and no case is intermittently wrong",
+          "proven_by": "tests/test_math_solver.py::test_the_faulty_set_is_the_same_every_time_for_a_seed"
+        },
+        {
+          "claim": "a hostile expression is a 400 and no code runs",
+          "truth_type": "deterministic",
+          "expected_greenlit_observation": "the app answers HTTP 400 with no answer field for an injection, never a computed value",
+          "proven_by": "tests/test_math_solver.py::test_a_hostile_expression_is_a_400_and_never_runs"
+        },
+        {
+          "claim": "the control endpoint exists only with DEMO_CONTROL=1 and only from loopback",
+          "truth_type": "deterministic",
+          "expected_greenlit_observation": "a mode change is a 404 without the flag and a 403 from a non-loopback address",
+          "proven_by": "tests/test_math_solver.py::test_the_control_endpoint_does_not_exist_without_the_flag"
+        }
+      ]
     }
   ]
 }
