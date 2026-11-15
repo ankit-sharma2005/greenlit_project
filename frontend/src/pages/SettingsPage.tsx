@@ -7,6 +7,7 @@ import { ConnectorsPanel } from "../components/ConnectorsPanel";
 import { CriteriaPanel } from "../components/CriteriaPanel";
 import { DatasetDrafting } from "../components/DatasetDrafting";
 import { DatasetsPanel } from "../components/DatasetsPanel";
+import { DemoAppsPanel } from "../components/DemoAppsPanel";
 import { JudgePanel } from "../components/JudgePanel";
 import { ModelDefaultsPanel } from "../components/ModelDefaultsPanel";
 import { PreferencesPanel } from "../components/PreferencesPanel";
@@ -23,6 +24,7 @@ const SECTIONS = [
   { name: "Account", detail: "Your profile, display name and session." },
   { name: "Audit log", detail: "Append-only record of sign-ins and changes." },
   { name: "Preferences", detail: "Appearance: dark, light or follow the system." },
+  { name: "Demo apps", detail: "Five local test apps GreenLit can be pointed at." },
 ];
 
 // Only tabs with a working panel are listed here; everything else keeps "soon".
@@ -36,6 +38,7 @@ const AVAILABLE = new Set([
   "Account",
   "Preferences",
   "Audit log",
+  "Demo apps",
 ]);
 
 export function SettingsPage() {
@@ -131,6 +134,16 @@ export function SettingsPage() {
             <AccountPanel />
           ) : active === "Preferences" ? (
             <PreferencesPanel />
+          ) : active === "Demo apps" ? (
+            <>
+              <h2>Demo apps</h2>
+              <p className="page__description" style={{ marginBottom: "var(--space-4)" }}>
+                Five small apps that live on this computer, so a first test needs no code.
+                Start one with the command on its card, connect it, then run a smoke test.
+                They are weak by design: local only, never exposed to the internet.
+              </p>
+              <DemoAppsPanel />
+            </>
           ) : active === "Audit log" ? (
             <>
               <h2>Audit log</h2>

@@ -16,7 +16,10 @@ import { WebsiteWizard } from "../components/WebsiteWizard";
 import { parseCurl as parseCurlLocally } from "../lib/curl";
 import { parseCurl, testConnection } from "../lib/connectors";
 import { buildMcpRunPayload, type McpConfig } from "../lib/mcp";
+import { useSearchParams } from "react-router-dom";
+
 import { ApiError } from "../lib/api";
+import { listDemoApps } from "../lib/demoApps";
 import { listDatasets } from "../lib/datasets";
 import { listProviders } from "../lib/providers";
 import { fetchPreferences } from "../lib/preferences";
@@ -220,6 +223,48 @@ export function NewTestPage() {
     import("../lib/connectors").ConnectTestResponse | null
   >(null);
   const [answerPath, setAnswerPath] = useState("");
+  // Settings → Demo apps links here with the catalog id; fill the target fields from
+  // that entry so the person only has to start the app and check it.
+  const [searchParams] = useSearchParams();
+  const demoAppId = searchParams.get("demo_app");
+  useEffect(() => {
+    if (!demoAppId) return;
+    let active = true;
+    listDemoApps()
+      .then((catalog) => {
+        if (!active) return;
+        const entry = catalog.items.find((item) => item.id === demoAppId);
+        if (!entry) return;
+        setUrl(entry.url);
+        setAnswerPath(entry.answer_path ?? "");
+        setRunsOnMyComputer(true);
+        if (entry.entry_point === "mcp") {
+          setConnector("mcp_server");
+          setMcpConfig((current) => ({
+            ...current,
+            url: entry.url,
+            tool: entry.mcp_tool ?? "",
+          }));
+          return;
+        }
+        setConnector("http_endpoint");
+        if (
+          entry.response_format === "json" ||
+          entry.response_format === "sse" ||
+          entry.response_format === "ndjson" ||
+          entry.response_format === "text"
+        ) {
+          setResponseFormat(entry.response_format);
+        }
+      })
+      .catch(() => {
+        /* The page still opens; the fields stay as they are. */
+      });
+    return () => {
+      active = false;
+    };
+  }, [demoAppId]);
+
   const [websiteWizard, setWebsiteWizard] = useState(false);
   const [websiteCurl, setWebsiteCurl] = useState("");
   const [websiteMessage, setWebsiteMessage] = useState("");
