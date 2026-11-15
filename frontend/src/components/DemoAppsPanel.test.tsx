@@ -124,7 +124,7 @@ describe("Demo apps panel", () => {
     await waitFor(() => expect(screen.getByTestId("demo-smoke-math-solver")).toBeInTheDocument());
     expect(screen.getByTestId("demo-smoke-math-solver")).toHaveAttribute(
       "href",
-      "/tests/new?demo_app=math-solver",
+      "/?demo_app=math-solver",
     );
     expect(screen.getByTestId("demo-open-math-solver")).toBeInTheDocument();
   });

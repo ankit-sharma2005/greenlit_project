@@ -173,7 +173,7 @@ export function DemoAppsPanel() {
                       Open target
                     </Link>
                     <Link
-                      to={`/tests/new?demo_app=${encodeURIComponent(app.id)}`}
+                      to={`/?demo_app=${encodeURIComponent(app.id)}`}
                       data-testid={`demo-smoke-${app.id}`}
                     >
                       Run a smoke test
