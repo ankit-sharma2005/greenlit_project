@@ -1174,3 +1174,41 @@ uncertain and therefore excluded from a confusion matrix.
 - The calculator's AST whitelist is tested on the named attacks, not fuzzed.
 - A4 was not driven through GreenLit's MCP panel in a browser; only the SDK client is proven.
 - Streaming was proven against the fake provider, not against a real Ollama/Groq stream.
+
+## Regression compare, demo apps, and the e2e-only catalog override (this round)
+
+`GET /runs/{id}/compare?against=<run>&tolerance=0.05` returns the comparison detail the
+Results page shows behind **Compare in detail**; the stored PASS/WARN/BLOCK is never
+recomputed. `scripts/greenlit_ci.py --baseline/--tolerance` adds exit **4** for a regressed
+comparison and leaves 0/1/2/3 alone.
+
+Limits, stated so nobody over-reads a green run:
+
+- The criteria "version" is a **SHA-256 fingerprint of `get_profile(...).to_dict()`**,
+  because no version number is stored. Editing a profile's rules changes the fingerprint
+  and two runs then compare as not comparable.
+- A comparison is keyed by **(owner, dataset_version)**; the watchdog pins the baseline of
+  that key. Two runs on the same dataset version under different owners never meet.
+- LLM-backed targets **always** carry the noise caution: a model can answer differently on
+  an unchanged app, so a delta there is a warning, not proof.
+- Per-case flips (`pass_to_fail`) are listed only when a run stored per-item rows, which
+  today means the judge produced per-item verdicts. A deterministic target with no judge
+  shows the flip at the metric level (answer match 1.00 to 0.00) instead, and the e2e
+  regression spec asserts exactly that.
+- The catalog probe override (`DEMO_CATALOG_PROBE_ORIGINS` + `GREENLIT_E2E=1`) is e2e-only:
+  both must be set in the environment before the API starts, it accepts only known catalog
+  ids and replaces only scheme/host/port, and no request, header, query or stored value can
+  set it. `backend/tests/test_demo_catalog_override.py` fences all of that.
+
+What is NOT proven:
+
+- Only five existing browser specs ran this round: `e2e-ui-shell`, `e2e-session-refresh`,
+  `e2e-baseline`, `e2e-preferences` and `e2e-charts`, plus the two new specs. Every other
+  e2e (admin, adversarial, analyst, calibration, check-panel-refusals, datagen,
+  dataset-generation, demo, judge, model-defaults, prompt-app, refusals, report, safety,
+  sessions, setup-audit, upload-outputs, website-wizard) was **NOT RUN**.
+- The five demo apps were never started from the e2e stack; the catalog spec proves the
+  probe and connect path against a health-only stand-in, not the real apps.
+- The regression speculation ran against a deterministic arithmetic stand-in, not the math
+  solver itself; the solver's own faulty mode is covered by its experiment tests.
+- No real model was called, so nothing here says anything about answer quality.

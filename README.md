@@ -248,6 +248,39 @@ To see regression: open the healthy run in **Results**, press **Set as baseline*
 run the broken app on the same dataset. Its verdict card reports **BLOCK** and names the
 metric that dropped (`answer_match`).
 
+### The five demo apps, and a regression you can watch
+
+`experiments/llm_apps` ships five small local apps on ports 9111 to 9115: a support bot, a
+docs RAG app, a streaming bot, a tool agent and a math solver. Start them from that
+directory with `bash start_all.sh` (PowerShell: `.\start_all.ps1`); the URLs, bodies and
+answer paths are in [experiments/llm_apps/README.md](experiments/llm_apps/README.md). Only
+the math solver (A5, port 9115) needs no model.
+
+**Settings → Demo apps** lists the five, probes each one's `GET /health` once with a 2 s
+timeout and no redirects, and shows **running** or **not running** with its mode. The check
+is a health probe of the compiled catalog addresses only; the web app never starts a
+process. **Connect** saves that app as one saved target (one per app, so a second click
+does not duplicate it); the local-only warning is on the page, because these apps are for
+`localhost` and never the internet. **Run a smoke test** opens New Test with the target,
+body template and answer path already filled in.
+
+A regression with the math solver, step by step:
+
+1. `DEMO_CONTROL=1 bash start_all.sh`. A5 answers correctly and exposes
+   `POST /_control/mode` to loopback only.
+2. Upload a CSV with `question,answer` columns of small sums (six rows are enough) and
+   start a run against `http://host.docker.internal:9115/` with the body
+   `{"question": "{{question}}"}` and answer path `$.answer`. The verdict is GO.
+3. Open that run in **Results** and press **Set as baseline**.
+4. Flip the app:
+   `curl -X POST http://127.0.0.1:9115/_control/mode -H "Content-Type: application/json" -d '{"mode": "faulty_30"}'`
+5. Run the same target and dataset again, open the run and press **Compare in detail**:
+   the classification is **Regressed**, the answer-match delta is negative, and anything
+   neither run measured says "not measured" instead of 0.00. No noise caution appears,
+   because the solver is arithmetic and deterministic.
+6. In CI, `scripts/greenlit_ci.py --baseline <run>` exits **4** for a regressed
+   comparison, and 0/1/2/3 keep their existing meanings.
+
 ## Add a model with Ollama
 
 GreenLit needs a model for three things: generating a dataset if you do not upload one,
