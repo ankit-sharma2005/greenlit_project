@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""Run a GreenLit quick test from a CI job."""
+"""Run a GreenLit quick test from a CI job.
+
+Exit codes:
+  0  GO
+  1  NO_GO, or REVIEW when --fail-on review is given
+  2  REVIEW
+  3  setup, authentication, transport or timeout problem
+  4  the compare against --baseline says "regressed"
+
+Exit code 4 is only reachable with --baseline, so every existing pipeline keeps
+the meaning it had.
+"""
 
 from __future__ import annotations
 
@@ -26,9 +37,7 @@ class GreenLitClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         cookies = http.cookiejar.CookieJar()
-        self.opener = urllib.request.build_opener(
-            urllib.request.HTTPCookieProcessor(cookies)
-        )
+        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookies))
 
     def request_json(
         self, method: str, path: str, payload: dict[str, Any] | None = None
@@ -50,17 +59,11 @@ class GreenLitClient:
                 f"GreenLit returned HTTP {exc.code} for {method} {path}."
             ) from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise GreenLitCIError(
-                f"Could not reach GreenLit at {self.base_url}: {exc}"
-            ) from exc
+            raise GreenLitCIError(f"Could not reach GreenLit at {self.base_url}: {exc}") from exc
         except json.JSONDecodeError as exc:
-            raise GreenLitCIError(
-                f"GreenLit returned invalid JSON for {method} {path}."
-            ) from exc
+            raise GreenLitCIError(f"GreenLit returned invalid JSON for {method} {path}.") from exc
         if not isinstance(body, dict):
-            raise GreenLitCIError(
-                f"GreenLit returned an unexpected response for {method} {path}."
-            )
+            raise GreenLitCIError(f"GreenLit returned an unexpected response for {method} {path}.")
         return body
 
 
@@ -83,16 +86,10 @@ def _arguments(argv: list[str] | None = None) -> argparse.Namespace:
         choices=("http_endpoint", "prompt_app", "upload_outputs"),
     )
     parser.add_argument("--target", required=True, help="URL, prompt, or upload target")
-    parser.add_argument(
-        "--provider-id", help="Saved provider id required for prompt_app"
-    )
+    parser.add_argument("--provider-id", help="Saved provider id required for prompt_app")
     parser.add_argument("--model", help="Optional model override for prompt_app")
-    parser.add_argument(
-        "--csv-file", type=Path, help="CSV file used as the approved dataset"
-    )
-    parser.add_argument(
-        "--dataset-id", help="Use an existing approved dataset instead of a CSV"
-    )
+    parser.add_argument("--csv-file", type=Path, help="CSV file used as the approved dataset")
+    parser.add_argument("--dataset-id", help="Use an existing approved dataset instead of a CSV")
     parser.add_argument(
         "--tests",
         nargs="+",
@@ -105,6 +102,21 @@ def _arguments(argv: list[str] | None = None) -> argparse.Namespace:
         "--fail-on",
         choices=("review",),
         help="Treat REVIEW as a pipeline failure (exit 1 instead of exit 2).",
+    )
+    parser.add_argument(
+        "--baseline",
+        metavar="RUN_ID|baseline",
+        help=(
+            "Compare the finished run with the pinned baseline (pass 'baseline') or with "
+            "this run id, and exit 4 when the comparison says regressed."
+        ),
+    )
+    parser.add_argument(
+        "--tolerance",
+        type=float,
+        default=0.05,
+        metavar="0..0.5",
+        help="Score drop allowed before the comparison is called a regression (default 0.05).",
     )
     parser.add_argument(
         "--allow-private-targets",
@@ -121,6 +133,8 @@ def _arguments(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("provide exactly one of --csv-file or --dataset-id")
     if args.entry_point == "prompt_app" and not args.provider_id:
         parser.error("--provider-id is required for prompt_app")
+    if not 0 <= args.tolerance <= 0.5:
+        parser.error("--tolerance must be between 0 and 0.5")
     return args
 
 
@@ -135,9 +149,7 @@ def _payload(args: argparse.Namespace) -> dict[str, Any]:
         try:
             payload["csv"] = args.csv_file.read_text(encoding="utf-8")
         except OSError as exc:
-            raise GreenLitCIError(
-                f"Could not read CSV file {args.csv_file}: {exc}"
-            ) from exc
+            raise GreenLitCIError(f"Could not read CSV file {args.csv_file}: {exc}") from exc
     if args.dataset_id is not None:
         payload["dataset_id"] = args.dataset_id
     if args.provider_id is not None:
@@ -155,9 +167,7 @@ def _run(args: argparse.Namespace, email: str, password: str) -> int:
     if remaining <= 0:
         raise GreenLitCIError("Timed out before authentication completed.")
     client.timeout = min(remaining, 30.0)
-    client.request_json(
-        "POST", "/api/v1/auth/login", {"email": email, "password": password}
-    )
+    client.request_json("POST", "/api/v1/auth/login", {"email": email, "password": password})
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise GreenLitCIError("Timed out before the quick test was created.")
@@ -220,9 +230,73 @@ def _run(args: argparse.Namespace, email: str, password: str) -> int:
             raise GreenLitCIError(f"Run {run_id} returned an incomplete failed metric.")
         failed_metrics.append(f"{name} ({metric_score:.2f}; threshold {threshold:.2f})")
     print(f"Failed metrics: {', '.join(failed_metrics) if failed_metrics else 'none'}")
+    if args.baseline:
+        regression_code = _print_compare(client, run_id, args)
+        if regression_code is not None:
+            return regression_code
     if args.fail_on == "review" and verdict == "REVIEW":
         return 1
     return {"GO": 0, "NO_GO": 1, "REVIEW": 2}[verdict]
+
+
+def _printable(value: str) -> str:
+    """Keep a CI log readable on a console that cannot encode every character."""
+    encoding = sys.stdout.encoding or "utf-8"
+    return value.encode(encoding, "replace").decode(encoding)
+
+
+def _print_compare(client: GreenLitClient, run_id: str, args: argparse.Namespace) -> int | None:
+    """Print the comparison; 4 only when it is called regressed."""
+    path = (
+        f"/api/v1/runs/{run_id}/compare?against="
+        f"{urllib.parse.quote(args.baseline, safe='')}&tolerance={args.tolerance}"
+    )
+    detail = client.request_json("GET", path)
+    comparable = detail.get("comparable") is True
+    print(f"Comparable: {'yes' if comparable else 'no'}")
+    if not comparable:
+        reasons = detail.get("reasons")
+        if isinstance(reasons, list):
+            for reason in reasons:
+                print(f"Not comparable: {reason}")
+        return None
+    classification = detail.get("classification")
+    reason = detail.get("classification_reason")
+    print(f"Regression: {classification}")
+    if isinstance(reason, str) and reason:
+        print(f"Regression reason: {_printable(reason)}")
+    verdict = detail.get("verdict")
+    if isinstance(verdict, dict):
+        print(
+            f"Verdict change: {verdict.get('baseline')} -> {verdict.get('current')} "
+            f"({verdict.get('direction')})"
+        )
+    score = detail.get("score")
+    if isinstance(score, dict) and isinstance(score.get("delta"), (int, float)):
+        print(f"Score delta: {score['delta']:+.2f}")
+    for metric in detail.get("metrics") or []:
+        if not isinstance(metric, dict):
+            continue
+        if metric.get("status") != "measured":
+            print(f"Metric not measured on both sides: {metric.get('name')}")
+            continue
+        delta = metric.get("delta")
+        if isinstance(delta, (int, float)) and delta != 0:
+            print(f"Metric delta: {metric.get('name')} {delta:+.2f}")
+    cases = detail.get("cases")
+    if isinstance(cases, dict):
+        for kind, label in (
+            ("pass_to_fail", "Cases pass -> fail"),
+            ("fail_to_pass", "Cases fail -> pass"),
+            ("new_errors", "Cases newly erroring"),
+        ):
+            entries = cases.get(kind)
+            if isinstance(entries, list) and entries:
+                print(f"{label}: {len(entries)}")
+    caution = detail.get("noise_caution")
+    if isinstance(caution, str) and caution:
+        print(f"Note: {_printable(caution)}")
+    return 4 if classification == "regressed" else None
 
 
 def main(argv: list[str] | None = None) -> int:

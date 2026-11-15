@@ -411,8 +411,11 @@ Everything works through the API alone. `POST /api/v1/quick-test` creates what a
 the Celery worker executes the cases and `GET /api/v1/runs/{id}` returns the stored verdict.
 The standard-library runner logs in with `GREENLIT_EMAIL` and `GREENLIT_PASSWORD`, polls the
 run to completion, and reports the verdict, weighted score, and failed instrumented metrics.
-Exit codes are 0 for GO, 1 for NO_GO, 2 for REVIEW, and 3 for request errors or timeouts;
-`--fail-on review` maps REVIEW to exit 1. A copyable, inactive GitHub Actions example is at
+Exit codes are 0 for GO, 1 for NO_GO, 2 for REVIEW, 3 for request errors or timeouts, and
+4 for a regression: `--baseline baseline` (or a run id) compares the finished run with the
+pinned baseline and exits 4 only when the comparison is called regressed; `--tolerance`
+(0 to 0.5, default 0.05) sets how large a score drop still counts as a change.
+`--fail-on review` maps REVIEW to exit 1. Without `--baseline` no exit code changed. A copyable, inactive GitHub Actions example is at
 `.github/workflows/greenlit-example.yml.disabled`.
 
 ```bash
