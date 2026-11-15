@@ -147,7 +147,8 @@ def comparability(baseline: RunFacts, current: RunFacts) -> list[str]:
 
 def _target_url(run: Run) -> str:
     snapshot = run.settings_snapshot or {}
-    for key in ("target", "mcp_url"):
+    # Runs started from the API store the HTTP target under "url".
+    for key in ("url", "target", "mcp_url"):
         value = snapshot.get(key)
         if isinstance(value, str) and value:
             return value
