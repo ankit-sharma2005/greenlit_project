@@ -163,9 +163,7 @@ def test_an_unchanged_comparison_keeps_the_verdict_code(fake_api, tmp_path: Path
     assert "Regression: unchanged" in result.stdout
 
 
-def test_a_not_comparable_answer_prints_reasons_and_no_deltas(
-    fake_api, tmp_path: Path
-) -> None:
+def test_a_not_comparable_answer_prints_reasons_and_no_deltas(fake_api, tmp_path: Path) -> None:
     scenario = Scenario(
         compare=_compare_body(
             None,
@@ -184,8 +182,14 @@ def test_a_not_comparable_answer_prints_reasons_and_no_deltas(
 
 
 def test_a_tolerance_outside_the_range_is_refused(fake_api, tmp_path: Path) -> None:
-    result = _run_cli(fake_api(Scenario(compare=_compare_body("regressed"))), tmp_path,
-                      "--baseline", "baseline", "--tolerance", "0.9")
+    result = _run_cli(
+        fake_api(Scenario(compare=_compare_body("regressed"))),
+        tmp_path,
+        "--baseline",
+        "baseline",
+        "--tolerance",
+        "0.9",
+    )
     assert result.returncode == 2
     assert "between 0 and 0.5" in result.stderr
 
