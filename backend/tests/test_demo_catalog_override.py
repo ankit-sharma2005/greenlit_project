@@ -113,7 +113,7 @@ def test_no_request_can_choose_the_probed_address(
         },
     )
     assert response.status_code == 200, response.text
-    # Five probes, all on the catalog's own paths, with only the support-bot origin
+    # Eight probes, all on the catalog's own paths, with only the support-bot origin
     # replaced by the startup value — nothing from the request appears in a URL.
     assert probed == [
         "http://127.0.0.1:9505/health",
@@ -121,6 +121,9 @@ def test_no_request_can_choose_the_probed_address(
         "http://host.docker.internal:9113/sse/health",
         "http://host.docker.internal:9114/mcp/health",
         "http://host.docker.internal:9115/health",
+        "http://host.docker.internal:9116/health",
+        "http://host.docker.internal:9117/health",
+        "http://host.docker.internal:9118/api/chat/health",
     ]
     assert not any("evil.test" in url or "169.254" in url for url in probed)
     assert demo_catalog.PROBE_ORIGINS == {"support-bot": "http://127.0.0.1:9505"}
@@ -157,4 +160,4 @@ def test_the_probe_keeps_only_the_health_fields(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(demo_catalog, "probe_health", failing_entry)
     statuses: list[dict[str, Any]] = demo_catalog.statuses()
-    assert [item["status"] for item in statuses] == [{"state": "down"}] * 5
+    assert [item["status"] for item in statuses] == [{"state": "down"}] * 8

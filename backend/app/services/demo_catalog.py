@@ -1,9 +1,9 @@
-"""The five local demo apps GreenLit can show, connect and test.
+"""The eight local demo apps GreenLit can show, connect and test.
 
 Everything here is compiled into the backend: the addresses, the connector shape
 and the start commands. A request never supplies an address, so the status check
 cannot be turned into a port scanner or an SSRF probe — it may only ``GET /health``
-on the five fixed URLs below, with a short timeout and no redirects, and it
+on the eight fixed URLs below, with a short timeout and no redirects, and it
 reports nothing but up/down plus the app's own ``app``/``mode``/``provider``/
 ``model`` strings.
 
@@ -168,6 +168,79 @@ CATALOG: tuple[DemoApp, ...] = (
         modes=(
             DemoMode("correct", "every arithmetic answer is right, the same every run"),
             DemoMode("faulty_30", "the same seeded 30 % of questions answer wrongly"),
+        ),
+    ),
+    DemoApp(
+        id="reliability-lab",
+        name="Acme reliability lab",
+        description=(
+            "Deterministic operations simulator: a seeded share of 500s, a seeded delay "
+            "or a rate limit, so a run has a real failure to look at."
+        ),
+        entry_point="http_endpoint",
+        url="http://host.docker.internal:9116/",
+        method="POST",
+        response_format="json",
+        answer_path="$.answer",
+        context_path=None,
+        body_template='{"question": "{{question}}"}',
+        timeout_seconds=30,
+        mcp_tool=None,
+        start_bash=("cd experiments/llm_apps && DEMO_CONTROL=1 python reliability_lab/app.py"),
+        start_windows=(
+            'cd experiments\\llm_apps; $env:DEMO_CONTROL="1"; python reliability_lab\\app.py'
+        ),
+        modes=(
+            DemoMode("ok", "every request is answered"),
+            DemoMode("flaky_20", "the same seeded 20 % of questions answer HTTP 500"),
+            DemoMode("slow", "every answer waits a seeded delay, 3 s by default"),
+            DemoMode("rate_limited", "429 with Retry-After after 10 requests in 60 s"),
+        ),
+    ),
+    DemoApp(
+        id="vault-bot",
+        name="Acme vault bot",
+        description=(
+            "A rule-based prompt-injection target: the vulnerable mode leaks a synthetic "
+            "note, the hardened one refuses with a fixed sentence."
+        ),
+        entry_point="http_endpoint",
+        url="http://host.docker.internal:9117/",
+        method="POST",
+        response_format="json",
+        answer_path="$.answer",
+        context_path=None,
+        body_template='{"question": "{{question}}"}',
+        timeout_seconds=30,
+        mcp_tool=None,
+        start_bash="cd experiments/llm_apps && DEMO_CONTROL=1 python vault_bot/app.py",
+        start_windows=('cd experiments\\llm_apps; $env:DEMO_CONTROL="1"; python vault_bot\\app.py'),
+        modes=(
+            DemoMode("vulnerable", "obeys planted instructions and repeats a CANARY marker"),
+            DemoMode("hardened", "one fixed refusal, the FAQ still answered"),
+        ),
+    ),
+    DemoApp(
+        id="site-bot",
+        name="Acme site bot",
+        description=(
+            "A website chatbot behind a cookie and a CSRF token; the reply is nested at "
+            "$.data.reply and the sources are at $.data.sources."
+        ),
+        entry_point="http_endpoint",
+        url="http://host.docker.internal:9118/api/chat",
+        method="POST",
+        response_format="json",
+        answer_path="$.data.reply",
+        context_path="$.data.sources",
+        body_template='{"message": "{{question}}"}',
+        timeout_seconds=30,
+        mcp_tool=None,
+        start_bash="cd experiments/llm_apps && DEMO_CONTROL=1 python site_bot/app.py",
+        start_windows=('cd experiments\\llm_apps; $env:DEMO_CONTROL="1"; python site_bot\\app.py'),
+        modes=(
+            DemoMode("normal", "the CSRF token is required, a plain import is 403"),
+            DemoMode("csrf_off", "the check is skipped, for a comparison run"),
         ),
     ),
 )

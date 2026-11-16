@@ -116,7 +116,7 @@ def handler(control_enabled: bool, log_dir: Path | None) -> type[QuietHandler]:
             return getattr(self.server, "site_mode", "normal")
 
         def do_GET(self) -> None:
-            if self.path.split("?")[0] == "/health":
+            if self.path.split("?")[0].endswith("/health"):
                 send_json(self, 200, {"status": "ok", "app": APP, "mode": self.mode})
                 return
             if self.path.split("?")[0] != "/chat-page":

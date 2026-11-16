@@ -39,6 +39,9 @@ def _token(url: str) -> tuple[str, str]:
 def test_health_shape(site: str) -> None:
     health = requests.get(f"{site}/health", timeout=10).json()
     assert health == {"status": "ok", "app": "site-bot", "mode": "normal"}
+    # The catalog probes "<url path>/health", so /api/chat/health answers too.
+    nested = requests.get(f"{site}/api/chat/health", timeout=10).json()
+    assert nested == health
 
 
 def test_the_page_sets_both_cookies_and_embeds_the_token(site: str) -> None:

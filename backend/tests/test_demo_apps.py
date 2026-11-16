@@ -21,11 +21,29 @@ def register(client: TestClient, email: str = "ada@example.com") -> None:
     assert response.status_code == 201, response.text
 
 
-def test_the_catalog_holds_the_five_fixed_apps() -> None:
+def test_the_catalog_holds_the_eight_fixed_apps() -> None:
     ids = [entry.id for entry in demo_catalog.CATALOG]
-    assert ids == ["support-bot", "docs-rag", "stream-bot", "tool-agent", "math-solver"]
+    assert ids == [
+        "support-bot",
+        "docs-rag",
+        "stream-bot",
+        "tool-agent",
+        "math-solver",
+        "reliability-lab",
+        "vault-bot",
+        "site-bot",
+    ]
     ports = [entry.url.split(":")[2].split("/")[0] for entry in demo_catalog.CATALOG]
-    assert ports == ["9111", "9112", "9113", "9114", "9115"]
+    assert ports == [
+        "9111",
+        "9112",
+        "9113",
+        "9114",
+        "9115",
+        "9116",
+        "9117",
+        "9118",
+    ]
     for entry in demo_catalog.CATALOG:
         assert entry.name and entry.description
         assert entry.start_bash and entry.start_windows
@@ -95,7 +113,7 @@ def test_the_status_endpoint_shows_up_and_down(
 
     monkeypatch.setattr(demo_catalog, "probe_health", fake_probe)
     body = client.get("/api/v1/demo-apps").json()
-    assert len(body["items"]) == 5
+    assert len(body["items"]) == 8
     assert body["items"][0]["status"]["state"] == "up"
     assert body["items"][0]["status"]["mode"] == "correct"
     assert body["items"][4]["status"] == {"state": "down"}
