@@ -22,13 +22,17 @@ router = APIRouter(prefix="/api/v1/users", tags=["users"])
 def list_users(
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    search: str | None = Query(default=None, max_length=320),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> UserListResponse:
-    """List accounts (admin only)."""
-    total = db.scalar(select(func.count()).select_from(User)) or 0
+    """List accounts (admin only), optionally filtered by a piece of the email."""
+    query = select(User)
+    if search and search.strip():
+        query = query.where(User.email.ilike(f"%{search.strip().lower()}%"))
+    total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     users = db.scalars(
-        select(User).order_by(User.created_at, User.email).limit(limit).offset(offset)
+        query.order_by(User.created_at, User.email).limit(limit).offset(offset)
     ).all()
     return UserListResponse(
         items=[UserRead.model_validate(user) for user in users],
@@ -60,6 +64,12 @@ def change_role(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="The last admin cannot be demoted. Promote another admin first.",
             )
+
+    if target.id == admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You cannot change your own role here. Ask another admin, or use the CLI.",
+        )
 
     previous = target.role
     target.role = payload.role

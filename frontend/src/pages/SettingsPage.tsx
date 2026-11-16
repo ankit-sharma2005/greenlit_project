@@ -1,5 +1,7 @@
 import { useState } from "react";
 
+import { useAuth } from "../auth/authContext";
+
 import { AccountPanel } from "../components/AccountPanel";
 import { AuditPanel } from "../components/AuditPanel";
 import { ComingSoon } from "../components/ComingSoon";
@@ -13,6 +15,7 @@ import { ModelDefaultsPanel } from "../components/ModelDefaultsPanel";
 import { PreferencesPanel } from "../components/PreferencesPanel";
 import { ProvidersPanel } from "../components/ProvidersPanel";
 import { SafetyPanel } from "../components/SafetyPanel";
+import { UsersRolesPanel } from "../components/UsersRolesPanel";
 
 const SECTIONS = [
   { name: "Providers and models", detail: "Ollama by default, plus OpenAI-compatible providers." },
@@ -25,6 +28,7 @@ const SECTIONS = [
   { name: "Audit log", detail: "Append-only record of sign-ins and changes." },
   { name: "Preferences", detail: "Appearance: dark, light or follow the system." },
   { name: "Demo apps", detail: "Five local test apps GreenLit can be pointed at." },
+  { name: "Users and roles", detail: "Who can do what. Admins only." },
 ];
 
 // Only tabs with a working panel are listed here; everything else keeps "soon".
@@ -39,10 +43,17 @@ const AVAILABLE = new Set([
   "Preferences",
   "Audit log",
   "Demo apps",
+  "Users and roles",
 ]);
 
 export function SettingsPage() {
+  const { user } = useAuth();
   const [active, setActive] = useState("Datasets");
+  // Users and roles is admin-only: the server answers 403 to everyone else, and
+  // the tab is not offered to them at all.
+  const sections = SECTIONS.filter(
+    (section) => section.name !== "Users and roles" || user?.role === "admin",
+  );
   const current = SECTIONS.find((section) => section.name === active) ?? {
     name: active,
     detail: "",
@@ -61,7 +72,7 @@ export function SettingsPage() {
 
       <div className="settings__layout">
         <nav className="settings__nav" aria-label="Settings sections">
-          {SECTIONS.map((section) => (
+          {sections.map((section) => (
             <button
               key={section.name}
               type="button"
@@ -143,6 +154,15 @@ export function SettingsPage() {
                 They are weak by design: local only, never exposed to the internet.
               </p>
               <DemoAppsPanel />
+            </>
+          ) : active === "Users and roles" ? (
+            <>
+              <h2>Users and roles</h2>
+              <p className="page__description" style={{ marginBottom: "var(--space-4)" }}>
+                Promote an account to reviewer or admin, or set it back to member. Every change
+                is audited, and the last admin cannot be demoted.
+              </p>
+              <UsersRolesPanel />
             </>
           ) : active === "Audit log" ? (
             <>
