@@ -100,6 +100,9 @@ services:
     command: npm run dev -- --host 0.0.0.0
     environment:
       VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8003}
+      # The source is bind-mounted from Windows, where Vite's watcher sees no
+      # events inside the container; polling keeps the dev server current.
+      CHOKIDAR_USEPOLLING: "true"
     ports:
       - "${WEB_PORT:-5177}:5173"
     volumes:

@@ -205,6 +205,14 @@ key-encryption imports require `cryptography` to be installed in the image. Rebu
 recreate the API after changing runtime dependencies:
 `docker compose up --build -d --no-deps api`. Do not remove the database or Redis volumes.
 
+The dev web container runs Vite against a bind-mounted `frontend/src`. On Windows that mount
+delivers no file-change events into the container, so Vite keeps serving a stale module graph
+after an edit (a hard reload does not help; the server itself is stale). The dev compose
+service therefore sets `CHOKIDAR_USEPOLLING=true`, and `vite.config.ts` turns on
+`server.watch.usePolling` with a 1000 ms interval only when that variable is `"true"`.
+Polling costs CPU on a large tree, which is why it is off by default, absent from the e2e
+compose and irrelevant to `npm run build`.
+
 **Create the first account and it becomes the admin.** Every later account is a member;
 changing a role is an admin API call for now (`PATCH /api/v1/users/{id}/role`, see
 `/docs`) — there is no user-administration screen yet.
