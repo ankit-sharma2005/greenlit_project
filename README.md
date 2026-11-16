@@ -213,9 +213,31 @@ service therefore sets `CHOKIDAR_USEPOLLING=true`, and `vite.config.ts` turns on
 Polling costs CPU on a large tree, which is why it is off by default, absent from the e2e
 compose and irrelevant to `npm run build`.
 
-**Create the first account and it becomes the admin.** Every later account is a member;
-changing a role is an admin API call for now (`PATCH /api/v1/users/{id}/role`, see
-`/docs`) — there is no user-administration screen yet.
+**Create the first account and it becomes the admin.** Every later account is a member, and
+there is no public way to sign up as an admin or a reviewer: the register endpoint does not
+accept a role and the API refuses one in the payload. The roles are `admin`, `member` and
+`reviewer`.
+
+An admin can promote accounts from **Settings → Users and roles** (list, search by email,
+change a role; every change is audited and the last admin cannot be demoted). On a local
+install, or when the only admin is locked out, use the operator CLI inside the API container:
+
+```
+docker compose exec api python -m app.cli list-users --limit 20
+docker compose exec api python -m app.cli set-role --email you@example.com --role admin
+```
+
+It only changes an account that already exists (it never creates users and never touches or
+prints passwords), refuses to demote the last admin, and writes one audit entry with actor
+`cli`. An admin cannot change their own role in the UI; that is what this command is for.
+
+**Before you expose a deployment:** on a brand-new database the *first* account to register
+becomes the admin. Whoever registers first on a reachable instance takes that role, so create
+your own account (or close registration) before putting GreenLit on a network other people can
+reach. Deployments that already have accounts are unaffected.
+
+The role guard answers "Your role does not allow this action."; the calibration, review-queue
+and audit panels add which role the action needs and who can change it.
 
 ## Before you deploy or share this repo
 

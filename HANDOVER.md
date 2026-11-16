@@ -1212,3 +1212,30 @@ What is NOT proven:
 - The regression speculation ran against a deterministic arithmetic stand-in, not the math
   solver itself; the solver's own faulty mode is covered by its experiment tests.
 - No real model was called, so nothing here says anything about answer quality.
+
+## Roles, the operator CLI, and the admin screen (this round)
+
+A register request cannot choose a role: `RegisterRequest` is `extra="forbid"` with email,
+name and password only. `api/auth.py` makes the first account on an empty database the admin
+(`is_first_user = count(users) == 0`) and every later account a member. That is the only
+self-service path, and on a fresh reachable deployment whoever registers first takes it.
+
+`python -m app.cli set-role --email … --role admin|reviewer|member` is the operator door:
+inside the API container, existing accounts only, role validated, the last admin protected,
+one `user.role_changed` audit entry with actor `cli`, and no password or hash anywhere.
+`list-users --limit N` prints email, role and creation date. Tests: `backend/tests/test_cli.py`.
+
+Admins also get Settings → Users and roles (`UsersRolesPanel.tsx`, `/api/v1/users` with
+`search`/`limit`/`offset` and `PATCH /api/v1/users/{id}/role`). Members and reviewers get 403
+from the API and no tab; an admin cannot change their own role there; the last admin cannot be
+demoted; every change is audited. Tests: `backend/tests/test_admin_users.py` and
+`UsersRolesPanel.test.tsx`.
+
+The generic 403 keeps its exact text because three existing tests pin it; a second sentence
+("This needs the reviewer or admin role. Ask an admin to change your role.") is added next to
+it by `src/lib/roleHint.ts`.
+
+What is NOT proven here: no browser spec exercises the role change yet (the e2e proof for this
+round is queued), the CLI is only proven against the test database and has not yet been run
+against the dev database in this round, and nothing was tested with an external identity
+provider.
