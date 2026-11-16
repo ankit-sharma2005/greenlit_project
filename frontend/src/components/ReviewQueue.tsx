@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "./Button";
 import { ApiError } from "../lib/api";
+import { isRoleRefusal, ROLE_HINT } from "../lib/roleHint";
 import { listReviewQueue, saveLabel, type HumanLabel, type ReviewCase } from "../lib/labels";
 import "../styles/results.css";
 
@@ -71,6 +72,9 @@ export function ReviewQueue({ onLabelled }: ReviewQueueProps) {
       {error ? (
         <p className="form-error" role="alert" data-testid="review-error">
           {error}
+          {isRoleRefusal(error) ? (
+            <span data-testid="review-role-hint"> {ROLE_HINT}</span>
+          ) : null}
         </p>
       ) : null}
 

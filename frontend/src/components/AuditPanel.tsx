@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "./Button";
 import { ApiError } from "../lib/api";
+import { isRoleRefusal, ROLE_HINT } from "../lib/roleHint";
 import { listAuditEvents, type AuditEvent } from "../lib/audit";
 import "../styles/results.css";
 
@@ -82,6 +83,9 @@ export function AuditPanel() {
       {error ? (
         <p className="form-error" role="alert" data-testid="audit-error">
           {error}
+          {isRoleRefusal(error) ? (
+            <span data-testid="audit-role-hint"> {ROLE_HINT}</span>
+          ) : null}
         </p>
       ) : null}
 
