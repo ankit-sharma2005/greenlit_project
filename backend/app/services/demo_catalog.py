@@ -19,6 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -362,8 +363,14 @@ def probe_health(entry: DemoApp) -> dict[str, str]:
 
 
 def statuses() -> list[dict[str, Any]]:
-    """The catalog with one probe each, in catalog order."""
+    """The catalog with one probe each, in catalog order.
+
+    The probes run together: one dead app costs its own timeout, never the sum of
+    every other app's, so the page cannot stall as the catalog grows.
+    """
+    with ThreadPoolExecutor(max_workers=len(CATALOG)) as pool:
+        probed = list(pool.map(probe_health, CATALOG))
     items: list[dict[str, Any]] = []
-    for entry in CATALOG:
-        items.append({**app_dict(entry), "status": probe_health(entry)})
+    for entry, status in zip(CATALOG, probed, strict=True):
+        items.append({**app_dict(entry), "status": status})
     return items

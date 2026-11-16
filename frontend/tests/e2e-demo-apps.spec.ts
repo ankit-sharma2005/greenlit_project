@@ -9,7 +9,7 @@ import { API, WEB, register } from "./helpers";
  * `scripts/run-e2e.sh` starts two stand-ins and exports the test-only probe
  * override; the backend reads it once at startup. support-bot is on :9505 with a
  * health-only server, math-solver is on :9506 with the deterministic app the
- * regression spec uses, and the other three keep their real (down) addresses.
+ * regression spec uses, and the other six keep their real (down) addresses.
  */
 const SCREENS = "../local-prompts/screens";
 
@@ -32,6 +32,10 @@ test("the catalog shows what is up, connects one target and keeps the warning", 
     await expect(page.getByTestId(`demo-status-${down}`)).toHaveText("not running");
     await expect(page.getByTestId(`demo-mode-${down}`)).toContainText("not reported");
   }
+  for (const down of ["reliability-lab", "vault-bot", "site-bot"]) {
+    await expect(page.getByTestId(`demo-status-${down}`)).toHaveText("not running");
+  }
+  await expect(page.getByTestId(/^demo-card-/)).toHaveCount(8);
   await expect(page.getByTestId("demo-apps-warning")).toContainText("never be exposed");
 
   await page.setViewportSize({ width: 1280, height: 900 });

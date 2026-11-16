@@ -149,7 +149,7 @@ export function SettingsPage() {
             <>
               <h2>Demo apps</h2>
               <p className="page__description" style={{ marginBottom: "var(--space-4)" }}>
-                Five small apps that live on this computer, so a first test needs no code.
+                Eight small apps that live on this computer, so a first test needs no code.
                 Start one with the command on its card, connect it, then run a smoke test.
                 They are weak by design: local only, never exposed to the internet.
               </p>
