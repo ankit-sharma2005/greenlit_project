@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start the five local test apps (A1-A4 LLM-backed, A5 deterministic) and remember only their PIDs.
+# Start the eight local test apps (A1-A4 LLM-backed, A5-A8 deterministic) and remember only their PIDs.
 #
 # Local test subjects only: they bind 127.0.0.1 by default and must never be
 # exposed to the internet. Set LLM_APPS_HOST=0.0.0.0 only when GreenLit runs in
@@ -29,7 +29,7 @@ finally:
 PY
 }
 
-for port in 9111 9112 9113 9114 9115; do
+for port in 9111 9112 9113 9114 9115 9116 9117 9118; do
   if [ -n "$(port_free "$port")" ]; then
     echo "port $port is already in use; refusing to start" >&2
     exit 1
@@ -54,11 +54,14 @@ start docs-rag "$PY" docs_rag/app.py --host "$HOST" --port 9112
 start stream-bot "$PY" stream_bot/app.py --host "$HOST" --port 9113
 start tool-agent "$VENV_PY" tool_agent/server.py --host "$HOST" --port 9114
 start math-solver "$PY" math_solver/app.py --host "$HOST" --port 9115 --mode "${DEMO_MODE:-correct}"
+start reliability-lab "$PY" reliability_lab/app.py --host "$HOST" --port 9116 --mode "${LAB_MODE:-ok}"
+start vault-bot "$PY" vault_bot/app.py --host "$HOST" --port 9117 --mode "${VAULT_MODE:-vulnerable}"
+start site-bot "$PY" site_bot/app.py --host "$HOST" --port 9118 --mode "${SITE_MODE:-normal}"
 
 for _ in $(seq 1 60); do
   if "$PY" - <<'PY'
 import sys, urllib.request
-for port in (9111, 9112, 9113):
+for port in (9111, 9112, 9113, 9116, 9117, 9118):
     try:
         urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=1)
     except Exception:
@@ -77,4 +80,7 @@ echo "A2 docs-rag     http://$HOST:9112/   (RAG_MODE=${RAG_MODE:-normal})"
 echo "A3 stream-bot   http://$HOST:9113/  /sse  /ndjson  /text"
 echo "A4 tool-agent   http://$HOST:9114/mcp  (MCP, tool: ask_assistant or calculator)"
 echo "A5 math-solver  http://$HOST:9115/  (deterministic, mode ${DEMO_MODE:-correct}; POST /_control/mode needs DEMO_CONTROL=1)"
+echo "A6 reliability  http://$HOST:9116/  (deterministic, mode ${LAB_MODE:-ok}: ok|flaky_20|slow|rate_limited)"
+echo "A7 vault-bot    http://$HOST:9117/  (deterministic, mode ${VAULT_MODE:-vulnerable}: vulnerable|hardened)"
+echo "A8 site-bot     http://$HOST:9118/chat-page  /api/chat  (deterministic, mode ${SITE_MODE:-normal}: normal|csrf_off)"
 echo "PIDs in $PID_FILE; stop with ./stop_all.sh"

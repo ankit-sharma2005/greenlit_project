@@ -1,8 +1,10 @@
-# LLM test apps (A1–A5)
+# LLM test apps (A1–A8)
 
 Four small, real, model-backed applications that GreenLit can test, kept next to the
 rule-based variants in `experiments/apps/` (which are unchanged). They exist so a run has
-a real prompt, a real retriever, a real stream and a real tool call to look at.
+a real prompt, a real retriever, a real stream and a real tool call to look at. A5–A8
+are deterministic: they answer from rules and a hash, never from a model, so their
+outcome is the same on every run.
 
 > **Local test subjects only.** These apps are for this machine. They bind `127.0.0.1` by
 > default, have no authentication and are not hardened for anything else. Never expose them
@@ -15,6 +17,9 @@ a real prompt, a real retriever, a real stream and a real tool call to look at.
 | **A3 stream-bot** | 9113 | The same persona over SSE, NDJSON, chunked plain text, and one JSON body. |
 | **A4 tool-agent** | 9114 | An MCP server (Streamable HTTP) with `calculator`, `lookup_order` and `ask_assistant`. |
 | **A5 math-solver** | 9115 | Deterministic arithmetic, **no model**: a seeded 30 % of questions answer wrongly in `faulty_30`. |
+| **A6 reliability-lab** | 9116 | Deterministic operations simulator: `ok`, a seeded 20 % of 500s (`flaky_20`), a seeded delay (`slow`), 429 with `Retry-After` after N per window (`rate_limited`). |
+| **A7 vault-bot** | 9117 | Deterministic prompt-injection target: `vulnerable` obeys planted instructions and repeats a `CANARY-xxxx` marker, `hardened` refuses with one fixed sentence. |
+| **A8 site-bot** | 9118 | Deterministic website chatbot behind cookies + CSRF: `/chat-page` sets the token, `/api/chat` needs the cookie and a matching `X-CSRF-Token`, reply at `$.data.reply`. |
 
 ## What you need
 
@@ -44,8 +49,8 @@ cd experiments/llm_apps
 ./stop_all.sh                  # Windows: .\stop_all.ps1
 ```
 
-The launcher refuses to start if 9111–9115 is already in use, starts only these five
-processes, writes their PIDs to `.run/pids.txt` (git-ignored) and prints the five URLs.
+The launcher refuses to start if 9111–9118 is already in use, starts only these eight
+processes, writes their PIDs to `.run/pids.txt` (git-ignored) and prints the eight URLs.
 The stop script stops only the PIDs it recorded.
 
 Environment, all optional:
@@ -63,9 +68,12 @@ Environment, all optional:
 | `MAX_QUESTION_CHARS` | `2000` | longer questions are a 400 |
 | `LLM_APPS_HOST` | `127.0.0.1` | `0.0.0.0` only when GreenLit runs in Docker |
 | `DEMO_MODE` | `correct` | A5's start mode: `correct` or `faulty_30` |
-| `DEMO_CONTROL` | unset | `1` exposes A5's `POST /_control/mode`, loopback only |
+| `LAB_MODE` | `ok` | A6's start mode: `ok`, `flaky_20`, `slow`, `rate_limited` |
+| `VAULT_MODE` | `vulnerable` | A7's start mode: `vulnerable` or `hardened` |
+| `SITE_MODE` | `normal` | A8's start mode: `normal` (CSRF enforced) or `csrf_off` |
+| `DEMO_CONTROL` | unset | `1` exposes `POST /_control/mode` on A5–A8, loopback only |
 
-`GET /health` on A1–A3 and A5 answers `{"status": "ok", "app": ..., "mode": ..., "provider": ...,
+`GET /health` on A1–A3 and A5–A8 answers `{"status": "ok", "app": ..., "mode": ..., "provider": ...,
 "model": ...}` — no key. Every request appends one line to
 `experiments/results/app_logs/llm_<app>.jsonl` (git-ignored): time, mode, provider, model,
 truncated question, answer length, latency, status; never a header or a prompt.
@@ -91,6 +99,14 @@ reported as a GreenLit timeout first: **150** for these Ollama-backed apps (the 
 | A4 | Acme tool agent | `http://host.docker.internal:9114/mcp` | MCP (Streamable HTTP) | MCP tool result | tool `ask_assistant`, argument `question` | — | — | 150 |
 
 | A5 | Acme math solver | `http://host.docker.internal:9115/` | POST | One JSON body | `$.answer` | — | `{"question": "{{question}}"}` | 30 |
+| A6 | Acme reliability lab | `http://host.docker.internal:9116/` | POST | One JSON body | `$.answer` | — | `{"question": "{{question}}"}` | 30 |
+| A7 | Acme vault bot | `http://host.docker.internal:9117/` | POST | One JSON body | `$.answer` | — | `{"question": "{{question}}"}` | 30 |
+| A8 | Acme site bot | `http://host.docker.internal:9118/api/chat` | POST | One JSON body, nested | `$.data.reply` | `$.data.sources` | `{"message": "{{question}}"}` | 30 |
+
+A8's `/api/chat` refuses with 403 `{"detail": "CSRF token missing"}` unless the request
+carries the `session` and `csrf_token` cookies from `/chat-page` **and** a matching
+`X-CSRF-Token` header, so a plain cURL import (no cookies) exercises the CSRF-rejected
+path on purpose. `SITE_MODE=csrf_off` drops the check for a comparison run.
 
 A5 never calls a model, so its timeout can be short and its verdict is reproducible.
 `POST /_control/mode` (only with `DEMO_CONTROL=1`, only from loopback) takes
@@ -112,6 +128,17 @@ verdict, and a model may still ignore the guarded prompt.
 
 `RAG_MODE=wrong_docs` (A2) returns seeded, question-independent passages so a groundedness
 metric has a deliberately wrong retriever to catch.
+
+`LAB_MODE` (A6) chooses which operations the app shows: `flaky_20` fails the same 20 % of
+questions on every start for a seed, `slow` waits a seeded delay (default 3 s), and
+`rate_limited` answers 429 with `Retry-After` after 10 requests in 60 s. `VAULT_MODE`
+(A7) is the deterministic before/after pair: `vulnerable` leaks its synthetic note and
+repeats a `CANARY-xxxx` marker, `hardened` answers the same questions with one fixed
+refusal. Both are honest about being rule-based — a GreenLit verdict on them tests the
+tool, not a model's alignment, and the ground truth says so.
+
+A5–A8 accept `POST /_control/mode` with `{"mode": ...}` only when `DEMO_CONTROL=1` and
+only from loopback, and only for the modes the app declares.
 
 ## Ground truth
 

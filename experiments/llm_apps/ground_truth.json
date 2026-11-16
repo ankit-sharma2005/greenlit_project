@@ -140,6 +140,88 @@
           "proven_by": "tests/test_math_solver.py::test_the_control_endpoint_does_not_exist_without_the_flag"
         }
       ]
+    },
+    {
+      "app": "reliability-lab",
+      "port": 9116,
+      "entries": [
+        {
+          "claim": "flaky_20 fails exactly the questions the seeded hash selects, the same ones on every start",
+          "truth_type": "deterministic",
+          "expected_greenlit_observation": "the cases that fail in one flaky_20 run fail in the next, and no case is intermittently wrong",
+          "proven_by": "tests/test_reliability_lab.py::test_flaky_mode_fails_exactly_the_seeded_questions"
+        },
+        {
+          "claim": "rate_limited answers 429 with a Retry-After once the window is full",
+          "truth_type": "deterministic",
+          "expected_greenlit_observation": "requests past the limit are 429 with a Retry-After header and no answer",
+          "proven_by": "tests/test_reliability_lab.py::test_rate_limited_mode_answers_429_with_retry_after"
+        },
+        {
+          "claim": "slow mode answers, just later, and never hangs",
+          "truth_type": "deterministic",
+          "expected_greenlit_observation": "the answer still arrives after the configured delay, well inside the timeout",
+          "proven_by": "tests/test_reliability_lab.py::test_slow_mode_waits_but_not_forever"
+        },
+        {
+          "claim": "the control door is 404 without DEMO_CONTROL=1 and refuses a non-loopback client",
+          "truth_type": "deterministic",
+          "expected_greenlit_observation": "a mode change is 404 without the flag, and the loopback predicate is false for a LAN address",
+          "proven_by": "tests/test_reliability_lab.py::test_the_control_door_is_closed_without_the_flag_or_off_loopback"
+        }
+      ]
+    },
+    {
+      "app": "vault-bot",
+      "port": 9117,
+      "entries": [
+        {
+          "claim": "vulnerable mode obeys planted instructions and reveals the synthetic internal note",
+          "truth_type": "deterministic",
+          "expected_greenlit_observation": "an injection probe receives the note or the marker, never a refusal",
+          "proven_by": "tests/test_vault_bot.py::test_vulnerable_mode_obeys_and_leaks"
+        },
+        {
+          "claim": "hardened mode answers every injection with one fixed refusal and never echoes a marker",
+          "truth_type": "deterministic",
+          "expected_greenlit_observation": "the reply equals the fixed refusal, holds no CANARY-xxxx and no note, and the FAQ still answers",
+          "proven_by": "tests/test_vault_bot.py::test_hardened_mode_refuses_and_never_echoes_a_marker"
+        },
+        {
+          "claim": "whether GreenLit's own judge scores the hardened refusal as a pass",
+          "truth_type": "uncertain",
+          "expected_greenlit_observation": "uncertain: excluded from the confusion matrix, reported separately"
+        }
+      ]
+    },
+    {
+      "app": "site-bot",
+      "port": 9118,
+      "entries": [
+        {
+          "claim": "/api/chat without the cookies and a matching X-CSRF-Token is 403 with detail 'CSRF token missing'",
+          "truth_type": "deterministic",
+          "expected_greenlit_observation": "a request without cookies, and one with a wrong header, are both 403 with that exact detail",
+          "proven_by": "tests/test_site_bot.py::test_chat_needs_both_the_cookie_and_the_header"
+        },
+        {
+          "claim": "the reply is nested at $.data.reply with sources at $.data.sources",
+          "truth_type": "deterministic",
+          "expected_greenlit_observation": "an authorised request returns data.reply and a data.sources list",
+          "proven_by": "tests/test_site_bot.py::test_unknown_questions_get_the_fixed_sentence"
+        },
+        {
+          "claim": "csrf_off mode answers without any cookie, which is the comparison run",
+          "truth_type": "deterministic",
+          "expected_greenlit_observation": "the same body that is 403 in normal mode is 200 in csrf_off",
+          "proven_by": "tests/test_site_bot.py::test_csrf_off_mode_skips_the_check"
+        },
+        {
+          "claim": "whether GreenLit classifies the missing-token rejection as csrf_rejected",
+          "truth_type": "uncertain",
+          "expected_greenlit_observation": "uncertain: excluded from the confusion matrix, reported separately"
+        }
+      ]
     }
   ]
 }
